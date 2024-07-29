@@ -2386,7 +2386,7 @@
         <command name="load">sems-archive-netcdf/4.4.1/exo</command>
       </modules>
     </module_system>
-    <RUNDIR>/nscratch/$USER/acme_scratch/flight/$CASE/run</RUNDIR>
+    <RUNDIR>/nscratch/$USER/e3sm_scratch/flight/$CASE/run</RUNDIR>
     <EXEROOT>$CIME_OUTPUT_ROOT/$CASE/bld</EXEROOT>
     <!-- complete path to a short term archiving directory -->
     <!-- path to the cprnc tool used to compare netcdf history files in testing -->
