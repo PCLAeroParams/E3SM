@@ -48,6 +48,14 @@ else()
     set(USE_YAKL FALSE)
 endif()
 
+# Detect if partmc lib has to be used
+string(FIND "${CAM_CONFIG_OPTS}" "-partmc" HAS_PARTMC)
+if (NOT HAS_PARTMC EQUAL -1)
+  # The following is for partmc code:
+  set(USE_PARTMC TRUE)
+endif()
+
+
 #===============================================================================
 # set CPP options (must use this before any flags or cflags settings)
 #===============================================================================
