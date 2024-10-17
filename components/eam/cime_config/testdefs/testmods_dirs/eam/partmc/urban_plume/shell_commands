@@ -1,0 +1,15 @@
+./xmlchange --append CAM_CONFIG_OPTS="-partmc"
+RUNDIR=$(./xmlquery --value RUNDIR)
+mkdir -p ${RUNDIR}
+CLDERA_PATH=$(python -c "
+import xml.etree.ElementTree as ET
+with open('./env_mach_specific.xml','r') as fd:
+  tree = ET.parse(fd).getroot()
+  env_vars = tree.find('environment_variables')
+  partmc_path = [e.text for e in env_vars if e.attrib['name']=='PARTMC_PATH']
+  print (partmc_path[0])
+")
+PARTMC_PATH=${PARTMC_PATH}/release
+fi
+cp ${PARTMC_PATH}/share/partmc_config.yaml ${RUNDIR}/partmc_config.yaml
+cp ${PARTMC_PATH}/share/eam_profiling.yaml ${RUNDIR}/eam_profiling.yaml
