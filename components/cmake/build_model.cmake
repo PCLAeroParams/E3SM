@@ -317,6 +317,14 @@ macro(build_model COMP_CLASS COMP_NAME)
       endif ()
     endif()
   endif()
+ 
+  if (USE_PARTMC)
+    set (PARTMC_PATH_POSTFIX release)
+    message ("PARTMC root DIR: ${PARTMC_PATH}/${PARTMC_PATH_POSTFIX}")
+    find_package(PartMC REQUIRED PATHS ${PARTMC_PATH}/${PARTMC_PATH_POSTFIX})
+    target_link_libraries(${TARGET_NAME} PRIVATE partmc)
+    target_compile_definitions(${TARGET_NAME} PRIVATE PARTMC)
+  endif()
 
   # Subtle: In order for fortran dependency scanning to work, our CPPFPP/DEFS must be registered
   # as COMPILE_DEFINITIONS, not simple added via CMAKE_Fortran_Flags. Also, CPPDEFS *must*
