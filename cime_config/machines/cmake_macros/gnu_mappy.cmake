@@ -1,3 +1,4 @@
+set(PARTMC_PATH "/home/odiazib/v3/partmc/partmc/build")
 if (COMP_NAME STREQUAL gptl)
   string(APPEND CPPDEFS " -DHAVE_SLASHPROC")
 endif()
