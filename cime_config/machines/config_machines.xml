@@ -1908,6 +1908,7 @@ commented out until "*** No rule to make target '.../libadios2pio-nm-lib.a'" iss
     <MAX_GB_OLD_TEST_DATA>0</MAX_GB_OLD_TEST_DATA>
     <!--    <GMAKE>make</GMAKE> <- this doesn't actually work! -->
     <environment_variables>
+      <env name="PARTMC_PATH">/home/odiazib/v3/partmc/partmc/build</env>     
       <env name="NETCDF_C_PATH">$ENV{NETCDF_C_ROOT}</env>
       <env name="NETCDF_FORTRAN_PATH">$ENV{NETCDF_FORTRAN_ROOT}</env>
       <env name="BLAS_ROOT">$ENV{OPENBLAS_ROOT}</env>
