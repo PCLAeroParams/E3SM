@@ -364,6 +364,8 @@
 <!-- coupling -->
 <config_remove_ais_river_runoff>.false.</config_remove_ais_river_runoff>
 <config_remove_ais_ice_runoff>.false.</config_remove_ais_ice_runoff>
+<config_scale_dismf_by_removed_ice_runoff>.false.</config_scale_dismf_by_removed_ice_runoff>
+<config_ais_ice_runoff_history_days>731</config_ais_ice_runoff_history_days>
 
 <!-- shortwaveRadiation -->
 <config_sw_absorption_type>'jerlov'</config_sw_absorption_type>
@@ -401,7 +403,7 @@
 <!-- frazil_ice -->
 <config_use_frazil_ice_formation>.true.</config_use_frazil_ice_formation>
 <config_frazil_in_open_ocean>.true.</config_frazil_in_open_ocean>
-<config_frazil_under_land_ice>.true.</config_frazil_under_land_ice>
+<config_frazil_under_land_ice>.false.</config_frazil_under_land_ice>
 <config_frazil_heat_of_fusion>3.337e5</config_frazil_heat_of_fusion>
 <config_frazil_ice_density>1000.0</config_frazil_ice_density>
 <config_frazil_fractional_thickness_limit>0.1</config_frazil_fractional_thickness_limit>
@@ -630,6 +632,7 @@
 <!-- debug -->
 <config_check_zlevel_consistency>.false.</config_check_zlevel_consistency>
 <config_check_ssh_consistency>.true.</config_check_ssh_consistency>
+<config_check_ssh_consistency ocn_grid="oQU240wLI">.false.</config_check_ssh_consistency>
 <config_check_ssh_consistency ocn_grid="oEC60to30v3wLI">.false.</config_check_ssh_consistency>
 <config_check_ssh_consistency ocn_grid="ECwISC30to60E1r2">.false.</config_check_ssh_consistency>
 <config_check_ssh_consistency ocn_grid="oRRS30to10v3wLI">.false.</config_check_ssh_consistency>
