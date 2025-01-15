@@ -177,7 +177,7 @@ _TESTS = {
             )
         },
 
-        "e3sm_p3_developer" : {
+    "e3sm_p3_developer" : {
         "tests"   : (
             "ERP.ne4pg2_oQU480.F2010.eam-p3",
             "REP_Ln5.ne4pg2_oQU480.F2010.eam-p3",
@@ -187,6 +187,17 @@ _TESTS = {
             "SMS_D_Ln5.ne4pg2_oQU480.F2010.eam-p3",
             "SMS_Ln5.ne4pg2_oQU480.F2010.eam-p3",
             "ERS.ne4pg2_oQU480.F2010.eam-p3"
+            )
+        },
+	
+	"e3sm_orodrag_developer" : {
+        "tests"   : (
+            "ERP.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2",
+            "REP_Ln5.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2",
+            "PET.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2",
+            "PEM_Ln18.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2",
+            "SMS_Ln5.ne30pg2_EC30to60E2r2.F2010.eam-orodrag_ne30pg2",
+            "SMS_D_Ln5.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2"
             )
         },
 
@@ -270,6 +281,7 @@ _TESTS = {
             "SMS_D_Ld1.T62_oQU240.GMPAS-IAF.mpaso-upwind_advection",
             "ERS_Ld5_D.T62_oQU240.GMPAS-IAF.mpaso-conservation_check",
             "ERS_Ld5_PS.ne30pg2_r05_IcoswISC30E3r5.CRYO1850-DISMF.mpaso-scaled_dib_dismf",
+            "ERS_Ld5.TL319_oQU240wLI_gis20.MPAS_LISIO_JRA1p5.mpaso-ocn_glc_tf_coupling",
             )
         },
 
@@ -521,6 +533,7 @@ _TESTS = {
                  "SMS.ne4pg2_oQU480.F2010.eam-thetanh_ftype2",
                  "SMS.ne4pg2_oQU480.F2010.eam-thetanh_ftype4",
                  "SMS.ne4pg2_oQU480.F2010.eam-thetahy_sl",
+                 "ERS.ne4pg2_oQU480.F2010.eam-thetahy_sl_nsubstep2",
                  "ERS.ne4pg2_oQU480.F2010.eam-thetahy_ftype2",
                  "ERS.ne4pg2_oQU480.F2010.eam-thetanh_ftype2",
                  )
@@ -711,7 +724,8 @@ _TESTS = {
             "ERS_Ln90.ne30pg2_ne30pg2.F2010-SCREAMv1.scream-small_kernels--scream-output-preset-5",
             "ERP_Ln22.conusx4v1pg2_r05_oECv3.F2010-SCREAMv1-noAero.scream-bfbhash--scream-output-preset-6",
             "ERS_Ln22.ne30pg2_ne30pg2.F2010-SCREAMv1.scream-L128--scream-output-preset-4",
-            "REP_Ld5.ne30pg2_ne30pg2.F2010-SCREAMv1.scream-L128--scream-output-preset-6"
+            "REP_Ld5.ne30pg2_ne30pg2.F2010-SCREAMv1.scream-L128--scream-output-preset-6",
+            "ERS_Ln90.ne30pg2_ne30pg2.F2010-SCREAMv1.scream-L128--scream-sl_nsubstep2",
             )
     },
 
@@ -769,6 +783,7 @@ _TESTS = {
     "e3sm_moab_dev" : {
         "time"  : "01:00:00",
         "tests" : (
+            "ERS_Vmoab_Ld3.ne4pg2_r05_oQU480.WCYCL1850NS",
             "ERS_Vmoab_Ld3.ne4pg2_oQU480.WCYCL1850NS",
             "ERS_Vmoab_Ld3.ne4pg2_oQU480.F1850",
             "ERS_Vmoab_Ld3.ne4pg2_ne4pg2.I1850CNPRDCTCBCTOP",
