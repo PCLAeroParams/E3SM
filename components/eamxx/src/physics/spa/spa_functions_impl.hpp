@@ -473,7 +473,7 @@ void SPAFunctions<S,D>
 
   // 2. Run the horiz remapper (it is a do-nothing op if spa data is on same grid as model)
   start_timer("EAMxx::SPA::update_spa_data_from_file::horiz_remap");
-  spa_horiz_interp.remap(/*forward = */ true);
+  spa_horiz_interp.remap_fwd();
   stop_timer("EAMxx::SPA::update_spa_data_from_file::horiz_remap");
 
   // 3. Copy from the tgt field of the remapper into the spa_data, padding data if necessary
@@ -521,14 +521,14 @@ void SPAFunctions<S,D>
     // Set the first/last entries of the spa data, so that linear interp
     // can extrapolate if the p_tgt is outside the p_src bounds
     Kokkos::single(Kokkos::PerTeam(team),[&]{
-      spa_data_ccn3(icol,0) = 0;
+      spa_data_ccn3(icol,0) = ccn3(icol,0);
       for (int isw=0; isw<nswbands; ++isw) {
-        spa_data_aero_g_sw(icol,isw,0)   = 0;
-        spa_data_aero_ssa_sw(icol,isw,0) = 0;
-        spa_data_aero_tau_sw(icol,isw,0) = 0;
+        spa_data_aero_g_sw(icol,isw,0)   = aero_g_sw(icol,isw,0);
+        spa_data_aero_ssa_sw(icol,isw,0) = aero_ssa_sw(icol,isw,0);
+        spa_data_aero_tau_sw(icol,isw,0) = aero_tau_sw(icol,isw,0);
       }
       for (int ilw=0; ilw<nlwbands; ++ilw) {
-        spa_data_aero_tau_lw(icol,ilw,0) = 0;
+        spa_data_aero_tau_lw(icol,ilw,0) = aero_tau_lw(icol,ilw,0);
       }
       spa_data_ccn3(icol,nlevs+1) = ccn3(icol,nlevs-1);
       for (int isw=0; isw<nswbands; ++isw) {
