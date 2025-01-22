@@ -62,6 +62,48 @@ static void prarr (const std::string& name, const T* const v, const size_t n) {
     catch (const std::logic_error& e) { std::cerr << e.what(); }  \
   } while (0)
 
+#ifdef SIQK_TIME
+static timeval tic () {
+  timeval t;
+  gettimeofday(&t, 0);
+  return t;
+}
+static double calc_et (const timeval& t1, const timeval& t2) {
+  static const double us = 1.0e6;
+  return (t2.tv_sec * us + t2.tv_usec - t1.tv_sec * us - t1.tv_usec) / us;
+}
+static double toc (const timeval& t1) {
+  Kokkos::fence();
+  timeval t;
+  gettimeofday(&t, 0);
+  return calc_et(t1, t);
+}
+static double get_memusage () {
+  static const double scale = 1.0 / (1 << 10); // Memory in MB.
+  rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return ru.ru_maxrss*scale;
+}
+#else
+inline int tic () { return 0; }
+inline double toc (const int&) { return 0; }
+inline double get_memusage () { return 0; }
+#endif
+static void print_times (const std::string& name, const double* const parts,
+                         const int nparts) {
+#ifdef SIQK_TIME
+  double total = 0; for (int i = 0; i < nparts; ++i) total += parts[i];
+  printf("%20s %1.3e s %7.1f MB", name.c_str(), total, get_memusage());
+  for (int i = 0; i < nparts; ++i) printf(" %1.3e s", parts[i]);
+  printf("\n");
+#endif
+}
+static void print_times (const std::string& name, const double total) {
+#ifdef SIQK_TIME
+   printf("%20s %1.3e s %5.1f MB\n", name.c_str(), total, get_memusage());
+#endif
+}
+
 KOKKOS_INLINE_FUNCTION static void error (const char* const msg)
 { ko::abort(msg); }
 
@@ -90,6 +132,14 @@ template <typename ViewT>
 using UnmanagedView = ko::View<
   typename ViewT::data_type, typename ViewT::array_layout,
   typename ViewT::device_type, ko::MemoryTraits<ko::Unmanaged> >;
+
+// Get the host or device version of the array.
+template <typename VT, typename ES> struct InExeSpace {
+  typedef VT type;
+};
+template <typename VT> struct InExeSpace<VT, ko::HostSpace> {
+  typedef typename VT::HostMirror type;
+};
 
 template <typename VT> KOKKOS_FORCEINLINE_FUNCTION
 typename VT::value_type*
@@ -164,7 +214,7 @@ T sign (const T& a) { return a > 0 ? 1 : (a < 0 ? -1 : 0); }
 #define INCLUDE_SIQK_GEOMETRY_HPP
 
 //#include "siqk_defs.hpp"
-//#include "siqk_quadrature.hpp"
+#include "siqk_quadrature.hpp"
 
 namespace siqk {
 // Vectors and points are 2D. Thus, if you're working on planes in 3D, project
@@ -287,7 +337,8 @@ struct SphereGeometry {
 #define INCLUDE_SIQK_SQR_HPP
 
 //#include "siqk_defs.hpp"
-//#include "siqk_intersect.hpp"
+#include "siqk_search.hpp"
+#include "siqk_intersect.hpp"
 
 namespace siqk {
 namespace sqr { // spherical quadrilateral <-> reference square
@@ -358,7 +409,7 @@ KOKKOS_INLINE_FUNCTION
 void calc_Jacobian (const ConstVec3sT& p, const Quad& e, Real a, Real b,
                     Real J[6], const bool sphere = true) {
   a = 0.5*(a + 1);
-  b = 0.5*(b + 1);  
+  b = 0.5*(b + 1);
   Real r[3];
   for (Int i = 0; i < 3; ++i) {
     Real t1, t2, t3, t4;
