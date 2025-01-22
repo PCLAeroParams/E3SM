@@ -69,6 +69,7 @@ module ocn_comp_mct
    use ocn_config
    use ocn_submesoscale_eddies
    use ocn_eddy_parameterization_helpers
+   use ocn_scaled_dismf
 !
 ! !PUBLIC MEMBER FUNCTIONS:
   implicit none
@@ -107,6 +108,8 @@ module ocn_comp_mct
       my_task
 
    integer  :: nsend, nrecv
+
+   logical  :: ocn_c2_glctf           ! .true.  => ocn to glc thermal forcing coupling on
 
    character(len=StrKIND) :: runtype, coupleTimeStamp
 
@@ -214,6 +217,7 @@ contains
     character(len=StrKIND) :: iotype
     logical :: streamsExists
     integer :: mesh_iotype
+    logical :: ocn_c2_glcshelf
 
     logical, pointer :: tempLogicalConfig
     character(len=StrKIND), pointer :: tempCharConfig
@@ -222,11 +226,15 @@ contains
     logical, pointer :: config_use_CFCTracers
     logical, pointer :: config_use_activeTracers_surface_restoring
     logical, pointer :: config_use_surface_salinity_monthly_restoring
+    logical, pointer :: config_scale_dismf_by_removed_ice_runoff
     character (len=StrKIND), pointer :: config_land_ice_flux_mode
+    character (len=StrKIND), pointer :: config_glc_thermal_forcing_coupling_mode
 
     ! ssh coupling interval initialization
     integer, pointer :: index_avgZonalSSHGradient, index_avgMeridionalSSHGradient
     real (kind=RKIND), dimension(:,:), pointer :: avgSSHGradient
+    real (kind=RKIND), pointer :: &
+       runningMeanRemovedIceRunoff ! the area integrated, running mean of removed ice runoff from the ocean
 
 #ifdef HAVE_MOAB
     character*100 outfile, wopts
@@ -303,6 +311,9 @@ contains
 
     ! Determine coupling type
     call seq_infodata_GetData(infodata, cpl_seq_option=cpl_seq_option)
+
+    ! Determine if ocn to glc thermal forcing coupling is on
+    call seq_infodata_GetData(infodata, ocn_c2_glctf=ocn_c2_glctf)
 
 !-----------------------------------------------------------------------
 !
@@ -815,6 +826,9 @@ contains
           call ocn_time_average_coupled_accumulate(statePool, forcingPool, 1)
           block_ptr => block_ptr % next
        end do
+
+       ! initialize scaled data ice-shelf melt fluxes based on remove ice runoff
+       call ocn_init_scaled_dismf(domain)
     end if
 
 !-----------------------------------------------------------------------
@@ -860,6 +874,9 @@ contains
           call ocn_time_average_coupled_accumulate(statePool, forcingPool, 1)
           block_ptr => block_ptr % next
        end do
+
+      ! initialize scaled data ice-shelf melt fluxes based on remove ice runoff
+       call ocn_init_scaled_dismf(domain)
     end if
 
     call t_stopf ('mpaso_mct_init')
@@ -869,13 +886,34 @@ contains
          trim(config_land_ice_flux_mode) == 'pressure_only' .or. &
          trim(config_land_ice_flux_mode) == 'data' .or. &
          trim(config_land_ice_flux_mode) == 'standalone' ) then
-       call seq_infodata_PutData( infodata, ocn_prognostic=.true., ocnrof_prognostic=.true., &
-                                            ocn_c2_glcshelf=.false.)
+       ocn_c2_glcshelf = .false.
     else if ( trim(config_land_ice_flux_mode) .eq. 'coupled' ) then
-       call seq_infodata_PutData( infodata, ocn_prognostic=.true., ocnrof_prognostic=.true., &
-                                            ocn_c2_glcshelf=.true.)
+       ocn_c2_glcshelf = .true.
     else
        call mpas_log_write('ERROR: unknown land_ice_flux_mode: ' // trim(config_land_ice_flux_mode), MPAS_LOG_CRIT)
+    end if
+    call seq_infodata_PutData(infodata, ocn_prognostic=.true., ocnrof_prognostic=.true., &
+                              ocn_c2_glcshelf=ocn_c2_glcshelf)
+
+    call mpas_pool_get_config(domain % configs, 'config_scale_dismf_by_removed_ice_runoff', &
+                              config_scale_dismf_by_removed_ice_runoff)
+    if (config_scale_dismf_by_removed_ice_runoff) then
+       ! independent of space so should be no need to loop over blocks
+       block_ptr => domain % blocklist
+       call mpas_pool_get_subpool(block_ptr % structs, 'forcing', forcingPool)
+       call MPAS_pool_get_array(forcingPool, "runningMeanRemovedIceRunoff", &
+                                runningMeanRemovedIceRunoff)
+       call seq_infodata_PutData(infodata, rmean_rmv_ice_runoff=runningMeanRemovedIceRunoff)
+    end if
+
+    call mpas_pool_get_config(domain % configs, 'config_glc_thermal_forcing_coupling_mode', config_glc_thermal_forcing_coupling_mode)
+    if ( trim(config_glc_thermal_forcing_coupling_mode) == 'off' ) then
+       call seq_infodata_PutData(infodata, ocn_c2_glctf=.false.)
+    else if ( trim(config_glc_thermal_forcing_coupling_mode) == '2d' ) then
+       call seq_infodata_PutData(infodata, ocn_c2_glctf=.true.)
+    else
+       call mpas_log_write('ERROR: unknown config_glc_thermal_forcing_coupling_mode: ' // &
+               trim(config_glc_thermal_forcing_coupling_mode), MPAS_LOG_CRIT)
     end if
 
 !-----------------------------------------------------------------------
@@ -989,12 +1027,15 @@ contains
       logical, pointer :: config_use_CFCTracers
       logical, pointer :: config_use_activeTracers_surface_restoring
       logical, pointer :: config_use_surface_salinity_monthly_restoring
+      logical, pointer :: config_scale_dismf_by_removed_ice_runoff
       character (len=StrKIND), pointer :: config_restart_timestamp_name
       character (len=StrKIND), pointer :: config_sw_absorption_type
 
       ! Added for coupling interval initialization
       integer, pointer :: index_avgZonalSSHGradient, index_avgMeridionalSSHGradient
       real (kind=RKIND), dimension(:,:), pointer :: avgSSHGradient
+      real (kind=RKIND), pointer :: &
+         runningMeanRemovedIceRunoff ! the area integrated, running mean of removed ice runoff from the ocean
 
 #ifdef HAVE_MOAB
 #ifdef MOABCOMP
@@ -1197,6 +1238,9 @@ contains
             block_ptr => block_ptr % next
          end do
 
+        ! update scaled data ice-shelf melt fluxes based on remove ice runoff
+        call ocn_update_scaled_dismf(domain)
+
          if (debugOn) call mpas_log_write('   Computing analysis members')
          call ocn_analysis_compute(domain_ptr, ierr)
          if (iam==0.and.debugOn) then
@@ -1293,6 +1337,17 @@ contains
       call ocn_export_moab(EClock)
 #endif
       call check_clocks_sync(domain % clock, Eclock, ierr)
+
+      call mpas_pool_get_config(domain % configs, 'config_scale_dismf_by_removed_ice_runoff', &
+                                config_scale_dismf_by_removed_ice_runoff)
+      if (config_scale_dismf_by_removed_ice_runoff) then
+         ! independent of space so should be no need to loop over blocks
+         block_ptr => domain % blocklist
+         call mpas_pool_get_subpool(block_ptr % structs, 'forcing', forcingPool)
+         call MPAS_pool_get_array(forcingPool, "runningMeanRemovedIceRunoff", &
+                                  runningMeanRemovedIceRunoff)
+         call seq_infodata_PutData(infodata, rmean_rmv_ice_runoff=runningMeanRemovedIceRunoff)
+      end if
 
       ! Reset I/O logs
       call shr_file_setLogUnit (shrlogunit)
@@ -2142,7 +2197,7 @@ contains
                call shr_sys_abort ('Error: incoming rofi_F is negative')
            end if
            if (config_remove_ais_ice_runoff) then
-              if (latCell(i) < -1.04719666667_RKIND) then ! 60S in radians
+              if (latCell(i) < -0.99483767345_RKIND) then ! 57S in radians
                  removedIceRunoffFlux(i) = iceRunoffFlux(i)
                  iceRunoffFlux(i) = 0.0_RKIND
                  removedIceRunoffFluxThisProc = removedIceRunoffFluxThisProc + removedIceRunoffFlux(i)
@@ -2693,7 +2748,8 @@ contains
                                                avgRemovedRiverRunoffFlux, &
                                                avgRemovedIceRunoffFlux, &
                                                avgLandIceHeatFlux, &
-                                               avgRemovedIceRunoffHeatFlux
+                                               avgRemovedIceRunoffHeatFlux, &
+                                               avgThermalForcingAtCritDepth
 
    real (kind=RKIND), dimension(:,:), pointer :: avgTracersSurfaceValue, avgSurfaceVelocity, &
                                                  avgSSHGradient, avgOceanSurfacePhytoC, &
@@ -2712,6 +2768,7 @@ contains
                        config_use_MacroMoleculesTracers_sea_ice_coupling
 
    character (len=StrKIND), pointer :: config_land_ice_flux_mode
+   character (len=StrKIND), pointer :: config_glc_thermal_forcing_coupling_mode
 
    logical :: keepFrazil
 
@@ -2722,6 +2779,8 @@ contains
    call mpas_pool_get_config(domain % configs, 'config_land_ice_flux_mode', config_land_ice_flux_mode)
    call mpas_pool_get_config(domain % configs, 'config_remove_ais_river_runoff', config_remove_ais_river_runoff)
    call mpas_pool_get_config(domain % configs, 'config_remove_ais_ice_runoff', config_remove_ais_ice_runoff)
+   call mpas_pool_get_config(domain % configs, 'config_glc_thermal_forcing_coupling_mode', &
+                                                config_glc_thermal_forcing_coupling_mode)
    call mpas_pool_get_config(domain % configs, 'config_use_DMSTracers', config_use_DMSTracers)
    call mpas_pool_get_config(domain % configs, 'config_use_MacroMoleculesTracers', config_use_MacroMoleculesTracers)
    call mpas_pool_get_config(domain % configs, 'config_use_ecosysTracers_sea_ice_coupling',  &
@@ -2775,6 +2834,9 @@ contains
      if (config_remove_ais_ice_runoff) then
         call mpas_pool_get_array(forcingPool, 'avgRemovedIceRunoffFlux', avgRemovedIceRunoffFlux)
         call mpas_pool_get_array(forcingPool, 'avgRemovedIceRunoffHeatFlux', avgRemovedIceRunoffHeatFlux)
+     endif
+     if (trim(config_glc_thermal_forcing_coupling_mode) == '2d') then
+        call mpas_pool_get_array(forcingPool, 'avgThermalForcingAtCritDepth', avgThermalForcingAtCritDepth)
      endif
 
      ! BGC fields
@@ -2937,6 +2999,10 @@ contains
           o2x_o % rAttr(index_o2x_So_stv, n) = landIceTracerTransferVelocities(indexSaltTrans,i)
           o2x_o % rAttr(index_o2x_So_rhoeff, n) = 0.0_RKIND
        endif
+       if (trim(config_glc_thermal_forcing_coupling_mode) == '2d' .and. ocn_c2_glctf) then
+          o2x_o % rAttr(index_o2x_So_tf2d, n) = avgThermalForcingAtCritDepth(i)
+       endif
+
 
        !Fyke: test
        !write(stderrUnit,*) 'n=',n
@@ -3675,7 +3741,7 @@ contains
                call shr_sys_abort ('Error: incoming rofi_F is negative')
            end if
            if (config_remove_ais_ice_runoff) then
-              if (latCell(i) < -1.04719666667_RKIND) then ! 60S in radians
+              if (latCell(i) < -0.99483767345_RKIND) then ! 57S in radians
                  removedIceRunoffFlux(i) = iceRunoffFlux(i)
                  iceRunoffFlux(i) = 0.0_RKIND
                  removedIceRunoffFluxThisProc = removedIceRunoffFluxThisProc + removedIceRunoffFlux(i)

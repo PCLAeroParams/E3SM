@@ -200,9 +200,6 @@ option(SCREAM_MPI_ON_DEVICE "Whether to use device pointers for MPI calls" ON)
 option(SCREAM_ENABLE_MAM "Whether to enable MAM aerosol support" ON)
 set(SCREAM_SMALL_KERNELS ${DEFAULT_SMALL_KERNELS} CACHE STRING "Use small, non-monolothic kokkos kernels for ALL components that support them")
 set(SCREAM_P3_SMALL_KERNELS ${SCREAM_SMALL_KERNELS} CACHE STRING "Use small, non-monolothic kokkos kernels for P3 only")
-message("JGF DEFAUL_SMALL_KERNELS is ${DEFAULT_SMALL_KERNELS}")
-message("JGF SCREAM_SMALL_KERNELS is ${SCREAM_SMALL_KERNELS}")
-message("JGF SCREAM_P3_SMALL_KERNELS is ${SCREAM_P3_SMALL_KERNELS}")
 set(SCREAM_SHOC_SMALL_KERNELS ${SCREAM_SMALL_KERNELS} CACHE STRING "Use small, non-monolothic kokkos kernels for SHOC only")
 if (NOT SCREAM_P3_SMALL_KERNELS AND NOT SCREAM_SHOC_SMALL_KERNELS)
   set(EKAT_DISABLE_WORKSPACE_SHARING TRUE CACHE STRING "")
@@ -456,10 +453,6 @@ if (NOT SCREAM_LIB_ONLY)
   # for LONG use 100. It is *completely* up to the test to decide what short, medium, and long mean.
   if (EKAT_ENABLE_COVERAGE OR EKAT_ENABLE_CUDA_MEMCHECK OR EKAT_ENABLE_VALGRIND OR EKAT_ENABLE_COMPUTE_SANITIZER)
     set (SCREAM_TEST_SIZE_DEFAULT SHORT)
-    # also set thread_ing=$max_thread - 1, so we test at most 2 threading configurations
-    if (SCREAM_TEST_MAX_THREADS GREATER 1)
-      math (EXPR SCREAM_TEST_THREAD_INC ${SCREAM_TEST_MAX_THREADS}-1)
-    endif()
   else()
     set (SCREAM_TEST_SIZE_DEFAULT MEDIUM)
   endif()
@@ -590,9 +583,6 @@ if (NOT DEFINED ENV{SCREAM_FAKE_ONLY})
   EkatConfigFile(${CMAKE_CURRENT_SOURCE_DIR}/src/scream_config.h.in
                  ${CMAKE_CURRENT_BINARY_DIR}/src/scream_config.h
                  F90_FILE ${CMAKE_CURRENT_BINARY_DIR}/src/scream_config.f)
-
-  # Build any tools in the scripts/ dir.
-  add_subdirectory(scripts)
 
   # Generate scream_config.h and scream_config.f
   include (EkatUtils)
