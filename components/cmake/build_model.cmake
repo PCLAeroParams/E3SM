@@ -306,6 +306,13 @@ macro(build_model COMP_CLASS COMP_NAME)
           target_link_libraries(${TARGET_NAME} PRIVATE rrtmgp rrtmgp_interface)
         endif()
       endif()
+  if (USE_PARTMC)
+	 message ("PARTMC root DIR: ${PARTMC_PATH}")
+	 find_library(PARTMC_LIB NAMES partmc PATHS ${PARTMC_PATH})
+	 message ("PARTMC_LIB: ${PARTMC_LIB}")
+	 include_directories(${PARTMC_PATH})
+	 target_link_libraries(${TARGET_NAME} PRIVATE ${PARTMC_LIB})
+  endif()
       if (COMP_NAME STREQUAL "elm")
         if (USE_PETSC)
           target_link_libraries(${TARGET_NAME} PRIVATE "${PETSC_LIBRARIES}")
@@ -317,6 +324,7 @@ macro(build_model COMP_CLASS COMP_NAME)
       endif ()
     endif()
   endif()
+ 
 
   # Subtle: In order for fortran dependency scanning to work, our CPPFPP/DEFS must be registered
   # as COMPILE_DEFINITIONS, not simple added via CMAKE_Fortran_Flags. Also, CPPDEFS *must*
