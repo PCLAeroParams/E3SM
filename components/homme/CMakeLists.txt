@@ -519,6 +519,11 @@ if (HOMME_BUILD_COMPOSE_CPP)
   add_subdirectory(src/share/compose ${COMPOSE_LIBRARY_CPP})
 endif ()
 
+if (HOMME_BUILD_PARTMC)
+  set (PARTMCSL_LIBRARY "partmcsl")
+  add_subdirectory(src/share/partmcsl)
+endif()
+
 SET(EXEC_LIST ""  CACHE INTERNAL "List of configured executables")
 IF(${BUILD_HOMME_SWEQX})
   ADD_SUBDIRECTORY(src/sweqx)
