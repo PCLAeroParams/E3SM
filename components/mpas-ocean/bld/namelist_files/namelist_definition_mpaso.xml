@@ -1164,6 +1164,14 @@ Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_bulk_wind_stress_interp_isotropic" type="logical"
+	category="forcing" group="forcing">
+Controls if windstress is interpolated to edges from 4 adjacent cells rather than just 2.
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_use_bulk_thickness_flux" type="logical"
 	category="forcing" group="forcing">
 Controls if a bulk thickness flux will be computed for surface forcing.
@@ -1563,11 +1571,27 @@ Valid values: Any positive real number.
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_use_frazil_ice_porosity" type="logical"
+	category="frazil_ice" group="frazil_ice">
+If true, use an internal porosity to set internal frazil salinity and that of specified passive tracers.
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
 <entry id="config_frazil_ice_density" type="real"
 	category="frazil_ice" group="frazil_ice">
 Assumed density of frazil. NOTE: test and make consistent with E3SM.
 
 Valid values: Any positive real number.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_frazil_ice_porosity" type="real"
+	category="frazil_ice" group="frazil_ice">
+If frazil porosity is used, sets the porosity of internal ocean frazil ice.
+
+Valid values: Positive real number from 0 to 1
 Default: Defined in namelist_defaults.xml
 </entry>
 

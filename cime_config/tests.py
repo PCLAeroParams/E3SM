@@ -95,6 +95,7 @@ _TESTS = {
             "SMS_Ly2_P1x1.1x1_smallvilleIA.IELMCNCROP.elm-per_crop",
             "SMS_Ly2_P1x1.1x1_smallvilleIA.IELMCNCROP.elm-fan",
             "SMS.r05_r05.IELM.elm-topounit",
+            "SMS.r05_r05.IELM.elm-topounit_im2",
             "ERS.ELM_USRDAT.I1850ELM.elm-usrdat",
             "ERS.r05_r05.IELM.elm-lnd_rof_2way",
             "ERS.r05_r05.IELM.elm-V2_ELM_MOSART_features",
@@ -134,6 +135,8 @@ _TESTS = {
             "ERS_Ld5.T62_oQU240wLI.GMPAS-DIB-IAF-DISMF",
             "PEM_Ln5.T62_oQU240wLI.GMPAS-DIB-IAF-DISMF",
             "PET_Ln5.T62_oQU240wLI.GMPAS-DIB-IAF-DISMF",
+            "ERS_Ld5.TL319_oQU240wLI_ais8to30.GMPAS-JRA1p5-DIB-PISMF-DIS.mpaso-ocn_glcshelf",
+            "ERS_Ld5.TL319_oQU240wLI_ais8to30.GMPAS-JRA1p5-DIB-PISMF-SIS.mpaso-ocn_glcshelf",
             )
         },
 
@@ -189,7 +192,7 @@ _TESTS = {
             "ERS.ne4pg2_oQU480.F2010.eam-p3"
             )
         },
-	
+
 	"e3sm_orodrag_developer" : {
         "tests"   : (
             "ERP.ne4pg2_oQU480.F2010.eam-orodrag_ne4pg2",
@@ -228,7 +231,7 @@ _TESTS = {
         "tests" : (
             "SMS_Lm1.ne4pg2_oQU480.F2010",
             "ERS_Ld31.ne4pg2_oQU480.F2010",
-            "ERP_Lm3.ne4pg2_oQU480.F2010",
+            "ERP_Ld90.ne4pg2_oQU480.F2010",
             "SMS_D_Ln5.ne30pg2_r05_IcoswISC30E3r5.F2010",
             "ERP_Ld3.ne30pg2_r05_IcoswISC30E3r5.F2010.allactive-pioroot1",
             "SMS_Ly1.ne4pg2_oQU480.F2010",
@@ -405,7 +408,7 @@ _TESTS = {
             "SMS_Ld1.ne30pg2_r05_IcoswISC30E3r5.WCYCL1850.allactive-wcprod_1850",
             "SMS_Ld1.ne30pg2_r05_IcoswISC30E3r5.WCYCLSSP370.allactive-wcprodssp",
             "SMS_Ld1.ne30pg2_r05_IcoswISC30E3r5.WCYCLSSP585.allactive-wcprodssp",
-            "SMS_Ld1_PS.northamericax4v1pg2_WC14to60E2r3.WCYCL1850.allactive-wcprodrrm_1850",
+            "SMS_Ld1_P512.northamericax4v1pg2_r025_IcoswISC30E3r5.WCYCL1850.allactive-wcprodrrm_1850",
             "SMS_D_Ld1.ne30pg2_r05_IcoswISC30E3r5.CRYO1850",
             )
         },
@@ -452,8 +455,8 @@ _TESTS = {
         "time"    : "00:40:00",
         "tests"   : (
             "SMS_D_Lm6.f45_g37.IELMFATES.elm-fates_cold",
-            "ERS_D_Lm13.ne4pg2_ne4pg2.IELMFATES.elm-fates_long",
-            "ERS_Lm25.ne4pg2_ne4pg2.IELMFATES.elm-fates_cold_nocomp",
+            "ERS_D_Ld390.ne4pg2_ne4pg2.IELMFATES.elm-fates_long",
+            "ERS_Ld750.ne4pg2_ne4pg2.IELMFATES.elm-fates_cold_nocomp",
             )
         },
 
@@ -727,6 +730,7 @@ _TESTS = {
             "ERP_Ln22.conusx4v1pg2_r05_oECv3.F2010-SCREAMv1-noAero.eamxx-bfbhash--eamxx-output-preset-6",
             "ERS_Ln22.ne30pg2_ne30pg2.F2010-SCREAMv1.eamxx-L128--eamxx-output-preset-4",
             "REP_Ld5.ne30pg2_ne30pg2.F2010-SCREAMv1.eamxx-L128--eamxx-output-preset-6",
+            "SMS.ne30pg2_EC30to60E2r2.WCYCLXX2010",
             "ERS_Ln90.ne30pg2_ne30pg2.F2010-SCREAMv1.eamxx-L128--eamxx-sl_nsubstep2",
             )
     },
