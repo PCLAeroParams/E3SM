@@ -72,14 +72,15 @@ contains
     use lin_strat_chem,    only : fstrat_efold_inti
     use m_types,           only : time_ramp
     use cam_abortutils,    only : endrun
-    use pmgrid,            only : plev           
+    use pmgrid,            only : plev
     use mo_sethet,         only : sethet_inti
     use mo_usrrxt,         only : usrrxt_inti
     use mo_extfrc,         only : extfrc_inti
     use mo_setext,         only : setext_inti
     use mo_setinv,         only : setinv_inti
     use mo_gas_phase_chemdr,only: gas_phase_chemdr_inti
-    
+    use mo_partmc_interface, only: partmc_inti
+
     use tracer_cnst,       only : tracer_cnst_init
     use tracer_srcs,       only : tracer_srcs_init
     use mo_synoz,          only : synoz_inti
@@ -98,7 +99,7 @@ contains
     use mo_waccm_hrates,   only : init_hrates
     use mo_aurora,         only : aurora_inti
     use clybry_fam,        only : clybry_fam_init
-    use mo_neu_wetdep,     only : neu_wetdep_init 
+    use mo_neu_wetdep,     only : neu_wetdep_init
     use physics_buffer,    only : physics_buffer_desc
 
     implicit none
@@ -112,7 +113,7 @@ contains
     character(len=*), intent(in) :: airpl_emis_file
     character(len=*), intent(in) :: sulf_file
     character(len=*), intent(in) :: sad_file
-    type(time_ramp),  intent(in) :: sad_timing 
+    type(time_ramp),  intent(in) :: sad_timing
     character(len=*), intent(in) :: depvel_file
     character(len=*), intent(in) :: depvel_lnd_file
     character(len=*), intent(in) :: clim_soilw_file
@@ -151,6 +152,8 @@ contains
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
 
     call gas_phase_chemdr_inti(chem_name)
+    ! FIXME: it will not compile if partmc is off.
+    call partmc_inti()
 
     call init_mean_mass
     call init_mass_xforms
@@ -242,11 +245,11 @@ contains
     !-----------------------------------------------------------------------
 
     is_waccm = ((trim(chem_name) == 'waccm_mozart') .or. &
-      (trim(chem_name) == 'waccm_mozart_mam3')) 
-    
+      (trim(chem_name) == 'waccm_mozart_mam3'))
+
     call solar_parms_init ()
 
-    if ((len_trim(solar_parms_file)>0) .and. (.not.trim(chem_name) == 'waccm_ghg') ) then       
+    if ((len_trim(solar_parms_file)>0) .and. (.not.trim(chem_name) == 'waccm_ghg') ) then
        !-----------------------------------------------------------------------
        ! 	... initialize the solar parameters module
        !-----------------------------------------------------------------------
@@ -254,7 +257,7 @@ contains
        if (masterproc) write(iulog,*) 'chemini: f107,f107a = ',f107,f107a
 
     endif
-    
+
     if (is_waccm) then
        !-----------------------------------------------------------------------
        ! 	... initialize the euvac etf module

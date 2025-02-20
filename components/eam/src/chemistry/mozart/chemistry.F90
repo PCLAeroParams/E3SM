@@ -16,7 +16,7 @@ module chemistry
   use spmd_utils,       only : masterproc
   use cam_logfile,      only : iulog
   use mo_gas_phase_chemdr, only : map2chm
-  use shr_megan_mod,    only : shr_megan_mechcomps, shr_megan_mechcomps_n 
+  use shr_megan_mod,    only : shr_megan_mechcomps, shr_megan_mechcomps_n
   use tracer_data,      only : MAXTRCRS
 
   implicit none
@@ -28,7 +28,7 @@ module chemistry
 !---------------------------------------------------------------------------------
   public :: chem_is                        ! identify which chemistry is being used
   public :: chem_register                  ! register consituents
-  public :: chem_readnl                    ! read chem namelist 
+  public :: chem_readnl                    ! read chem namelist
   public :: chem_is_active                 ! returns true
   public :: chem_implements_cnst           ! returns true if consituent is implemented by this package
   public :: chem_init_cnst                 ! initialize mixing ratios if not read from initial file
@@ -42,11 +42,11 @@ module chemistry
   public :: chem_emissions
 
   integer, public :: imozart = -1       ! index of 1st constituent
-  
+
   ! Namelist variables
-  
+
   ! control
-  
+
   integer :: chem_freq = 1 ! time steps
 
   ! ghg
@@ -84,7 +84,7 @@ module chemistry
   character(len=shr_kind_cl) :: photon_file = 'photon_file'
 
   ! dry dep
-  
+
   character(len=shr_kind_cl) :: depvel_file = 'depvel_file'
   character(len=shr_kind_cl) :: depvel_lnd_file = 'depvel_lnd_file'
   character(len=shr_kind_cl) :: clim_soilw_file = 'clim_soilw_file'
@@ -107,7 +107,7 @@ module chemistry
   integer            :: ext_frc_fixed_tod = 0
 
   ! alternative type and cycle year for volcanic and other SO2 for controlling single forcing experiments
-  ! if NULL, same treatment as for the other species. 
+  ! if NULL, same treatment as for the other species.
   ! Possible in the future to modify further and apply to volcanic sector of SO2 alone
 
   character(len=24)  :: ext_frc_volc_type = 'NULL' !'NULL'|'CYCLICAL'|'SERIAL'|'INTERP_MISSING_MONTHS'
@@ -116,7 +116,7 @@ module chemistry
   real(r8)           :: dms_emis_scale = 1._r8
 
   ! fixed stratosphere
-  
+
   character(len=shr_kind_cl) :: fstrat_file = 'fstrat_file'
   character(len=16)  :: fstrat_list(pcnst)  = ''
 
@@ -162,9 +162,9 @@ module chemistry
 
   character(len=32) :: chem_name = 'UNSET'
   logical :: chem_rad_passive = .false.
-  
+
   ! for MEGAN emissions
-  integer, allocatable :: megan_indices_map(:) 
+  integer, allocatable :: megan_indices_map(:)
   real(r8),allocatable :: megan_wght_factors(:)
 
 !================================================================================================
@@ -182,10 +182,10 @@ end function chem_is
 !================================================================================================
 
   subroutine chem_register(species_class)
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: register advected constituents and physics buffer fields
-! 
+!
 !-----------------------------------------------------------------------
 
     use ioFileMod,           only : getfil
@@ -213,7 +213,7 @@ end function chem_is
     logical  :: has_fixed_ubc                       ! wrk variable for upper bndy cond
     logical  :: has_fixed_ubflx                     ! wrk variable for upper bndy flux
     character(len=shr_kind_cl) :: locfn                     ! chemistry data filespec
-    integer  :: ch4_ndx, n2o_ndx, o3_ndx 
+    integer  :: ch4_ndx, n2o_ndx, o3_ndx
     integer  :: co2_ndx, cfc11_ndx, cfc12_ndx, o2_1s_ndx, o2_1d_ndx, o2_ndx
     integer  :: n_ndx, no_ndx, co_ndx, h_ndx, h2_ndx, o_ndx, e_ndx, np_ndx
     integer  :: op_ndx, o1d_ndx, n2d_ndx, nop_ndx, n2p_ndx, o2p_ndx
@@ -285,24 +285,24 @@ end function chem_is
     if (chem_is('waccm_mozart') .or. chem_is('waccm_mozart_mam3')) then
 
     !-----------------------------------------------------------------------------------------
-    !For WACCM-X, change variable cnst_fixed_ubc(1) from .true. to .false. which eliminates 
+    !For WACCM-X, change variable cnst_fixed_ubc(1) from .true. to .false. which eliminates
     !the constant fixed upper boundary condition for all species
     !-----------------------------------------------------------------------------------------
-      if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+      if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
         cnst_fixed_ubc(1) = .false.
       else
         cnst_fixed_ubc(1) = .true.
       endif
-      
+
     endif
-    
+
 
     !-----------------------------------------------------------------------
     ! Set names of diffused variable tendencies and declare them as history variables
     !-----------------------------------------------------------------------
     !----------------------------------------------------------------------------------
     ! For WACCM-X, change variable has_fixed_ubc from .true. to .false. which is a flag
-    ! used later to check for a fixed upper boundary condition for species. 
+    ! used later to check for a fixed upper boundary condition for species.
     !----------------------------------------------------------------------------------
      do m = 1,gas_pcnst
        ic_from_cam2  = .true.
@@ -312,14 +312,14 @@ end function chem_is
        molectype = 'minor'
 
        qmin = 1.e-36_r8
-       
+
        if ( lng_name(1:5) .eq. 'num_a' ) then ! aerosol number density
           qmin = 1.e-5_r8
        else if ( m == o3_ndx ) then
           qmin = 1.e-12_r8
        else if ( m == ch4_ndx ) then
           qmin = 1.e-12_r8
-          if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+          if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
             has_fixed_ubc = .false.   ! diffusive equilibrium at UB
           else
             has_fixed_ubc = .true.
@@ -327,7 +327,7 @@ end function chem_is
        else if ( m == n2o_ndx .or. m == co2_ndx ) then
           qmin = 1.e-15_r8
           if( m == co2_ndx ) then
-            if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+            if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
               has_fixed_ubc = .false.   ! diffusive equilibrium at UB
             else
               has_fixed_ubc = .true.
@@ -343,7 +343,7 @@ end function chem_is
              lng_name = 'O2(1-sigma)'
           end if
        else if( m==o2_ndx .or. m==n_ndx .or. m==no_ndx .or. m==co_ndx .or. m==h_ndx .or. m==h2_ndx .or. m==o_ndx ) then
-         if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+         if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
            has_fixed_ubc = .false.   ! diffusive equilibrium at UB
            if ( m == h_ndx ) has_fixed_ubflx = .true. ! fixed flux value for H at UB
            if ( m == o2_ndx .or. m == o_ndx ) molectype = 'major'
@@ -402,18 +402,18 @@ end function chem_is
        call register_cfc11star()
     endif
 
-    if ( waccmx_is('ionosphere') ) then 
+    if ( waccmx_is('ionosphere') ) then
        call photo_register()
        call aurora_register()
     endif
-    
+
     ! add fields to pbuf needed by aerosol models
-    call aero_model_register(imozart, species_class) 
+    call aero_model_register(imozart, species_class)
 
   end subroutine chem_register
 
 !================================================================================================
-  
+
   subroutine chem_readnl(nlfile)
 
     ! Read chem namelist group.
@@ -458,7 +458,7 @@ end function chem_is
     ! linoz data
     character(len=shr_kind_cl) :: linoz_data_file               ! prescribed data file
     character(len=shr_kind_cl) :: linoz_data_filelist           ! list of prescribed data files (series of files)
-    character(len=shr_kind_cl) :: linoz_data_path               ! absolute path of prescribed data files 
+    character(len=shr_kind_cl) :: linoz_data_path               ! absolute path of prescribed data files
     character(len=24)  :: linoz_data_type               ! 'INTERP_MISSING_MONTHS' | 'CYCLICAL' | 'SERIAL' (default)
     logical            :: linoz_data_rmfile             ! remove data file from local disk (default .false.)
     integer            :: linoz_data_cycle_yr
@@ -468,9 +468,9 @@ end function chem_is
     ! trop_mozart prescribed constituent concentratons
     character(len=shr_kind_cl) :: tracer_cnst_file              ! prescribed data file
     character(len=shr_kind_cl) :: tracer_cnst_filelist          ! list of prescribed data files (series of files)
-    character(len=shr_kind_cl) :: tracer_cnst_datapath          ! absolute path of prescribed data files 
+    character(len=shr_kind_cl) :: tracer_cnst_datapath          ! absolute path of prescribed data files
     character(len=24)  :: tracer_cnst_type              ! 'INTERP_MISSING_MONTHS' | 'CYCLICAL' | 'SERIAL' (default)
-    character(len=shr_kind_cl) :: tracer_cnst_specifier(MAXTRCRS) ! string array where each 
+    character(len=shr_kind_cl) :: tracer_cnst_specifier(MAXTRCRS) ! string array where each
     logical            :: tracer_cnst_rmfile            ! remove data file from local disk (default .false.)
     integer            :: tracer_cnst_cycle_yr
     integer            :: tracer_cnst_fixed_ymd
@@ -479,9 +479,9 @@ end function chem_is
     ! trop_mozart prescribed constituent sourrces/sinks
     character(len=shr_kind_cl) :: tracer_srcs_file              ! prescribed data file
     character(len=shr_kind_cl) :: tracer_srcs_filelist          ! list of prescribed data files (series of files)
-    character(len=shr_kind_cl) :: tracer_srcs_datapath          ! absolute path of prescribed data files 
+    character(len=shr_kind_cl) :: tracer_srcs_datapath          ! absolute path of prescribed data files
     character(len=24)  :: tracer_srcs_type              ! 'INTERP_MISSING_MONTHS' | 'CYCLICAL' | 'SERIAL' (default)
-    character(len=shr_kind_cl) :: tracer_srcs_specifier(MAXTRCRS) ! string array where each 
+    character(len=shr_kind_cl) :: tracer_srcs_specifier(MAXTRCRS) ! string array where each
     logical            :: tracer_srcs_rmfile            ! remove data file from local disk (default .false.)
     integer            :: tracer_srcs_cycle_yr
     integer            :: tracer_srcs_fixed_ymd
@@ -504,9 +504,9 @@ end function chem_is
     ! waccm solor proton data variables
     logical            :: spe_remove_file     ! true => the offline spe file will be removed
     character(len=shr_kind_cl) :: spe_data_file       ! name of file that contains the spe data
-    character(len=shr_kind_cl) :: spe_filenames_list  ! file that lists a series of spe files 
+    character(len=shr_kind_cl) :: spe_filenames_list  ! file that lists a series of spe files
 #endif
-    logical            :: strat_aero_feedback ! true => radiation feed backs from strat sulfur aerosol 
+    logical            :: strat_aero_feedback ! true => radiation feed backs from strat sulfur aerosol
 
     namelist /chem_inparm/ chem_freq, airpl_emis_file, &
          solar_parms_file, euvac_file, &
@@ -547,7 +547,7 @@ end function chem_is
          tracer_srcs_file, tracer_srcs_filelist, tracer_srcs_datapath, &
          tracer_srcs_type, tracer_srcs_specifier, &
          tracer_cnst_rmfile, tracer_cnst_cycle_yr, tracer_cnst_fixed_ymd, tracer_cnst_fixed_tod, &
-         tracer_srcs_rmfile, tracer_srcs_cycle_yr, tracer_srcs_fixed_ymd, tracer_srcs_fixed_tod 
+         tracer_srcs_rmfile, tracer_srcs_cycle_yr, tracer_srcs_fixed_ymd, tracer_srcs_fixed_tod
 
 #if ( defined WACCM_MOZART || defined WACCM_GHG )
     ! upper boundary conditions
@@ -559,7 +559,7 @@ end function chem_is
     ! waccm solar proton namelist variables
     namelist /chem_inparm/ spe_data_file, spe_remove_file, spe_filenames_list
 #endif
-    ! radiation feed back from stratospheric sulfur aerosols 
+    ! radiation feed back from stratospheric sulfur aerosols
     namelist /chem_inparm/ strat_aero_feedback
 
     ! get the default settings
@@ -572,7 +572,7 @@ end function chem_is
          linoz_data_rmfile_out    = linoz_data_rmfile,    &
          linoz_data_cycle_yr_out  = linoz_data_cycle_yr,  &
          linoz_data_fixed_ymd_out = linoz_data_fixed_ymd, &
-         linoz_data_fixed_tod_out = linoz_data_fixed_tod  ) 
+         linoz_data_fixed_tod_out = linoz_data_fixed_tod  )
     call tracer_cnst_defaultopts( &
          tracer_cnst_file_out      = tracer_cnst_file,      &
          tracer_cnst_filelist_out  = tracer_cnst_filelist,  &
@@ -582,7 +582,7 @@ end function chem_is
          tracer_cnst_rmfile_out    = tracer_cnst_rmfile,    &
          tracer_cnst_cycle_yr_out  = tracer_cnst_cycle_yr,  &
          tracer_cnst_fixed_ymd_out = tracer_cnst_fixed_ymd, &
-         tracer_cnst_fixed_tod_out = tracer_cnst_fixed_tod  ) 
+         tracer_cnst_fixed_tod_out = tracer_cnst_fixed_tod  )
     call tracer_srcs_defaultopts( &
          tracer_srcs_file_out      = tracer_srcs_file,      &
          tracer_srcs_filelist_out  = tracer_srcs_filelist,  &
@@ -840,7 +840,7 @@ end function chem_is
 #endif
 
    call aero_model_readnl(nlfile)
-   call dust_readnl(nlfile)     
+   call dust_readnl(nlfile)
 #if (defined MODAL_AERO_9MODE || defined MODAL_AERO_4MODE_MOM ||  defined MODAL_AERO_5MODE)
    call ocean_data_readnl(nlfile)
 #endif
@@ -853,7 +853,7 @@ end function chem_is
 !================================================================================================
 
 function chem_is_active()
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
 ! Purpose: return true if this package is active
 !-----------------------------------------------------------------------
    logical :: chem_is_active
@@ -864,12 +864,12 @@ end function chem_is_active
 !================================================================================================
 
   function chem_implements_cnst(name)
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: return true if specified constituent is implemented by this package
-! 
+!
 ! Author: B. Eaton
-! 
+!
 !-----------------------------------------------------------------------
     use chem_mods,       only : gas_pcnst, inv_lst, nfs
     use mo_tracname,     only : solsym
@@ -883,7 +883,7 @@ end function chem_is_active
 !	... local variables
 !-----------------------------------------------------------------------
     integer :: m
-    
+
     chem_implements_cnst = .false.
     do m = 1,gas_pcnst
        if( trim(name) /= 'H2O' ) then
@@ -906,20 +906,20 @@ end function chem_is_active
 
   subroutine chem_init(phys_state, pbuf2d, species_class)
 
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: initialize parameterized greenhouse gas chemistry
 !          (declare history variables)
-! 
-! Method: 
-! <Describe the algorithm(s) used in the routine.> 
-! <Also include any applicable external references.> 
-! 
+!
+! Method:
+! <Describe the algorithm(s) used in the routine.>
+! <Also include any applicable external references.>
+!
 ! Author: NCAR CMS
-! 
+!
 !-----------------------------------------------------------------------
     use physics_buffer,      only : physics_buffer_desc, pbuf_get_index
-    
+
     use constituents,        only : cnst_get_ind, cnst_longname
     use cam_history,         only : addfld, horiz_only, add_default, fieldname_len
     use chem_mods,           only : gas_pcnst, nfs, inv_lst
@@ -942,21 +942,21 @@ end function chem_is_active
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
     type(physics_state), intent(in):: phys_state(begchunk:endchunk)
 
-    integer, intent(inout) :: species_class(pcnst)  
+    integer, intent(inout) :: species_class(pcnst)
 !-----------------------------------------------------------------------
 ! Local variables
 !-----------------------------------------------------------------------
     integer :: m                                ! tracer indicies
     character(len=fieldname_len) :: spc_name
     integer :: i, n, ii
-    logical :: history_aerosol 
-    character(len=2)  :: unit_basename  ! Units 'kg' or '1' 
+    logical :: history_aerosol
+    character(len=2)  :: unit_basename  ! Units 'kg' or '1'
 
     call phys_getopts( cam_chempkg_out=chem_name, &
                        history_aerosol_out=history_aerosol )
 
     ! Initialize aerosols - part 1   ! REASTER 8/4/2015
-    call aero_model_init( pbuf2d, species_class, 1 ) 
+    call aero_model_init( pbuf2d, species_class, 1 )
 
     ! aqueous chem initialization
     call sox_inti()
@@ -990,17 +990,17 @@ end function chem_is_active
 
        call addfld( srcnam(m), (/ 'lev' /), 'A', 'kg/kg/s', trim(spc_name)//' source/sink' )
        !call add_default (srcnam(m),     1, ' ')
-       call cnst_get_ind(solsym(m), n, abrtf=.false. ) 
+       call cnst_get_ind(solsym(m), n, abrtf=.false. )
        if ( n > 0 ) then
 
           if (sflxnam(n)(3:5) == 'num') then  ! name is in the form of "SF****"
              unit_basename = ' 1'
           else
-             unit_basename = 'kg'  
+             unit_basename = 'kg'
           endif
 
           call addfld (sflxnam(n),horiz_only,    'A',  unit_basename//'/m2/s',trim(solsym(m))//' surface flux')
-          if ( history_aerosol ) then 
+          if ( history_aerosol ) then
              call add_default( sflxnam(n), 1, ' ' )
           endif
        endif
@@ -1056,7 +1056,7 @@ end function chem_is_active
      if ( ghg_chem ) then
         call ghg_chem_init(phys_state, bndtvg, h2orates)
      endif
-     
+
      call O1D_to_2OH_adj_init()
 
      call lin_strat_chem_inti(phys_state)
@@ -1068,11 +1068,11 @@ end function chem_is_active
      if ( do_cloudj_photolysis ) then
         call cloudJ_init()     ! Initialize Cloud-J, which includes Fast-J
      endif
-     
+
      if ( chem_is('waccm_mozart') .or. chem_is('waccm_mozart_mam3') ) then
         call init_cfc11star(pbuf2d)
      endif
-     
+
      ! MEGAN emissions initialize
      if (shr_megan_mechcomps_n>0) then
 
@@ -1096,7 +1096,7 @@ end function chem_is_active
      endif
 
     ! Initialize aerosols - part 2   ! REASTER 8/4/2015
-    call aero_model_init( pbuf2d, species_class, 2 ) 
+    call aero_model_init( pbuf2d, species_class, 2 )
 
   end subroutine chem_init
 
@@ -1104,7 +1104,7 @@ end function chem_is_active
 !================================================================================
   subroutine chem_emissions( state, cam_in )
     use aero_model,       only: aero_model_emissions
-    use camsrfexch,       only: cam_in_t     
+    use camsrfexch,       only: cam_in_t
     use constituents,     only: sflxnam
     use cam_history,      only: outfld
     use mo_srf_emissions, only: set_srf_emissions
@@ -1119,28 +1119,28 @@ end function chem_is_active
   ! local vars
 
     integer :: lchnk, ncol
-    integer :: i, m,n 
+    integer :: i, m,n
 
     real(r8) :: sflx(pcols,gas_pcnst)
     real(r8) :: megflx(pcols)
 
     lchnk = state%lchnk
     ncol = state%ncol
-    
+
     ! initialize chemistry constituent surface fluxes to zero
     do m = 2,pcnst
        n = map2chm(m)
-       if (n>0) cam_in%cflx(:,m) = 0._r8 
+       if (n>0) cam_in%cflx(:,m) = 0._r8
     enddo
 
     ! aerosol emissions ...
     call aero_model_emissions( state, cam_in )
 
    ! MEGAN emissions ...
- 
+
     if ( index_x2a_Fall_flxvoc>0 .and. shr_megan_mechcomps_n>0 ) then
 
-       ! set MEGAN fluxes 
+       ! set MEGAN fluxes
        do n = 1,shr_megan_mechcomps_n
           do i =1,ncol
              megflx(i) = -cam_in%meganflx(i,n) * megan_wght_factors(n)
@@ -1157,9 +1157,9 @@ end function chem_is_active
 
    ! prescribed emissions from file ...
 
-    !-----------------------------------------------------------------------      
+    !-----------------------------------------------------------------------
     !        ... Set surface emissions
-    !-----------------------------------------------------------------------      
+    !-----------------------------------------------------------------------
     call set_srf_emissions( lchnk, ncol, dms_emis_scale, sflx(:,:) )
 
     do m = 1,pcnst
@@ -1176,11 +1176,11 @@ end function chem_is_active
 !================================================================================
 
   subroutine chem_init_cnst( name, q, gcid)
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Specify initial mass mixing ratios
-! 
+!
 !-----------------------------------------------------------------------
 
     use chem_mods, only : inv_lst
@@ -1200,7 +1200,7 @@ end function chem_is_active
 !-----------------------------------------------------------------------
 ! Local variables
 !-----------------------------------------------------------------------
-    
+
     real(r8) :: rmwn2o != mwn2o/mwdry ! ratio of mol weight n2o   to dry air
     real(r8) :: rmwch4 != mwch4/mwdry ! ratio of mol weight ch4   to dry air
     real(r8) :: rmwf11 != mwf11/mwdry ! ratio of mol weight cfc11 to dry air
@@ -1210,10 +1210,10 @@ end function chem_is_active
 ! initialize local variables
 !-----------------------------------------------------------------------
 
-    rmwn2o = mwn2o/mwdry 
-    rmwch4 = mwch4/mwdry 
-    rmwf11 = mwf11/mwdry 
-    rmwf12 = mwf12/mwdry 
+    rmwn2o = mwn2o/mwdry
+    rmwch4 = mwch4/mwdry
+    rmwf11 = mwf11/mwdry
+    rmwf12 = mwf12/mwdry
 
 !-----------------------------------------------------------------------
 ! Get initial mixing ratios
@@ -1267,7 +1267,7 @@ end function chem_is_active
 
     implicit none
 
-    type(physics_state), intent(inout) :: phys_state(begchunk:endchunk)                 
+    type(physics_state), intent(inout) :: phys_state(begchunk:endchunk)
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
 
     !-----------------------------------------------------------------------
@@ -1372,17 +1372,17 @@ end function chem_is_active
 
   subroutine chem_timestep_tend( state, ptend, cam_in, cam_out, dt, pbuf,  fh2o, fsds )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Interface to parameterized greenhouse gas chemisty (source/sink).
-! 
-! Method: 
-! <Describe the algorithm(s) used in the routine.> 
-! <Also include any applicable external references.> 
-! 
+!
+! Method:
+! <Describe the algorithm(s) used in the routine.>
+! <Also include any applicable external references.>
+!
 ! Author: B.A. Boville
-! 
+!
 !-----------------------------------------------------------------------
 
     use physics_buffer,      only : physics_buffer_desc, pbuf_get_field, pbuf_get_index, pbuf_old_tim_idx
@@ -1390,9 +1390,9 @@ end function chem_is_active
     use time_manager,        only : get_curr_calday, get_nstep
     use chem_mods,           only : gas_pcnst
     use mo_gas_phase_chemdr, only : gas_phase_chemdr, gas_ac_name, gas_ac_name_2D
-    
+
     use spmd_utils,          only : iam
-    use camsrfexch,          only : cam_in_t, cam_out_t     
+    use camsrfexch,          only : cam_in_t, cam_out_t
     use perf_mod,            only : t_startf, t_stopf
     use tropopause,          only : tropopause_find, TROP_ALG_HYBSTOB, TROP_ALG_CLIMATE, TROP_ALG_E90, tropopause_e90_3d
     use mo_drydep,           only : drydep_update
@@ -1404,7 +1404,9 @@ end function chem_is_active
     use phys_control,        only : phys_getopts
     use mo_chem_utls,        only : get_spc_ndx
     use cam_abortutils,      only: endrun
- 
+
+    use mo_partmc_interface, only: invoke_partmc
+
     implicit none
 
 !-----------------------------------------------------------------------
@@ -1416,7 +1418,7 @@ end function chem_is_active
     type(cam_in_t),      intent(inout) :: cam_in
     type(cam_out_t),     intent(inout) :: cam_out
     real(r8),            intent(out)   :: fh2o(pcols)     ! h2o flux to balance source from chemistry
-    
+
 
     type(physics_buffer_desc), pointer :: pbuf(:)
     real(r8),            intent(in)    :: fsds(pcols)     ! longwave down at sfc
@@ -1502,7 +1504,7 @@ end function chem_is_active
     if ( ghg_chem ) lq(1) = .true.
 
     call physics_ptend_init(ptend, state%psetcols, 'chemistry', lq=lq)
-    
+
     call drydep_update( state, cam_in )
 
 !-----------------------------------------------------------------------
@@ -1567,7 +1569,7 @@ end function chem_is_active
              end do
              if (history_gaschmbudget_2D ) then
              call outfld(trim(solsym(n))//'_2DMSB', ftem_layers(:ncol,1), pcols, lchnk )
-             endif            
+             endif
              gas_ac_idx = pbuf_get_index(gas_ac_name_2D(n))
              call pbuf_get_field(pbuf, gas_ac_idx, gas_ac_2D )
              if( nstep == 0 ) then
@@ -1648,12 +1650,12 @@ end function chem_is_active
                 if (history_gaschmbudget_2D_levels ) then
                     call outfld(trim(solsym(n))//'_2DMSB_trop', ftem_layers(:ncol,1), pcols, lchnk )
                 endif
-                
+
                 Diff_layers(:ncol,:) = 0.0_r8
                 if( nstep /= 0 ) then
                    Diff_layers(:ncol,1) = (ftem_layers(:ncol,1) - gas_ac_layers(:ncol,1))/dt
                 end if
-                        
+
                 if (history_gaschmbudget_2D_levels ) then
                 call outfld(trim(solsym(n))//'_2DTDO_trop', Diff_layers(:ncol,1), pcols, lchnk)
                 else
@@ -1702,6 +1704,11 @@ end function chem_is_active
 
     call t_stopf( 'chemdr' )
 
+    call t_startf( 'partmc' )
+    ! FIXME: It will not compile if PartMC is off.
+    call invoke_partmc(ncol)
+    call t_stopf( 'partmc' )
+
 !-----------------------------------------------------------------------
 ! set flags for tracer tendencies (water and gas phase constituents)
 ! record tendencies on history files
@@ -1712,7 +1719,7 @@ end function chem_is_active
           call outfld( srcnam(m), ptend%q(:,:,n), pcols, lchnk )
        end if
 
-       ! if the user has specified prescribed aerosol dep fluxes then 
+       ! if the user has specified prescribed aerosol dep fluxes then
        ! do not set cam_out dep fluxes according to the prognostic aerosols
        if (.not.aerodep_flx_prescribed()) then
           ! set deposition fluxes in the export state
