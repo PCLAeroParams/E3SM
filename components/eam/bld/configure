@@ -170,9 +170,9 @@ OPTIONS
      -e3smreplay        Configure E3SM to generate an IOP file that can be used to drive the SCM.
                         This switch only works with the Spectral Element dycore.
      -scam              Compiles model in single column mode.  Only works with SE dycore.
-     
+
   Options relevent for doubly periodic cloud resolving model (CRM) mode:
-  
+
      -dpcrm_mode
 
   EAM parallelization:
@@ -291,8 +291,8 @@ OPTIONS
    Options for radiation:
 
      -rrtmgpxx          Use RRTMGP++ code
-   Options for PARTMC 
-     -partmc  Build EAM with support for partmc, linking to partmc 
+   Options for PARTMC
+     -partmc  Build EAM with support for partmc, linking to partmc
 
 EOF
 }
@@ -1772,8 +1772,13 @@ $cfg_ref->set('cppdefs', $usr_cppdefs);
 
 # Define is_eamxx_config flag to select which P3 version codes to use
 # If the config uses both p3 and shoc, it is recognized as a scream case.
+<<<<<<< HEAD
  
 my $is_eamxx_config = 0;
+=======
+
+my $is_scream_config = 0;
+>>>>>>> b8d969ec41 (PartMC: Add a folder (partmc_interface) under eam/src and a module for the PartMC interface.)
 if ($microphys_pkg =~ /^p3/) {
    if ($shoc_sgs) {
       $is_eamxx_config = 1;
@@ -2656,6 +2661,9 @@ sub write_filepath
 	print $fh "$camsrcdir/eam/src/chemistry/bulk_aero\n";
     }
     print $fh "$camsrcdir/eam/src/chemistry/aerosol\n";
+    if ($opts{'partmc'}) {
+  print $fh "$camsrcdir/eam/src/chemistry/partmc_interface\n";
+    }
     print $fh "$camsrcdir/eam/src/chemistry/mozart\n";
     if ($waccm_phys) {
 	print $fh "$camsrcdir/eam/src/physics/waccm\n";
@@ -3280,4 +3288,3 @@ sub version {
     }
 
 }
-
