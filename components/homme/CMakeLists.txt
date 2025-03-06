@@ -519,7 +519,7 @@ if (HOMME_BUILD_COMPOSE_CPP)
   add_subdirectory(src/share/compose ${COMPOSE_LIBRARY_CPP})
 endif ()
 
-if (HOMME_BUILD_PARTMC)
+if (HOMME_BUILD_PARTMCSL)
   set (PARTMCSL_LIBRARY "partmcsl")
   add_subdirectory(src/share/partmcsl)
 endif()
