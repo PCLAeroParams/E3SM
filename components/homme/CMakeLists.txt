@@ -126,6 +126,7 @@ OPTION(BUILD_HOMME_PRIM  "Primitive equations implicit" OFF)
 OPTION(BUILD_HOMME_TOOL  "Offline tool" ON)
 OPTION(HOMME_ENABLE_COMPOSE "Build COMPOSE semi-Lagrangian tracer transport code" ON)
 OPTION(HOMME_USE_SCORPIO  "Use Scorpio as the I/O library (Disable to use Scorpio classic)" ON)
+OPTION(HOMME_ENABLE_PARTMCSL "stochastic semi-Lagrangian transport for use with PartMC aerosol code" ON) # this requires Compose
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)
@@ -180,10 +181,16 @@ IF (BUILD_HOMME_PREQX OR BUILD_HOMME_THETA OR BUILD_HOMME_PREQX_ACC)
   SET (HOMME_BUILD_FORTRAN_DYCORE TRUE)
 ENDIF()
 
+IF (HOMME_ENABLE_PARTMCSL)
+  SET(HOMME_ENABLE_COMPOSE TRUE)
+ENDIF()
+
 IF (HOMME_ENABLE_COMPOSE)
   SET (HOMME_USE_CXX TRUE)
   SET (HOMME_USE_KOKKOS TRUE)
 ENDIF ()
+
+
 
 IF (HOMME_USE_CXX)
   MESSAGE(STATUS "This configuration of HOMME requires a C++ compiler")
@@ -518,6 +525,10 @@ if (HOMME_BUILD_COMPOSE_CPP)
   set (COMPOSE_PORT TRUE)
   add_subdirectory(src/share/compose ${COMPOSE_LIBRARY_CPP})
 endif ()
+
+if (HOMME_ENABLE_PARTMCSL)
+  add_subdirectory(src/share/partmcsl)
+endif()
 
 SET(EXEC_LIST ""  CACHE INTERNAL "List of configured executables")
 IF(${BUILD_HOMME_SWEQX})
