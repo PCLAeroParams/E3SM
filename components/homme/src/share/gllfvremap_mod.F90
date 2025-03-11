@@ -366,7 +366,7 @@ contains
     if (nphys == 1 .and. gfr%boost_pg1) call gfr_pg1_init(gfr)
 
     if (gfr%check > 0) call check_areas(par, gfr, elem, 1, nelemd)
-  end subroutine gfr_init
+  end subroutine gfr_init_internal
 
   subroutine gfr_init_hxx() bind(c)
 #if KOKKOS_TARGET
