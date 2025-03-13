@@ -5,6 +5,8 @@
 #define INCLUDE_SIQK_QUADRATURE_HPP
 
 // #include "siqk_defs.hpp"
+#include "siqk_exe_space.hpp"
+#include "siqk_time.hpp"
 
 namespace siqk {
 

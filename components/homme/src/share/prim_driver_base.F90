@@ -1307,9 +1307,14 @@ contains
     if (qsize > 0) then
       call t_startf("PAT_remap")
       call Prim_Advec_Tracers_remap(elem, deriv1,hvcoord,hybrid,dt_q,tl,nets,nete)
-      call t_stopf("PAT_remap")
+      call t_stopf("PAT_remap")  
     end if
     call t_stopf("prim_step_advec")
+#ifdef HOMME_ENABLE_PARTMCSL      
+      ! TODO: add timer start call here
+      ! TODO: add partmcsl_step_forward call here
+      ! TODO: add timer stop call here
+#endif        
 
   end subroutine prim_step
 

@@ -28,14 +28,6 @@ IF (HOMME_USE_ARKODE)
   )
 ENDIF ()
 
-IF (HOMME_ENABLE_PARTMCSL)
-  SET(PARTMCSL_DIR ${HOMME_SOURCE_DIR}/src/share/partmcsl)
-  SET(TARGET_F90
-    ${TARGET_F90}
-    ${PARTMCSL_DIR}/fvgrid_mod.F90
-  )
-ENDIF()
-
 SET(THETAL_SRCS_F90
   ${TARGET_F90}
   ${SRC_DIR}/checksum_mod.F90 

@@ -6,8 +6,10 @@
 
 // #include "siqk_defs.hpp"
 // #include "siqk_geometry.hpp"
-// #include "siqk_search.hpp"
-// #include "siqk_quadrature.hpp"
+#include "siqk_exe_space.hpp"
+#include "siqk_time.hpp"
+#include "siqk_search.hpp"
+#include "siqk_quadrature.hpp"
 
 namespace siqk {
 
