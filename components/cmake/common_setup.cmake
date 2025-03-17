@@ -48,7 +48,7 @@ else()
     set(USE_YAKL FALSE)
 endif()
 
-string(FIND "${CAM_CONFIG_OPTS}" "-rrtmgpxx" HAS_PARTMCSL)
+string(FIND "${CAM_CONFIG_OPTS}" "-partmcsl" HAS_PARTMCSL)
 if (NOT HAS_PARTMCSL EQUAL -1)
   set(ENABLE_PARTMCSL TRUE)
 endif()
