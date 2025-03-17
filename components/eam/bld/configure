@@ -291,6 +291,9 @@ OPTIONS
    Options for radiation:
 
      -rrtmgpxx          Use RRTMGP++ code
+     
+   Options for PartMCSL:
+     -partmcsl Enable PartMC Semi-Lagrangian stochastic transport in EAM
 EOF
 }
 
@@ -430,6 +433,7 @@ GetOptions(
     "usr_src=s"                 => \$opts{'usr_src'},
     "v|verbose"                 => \$opts{'verbose'},
     "version"                   => \$opts{'version'},
+    "partmcsl"                  => \$opts{'partmcsl'},
 )  or usage();
 
 # Give usage message.
@@ -2718,6 +2722,9 @@ sub write_filepath
         print $fh "$camsrcdir/homme/src/theta-l\n";
         print $fh "$camsrcdir/homme/src/theta-l/share\n";
         print $fh "$camsrcdir/homme/src/share/compose\n";
+        if ($opts{'partmcsl'}) {
+          print $fh "$camsrcdir/homme/src/partmcsl\n";
+        }
       }
       elsif ($opts{'dyn_target'} eq 'preqx_kokkos') {
         print $fh "$camsrcdir/homme/src/share/cxx\n";

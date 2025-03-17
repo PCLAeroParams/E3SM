@@ -115,11 +115,11 @@ IF (${HOMME_QUAD_PREC})
 ENDIF ()
 
 # Some options for conditional builds
-OPTION(BUILD_HOMME_SWEQX "Shallow water equations FEM" ON)
-OPTION(BUILD_HOMME_PREQX "Primitive equations FEM" ON)
+OPTION(BUILD_HOMME_SWEQX "Shallow water equations FEM" OFF)
+OPTION(BUILD_HOMME_PREQX "Primitive equations FEM" OFF)
 OPTION(BUILD_HOMME_THETA "SB81 NH model with theta and Exner pressure" ON)
 OPTION(BUILD_HOMME_THETA_KOKKOS "SB81 NH model with theta and Exner pressure, Kokkos target" OFF)
-OPTION(BUILD_HOMME_PREQX_ACC "Primitive equations FEM with OpenACC" ON)
+OPTION(BUILD_HOMME_PREQX_ACC "Primitive equations FEM with OpenACC" OFF)
 OPTION(BUILD_HOMME_PREQX_KOKKOS "Primitive equations FEM with Kokkos" OFF)
 OPTION(BUILD_HOMME_SWIM  "Shallow water equations implicit" OFF)
 OPTION(BUILD_HOMME_PRIM  "Primitive equations implicit" OFF)
@@ -527,7 +527,7 @@ if (HOMME_BUILD_COMPOSE_CPP)
 endif ()
 
 if (HOMME_ENABLE_PARTMCSL)
-  add_subdirectory(src/share/partmcsl)
+  add_subdirectory(src/partmcsl)
 endif()
 
 SET(EXEC_LIST ""  CACHE INTERNAL "List of configured executables")
