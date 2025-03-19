@@ -125,6 +125,10 @@ contains
     call prim_init1_elem_arrays(elem,par)
 
     call prim_init1_compose(par,elem)
+    
+#ifdef HOMME_ENABLE_PARTMCSL
+    call prim_init1_partmcsl(par, elem)
+#endif    
 
     ! Cleanup the tmp stuff used in prim_init1_geometry
     call prim_init1_cleanup()
@@ -659,6 +663,19 @@ contains
 #endif
     end if
   end subroutine prim_init1_compose
+
+  subroutine prim_init1_partmcsl(par, elem)
+    use parallel_mod, only : parallel_t, abortmp
+#ifdef HOMME_ENABLE_PARTMCSL
+    use partmc_sl_advection_mod, only:  partmcsl_init
+    
+    type (parallel_t), intent(in) :: par
+    type (element_t), pointer, intent(in) :: elem(:)
+
+    call partmcsl_init(par, elem)
+    
+#endif
+  end subroutine prim_init1_partmcsl
 
   subroutine prim_init1_cleanup ()
     use gridgraph_mod, only : deallocate_gridvertex_nbrs

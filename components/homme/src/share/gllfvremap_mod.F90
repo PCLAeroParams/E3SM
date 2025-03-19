@@ -83,7 +83,7 @@ module gllfvremap_mod
 
   ! Top-level data type and functions for high-order, shape-preserving FV <->
   ! GLL remap.
-  type, public :: GllFvRemap_t
+  type, private :: GllFvRemap_t
      integer :: nphys, npi, check
      logical :: have_fv_topo_file_phis, boost_pg1, check_ok, is_planar
      real(kind=real_kind) :: tolfac ! for checking
@@ -165,118 +165,13 @@ module gllfvremap_mod
      module procedure gfr_pg1_reconstruct_topo_hybrid
      module procedure gfr_pg1_reconstruct_topo_dom_mt
   end interface gfr_pg1_reconstruct_topo
-  
-  interface gfr_init
-    module procedure gfr_init_internal
-    module procedure gfr_init_external
-  end interface 
-  
-  interface gfr_finish
-    module procedure gfr_finish_internal
-    module procedure gfr_finish_external
-  end interface gfr_finish
 
 contains
 
   ! ----------------------------------------------------------------------
   ! Public API.
-  subroutine gfr_init_external(gfr, par, elem, nphys, check, boost_pg1)
-    ! Initialize an external gfr data structure.
-    !   nphys is N in pgN.
-    !   check is optional and defaults to 0, no checking. It will produce very
-    ! verbose output if something goes wrong. It is also expensive. It is
-    ! intended to be used in unit testing and (if ever needed) for
-    ! debugging. There are three levels: 0, no checking; 1, global properties
-    ! only; 2, also element-local properties.
 
-    use kinds, only: iulog
-    use dimensions_mod, only: nlev
-    use parallel_mod, only: parallel_t, abortmp
-    use quadrature_mod, only: gausslobatto, quadrature_t
-    use control_mod, only: geometry, cubed_sphere_map
-
-    type (GllFvRemap_t), intent(out) :: gfr
-    type (parallel_t), intent(in) :: par
-    type (element_t), intent(in) :: elem(:)
-    integer, intent(in) :: nphys
-    integer, intent(in), optional :: check
-    logical, intent(in), optional :: boost_pg1
-
-    real(real_kind) :: R(npsq,nphys_max*nphys_max), tau(npsq)
-    integer :: nphys2
-
-    ! shouldn't need this
-    !call gfr_finish(gfr)
-
-    gfr%check = 0
-    if (present(check)) gfr%check = check
-    gfr%check_ok = .true.
-
-    gfr%boost_pg1 = .false.
-    if (nphys == 1 .and. present(boost_pg1)) gfr%boost_pg1 = boost_pg1    
-
-    gfr%tolfac = one
-    if (par%masterproc) then
-       write(iulog,*) 'gfr> Running with dynamics and physics on separate grids (physgrid).'
-       write(iulog, '(a,i3,a,i2,a,l2)') 'gfr> init nphys', nphys, ' check', gfr%check, &
-            ' boost_pg1', gfr%boost_pg1
-       if (nphys == 1) then
-          ! Document state of pg1. dcmip2016_test1 shows it is too coarse. For
-          ! boost_pg1 = true, stepon's DSS loop needs to be separated from its
-          ! tendency application loop.
-          write(iulog,*) 'gfr> Warning: pg1 is too coarse; see comments at top of gllfvremap_mod.F90'
-          if (.not. gfr%boost_pg1) then
-             write(iulog,*) 'gfr> Warning: If you want to try pg1, use the boosted-accuracy &
-                  &boost_pg1 option and call gfr_pg1_reconstruct(_topo).'
-          end if
-       end if
-    end if
-
-    if (nphys > np) then
-       ! The FV -> GLL map is defined only if nphys <= np. If we ever are
-       ! interested in the case of nphys > np, we will need to write a different
-       ! map. See "!assume" annotations for mathematical assumptions in
-       ! particular routines.
-       call abortmp('gllfvremap_mod: nphys must be <= np')
-    end if
-    if (qsize == 0) then
-       call abortmp('gllfvremap_mod: qsize must be >= 1')
-    end if
-
-    gfr%have_fv_topo_file_phis = .false.
-    gfr%nphys = nphys
-    ! npi is the internal GLL np parameter. The high-order remap operator remaps
-    ! from FV to npi-GLL grids, then interpolates from npi-GLL to np-GLL
-    ! grids. In the case of nphys=1, npi must be 2 for GLL to make sense.
-    gfr%npi = max(2, nphys)
-    nphys2 = nphys*nphys
-
-    gfr%is_planar = trim(geometry) == 'plane'
-
-    call gfr_init_w_gg(np, gfr%w_gg)
-    call gfr_init_w_gg(gfr%npi, gfr%w_sgsg)
-    call gfr_init_w_ff(nphys, gfr%w_ff)
-    call gfr_init_M_gf(np, nphys, gfr%M_gf, .true.)
-    gfr%g2f_remapd(:,:,:nphys2) = reshape(gfr%M_gf(:,:,:nphys,:nphys), (/np,np,nphys2/))
-    call gfr_init_M_gf(gfr%npi, nphys, gfr%M_sgf, .false.)
-    call gfr_init_R(gfr%npi, nphys, gfr%w_sgsg, gfr%M_sgf, R, tau)
-    call gfr_init_interp_matrix(gfr%npi, gfr%interp)
-    call gfr_init_f2g_remapd(gfr, R, tau)
-
-    allocate(gfr%fv_metdet(nphys2,nelemd), &
-         gfr%D_f(nphys2,2,2,nelemd), gfr%Dinv_f(nphys2,2,2,nelemd), &
-         gfr%qmin(nlev,max(1,qsize),nelemd), gfr%qmax(nlev,max(1,qsize),nelemd), &
-         gfr%phis(nphys2,nelemd), gfr%center_f(nphys,nphys,nelemd), &
-         gfr%corners_f(4,nphys,nphys,nelemd))
-    call gfr_init_geometry(elem, gfr)
-    call gfr_init_Dmap(elem, gfr)
-
-    if (nphys == 1 .and. gfr%boost_pg1) call gfr_pg1_init(gfr)
-
-    if (gfr%check > 0) call check_areas(par, gfr, elem, 1, nelemd)
-  end subroutine gfr_init_external
-
-  subroutine gfr_init_internal(par, elem, nphys, check, boost_pg1)
+  subroutine gfr_init(par, elem, nphys, check, boost_pg1)
     ! Initialize the gfr internal data structure.
     !   nphys is N in pgN.
     !   check is optional and defaults to 0, no checking. It will produce very
@@ -366,7 +261,7 @@ contains
     if (nphys == 1 .and. gfr%boost_pg1) call gfr_pg1_init(gfr)
 
     if (gfr%check > 0) call check_areas(par, gfr, elem, 1, nelemd)
-  end subroutine gfr_init_internal
+  end subroutine gfr_init
 
   subroutine gfr_init_hxx() bind(c)
 #if KOKKOS_TARGET
@@ -397,22 +292,13 @@ contains
     nf = gfr%nphys
   end function gfr_get_nphys
 
-  subroutine gfr_finish_external(gfr)
-    ! Deallocate the gfr structure.
-    type(GllFvRemap_t), intent(inout) :: gfr
-    
-    if (.not. allocated(gfr%fv_metdet)) return
-    deallocate(gfr%fv_metdet, gfr%D_f, gfr%Dinv_f, gfr%qmin, gfr%qmax, gfr%phis, &
-         gfr%center_f, gfr%corners_f)
-  end subroutine gfr_finish_external
-
-  subroutine gfr_finish_internal()
+  subroutine gfr_finish()
     ! Deallocate the internal gfr structure.
 
     if (.not. allocated(gfr%fv_metdet)) return
     deallocate(gfr%fv_metdet, gfr%D_f, gfr%Dinv_f, gfr%qmin, gfr%qmax, gfr%phis, &
          gfr%center_f, gfr%corners_f)
-  end subroutine gfr_finish_internal
+  end subroutine gfr_finish
 
   subroutine gfr_dyn_to_fv_phys_hybrid(hybrid, nt, hvcoord, elem, nets, nete, &
        ps, phis, T, uv, omega_p, q)
