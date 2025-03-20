@@ -2722,7 +2722,7 @@ sub write_filepath
         print $fh "$camsrcdir/homme/src/theta-l\n";
         print $fh "$camsrcdir/homme/src/theta-l/share\n";
         print $fh "$camsrcdir/homme/src/share/compose\n";
-        if ($opts{'partmcsl'}) {
+        if (defined $opts{'partmcsl'}) {
           print $fh "$camsrcdir/homme/src/partmcsl\n";
         }
       }
@@ -2854,8 +2854,12 @@ sub write_cppdefs
     print $fh "$make_cppdefs";
 
     if ($dyn eq "se" and $opts{"dyn_target"} eq "theta-l") {
-        print $fh " -DMODEL_THETA_L -DHOMME_ENABLE_COMPOSE "
+        print $fh " -DMODEL_THETA_L -DHOMME_ENABLE_COMPOSE ";
+        if (defined $opts{'partmcsl'}) {
+          print $fh " -DHOMME_ENABLE_PARTMCSL "
+        }
     }
+    
 
     if ($dyn eq "se" and $opts{"dyn_target"} eq "theta-l_kokkos") {
         print $fh " -DKOKKOS_TARGET -DMODEL_THETA_L -DHOMME_ENABLE_COMPOSE -DCOMPOSE_PORT"
