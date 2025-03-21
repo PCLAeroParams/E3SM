@@ -20,7 +20,7 @@ module partmc_sl_advection_mod
   implicit none
   private
   
-  public :: partmcsl_init, partmcsl_finish
+  public :: partmcsl_init, partmcsl_finalize
 !   public :: partmcsl_step_forward
   
   ! we assume pg2 grid 
@@ -143,6 +143,10 @@ module partmc_sl_advection_mod
       call abortmp("partmcsl requires dt_tracer_factor to be a multiple of dt_remap_factor.")
     endif
     
+    if (par%masterproc) then
+      write(iulog,*) 'partmcsl: entering partmcsl_init'
+    endif
+    
     !--------------------------------------------
     ! allocate memory for fv meshes
     !--------------------------------------------
@@ -263,9 +267,13 @@ module partmc_sl_advection_mod
         call abortmp('elem "self" not found in neighbors')
       endif
     enddo
+    
+    if (par%masterproc) then
+      write(iulog,*) 'partmcsl: exiting partmcsl_init'
+    endif
   end subroutine partmcsl_init
   
-  subroutine partmcsl_finish()
+  subroutine partmcsl_finalize()
     if (allocated(fv_mesh%points)) then 
       deallocate(fv_mesh%points)
       deallocate(fv_mesh%cells)
@@ -281,7 +289,7 @@ module partmc_sl_advection_mod
       deallocate(src_partition%dest_portions)
       deallocate(src_partition%ndest)
     endif
-  end subroutine partmcsl_finish
+  end subroutine partmcsl_finalize
 
   subroutine ref_coords_ab(a, b, subcell_idx, vert_idx) 
     !   Warning: subcell_idx and vert_idx are 0-based indices.

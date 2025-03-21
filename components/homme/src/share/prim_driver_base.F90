@@ -1327,12 +1327,6 @@ contains
       call t_stopf("PAT_remap")  
     end if
     call t_stopf("prim_step_advec")
-#ifdef HOMME_ENABLE_PARTMCSL      
-      ! TODO: add timer start call here
-      ! TODO: add partmcsl_step_forward call here
-      ! TODO: add timer stop call here
-#endif        
-
   end subroutine prim_step
 
   subroutine prim_step_flexible(hybrid, elem, nets, nete, dt, tl, hvcoord, compute_diagnostics)
@@ -1466,6 +1460,11 @@ contains
     if (qsize > 0) then
        call sl_vertically_remap_tracers(hybrid, elem, nets, nete, tl, dt_q)
     end if
+#ifdef HOMME_ENABLE_PARTMCSL      
+      ! TODO: add timer start call here
+      ! TODO: add partmcsl_step_forward call here
+      ! TODO: add timer stop call here
+#endif          
   end subroutine prim_step_flexible
 
   subroutine run_diagnostics(elem, hvcoord, tl, n, t_before_advance, nets, nete)
@@ -1910,6 +1909,9 @@ contains
     use compose_mod, only: compose_finalize
     use control_mod, only: transport_alg
 #endif
+#ifdef HOMME_ENABLE_PARTMCSL
+    use partmc_sl_advection_mod, only : partmcsl_finalize
+#endif
     implicit none
 
 #ifdef TRILINOS
@@ -1920,6 +1922,9 @@ contains
     if (transport_alg > 0) call compose_finalize()
 #endif
 
+#ifdef HOMME_ENABLE_PARTMCSL
+    call partmcsl_finalize()
+#endif
     ! ==========================
     ! end of the hybrid program
     ! ==========================
