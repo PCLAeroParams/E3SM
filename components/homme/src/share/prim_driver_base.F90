@@ -1340,6 +1340,9 @@ contains
     use prim_state_mod,     only: prim_printstate
     use vertremap_mod,      only: vertical_remap
     use sl_advection,       only: sl_vertically_remap_tracers
+#ifdef HOMME_ENABLE_PARTMCSL    
+    use partmc_sl_advection_mod, only: partmcsl_step_forward
+#endif    
 
     type(element_t),      intent(inout) :: elem(:)
     type(hybrid_t),       intent(in)    :: hybrid   ! distributed parallel structure (shared)
@@ -1462,7 +1465,7 @@ contains
     end if
 #ifdef HOMME_ENABLE_PARTMCSL      
       ! TODO: add timer start call here
-      ! TODO: add partmcsl_step_forward call here
+      call partmcsl_step_forward(elem, dt, nets, nete, tl)
       ! TODO: add timer stop call here
 #endif          
   end subroutine prim_step_flexible

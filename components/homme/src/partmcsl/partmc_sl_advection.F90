@@ -73,6 +73,7 @@ module partmc_sl_advection_mod
     integer, allocatable :: gll_ij_corners(:,:,:) ! (2, 4, nelemd)
     integer, allocatable :: nneighbors(:) ! (nelemd)
     integer, allocatable :: my_local_idx(:) ! (nelemd)
+    integer :: max_nneighbors
   end type
   
   !=====================================
@@ -159,6 +160,7 @@ module partmc_sl_advection_mod
       fv_mesh%nneighbors(ie) = num_neighbors
       if (num_neighbors > max_num_neighbors) max_num_neighbors = num_neighbors
     enddo
+    fv_mesh%max_nneighbors = max_num_neighbors
     allocate(fv_mesh%points(nverts * nphys_cell_per_elem * max_num_neighbors, nelemd))
     allocate(fv_mesh%cells(nverts, nphys_cell_per_elem * max_num_neighbors, nelemd))
     allocate(fv_mesh%gll_local_id(nphys_cell_per_elem * max_num_neighbors, nelemd))
@@ -193,9 +195,9 @@ module partmc_sl_advection_mod
         ! find this element is in its own neighbors list
         if (elem(ie)%GlobalId == elem(ie)%desc%globalID_neigh_corners(in)) then
           fv_mesh%my_local_idx(ie) = in
-          if (par%masterproc) then
+!           if (par%masterproc) then
             write(iulog,*) 'partmcsl init: "elem self" is local index ', in
-          endif
+!           endif
         endif
                 
         do ci = 1, nphys_cell_per_elem ! loop over subcells in element
@@ -380,8 +382,14 @@ module partmc_sl_advection_mod
 
     do ie = nets, nete ! loop over elements worked by this thread
       do k=1, nlev ! loop over vertical levels
+      
+        !------------------------
+        ! step 1: advect fv cells forward
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
+        !------------------------
+        ! step 2: compute overlap portions (c++)
+        call calc_partmcsl_source_partition(k, ie, advected_pts, fv_mesh%points, fv_mesh%cells, fv_mesh%nneighbors)
       enddo
     enddo ! loop over elements worked by this thread
 
