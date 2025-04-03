@@ -79,7 +79,6 @@ contains
     use mo_setext,         only : setext_inti
     use mo_setinv,         only : setinv_inti
     use mo_gas_phase_chemdr,only: gas_phase_chemdr_inti
-    use mo_partmc_interface, only: partmc_inti
 
     use tracer_cnst,       only : tracer_cnst_init
     use tracer_srcs,       only : tracer_srcs_init
@@ -152,8 +151,7 @@ contains
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
 
     call gas_phase_chemdr_inti(chem_name)
-    ! FIXME: it will not compile if partmc is off.
-    call partmc_inti()
+
 
     call init_mean_mass
     call init_mass_xforms
