@@ -939,6 +939,8 @@ end function chem_is_active
     use mo_setsox,             only : sox_inti
     use constituents,          only : sflxnam
     use UCI_cloudJ_interface,  only : cloudJ_init
+    use mo_partmc_interface, only: partmc_inti, partmc_mam_inti
+
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
     type(physics_state), intent(in):: phys_state(begchunk:endchunk)
 
@@ -1097,6 +1099,10 @@ end function chem_is_active
 
     ! Initialize aerosols - part 2   ! REASTER 8/4/2015
     call aero_model_init( pbuf2d, species_class, 2 )
+
+        ! FIXME: it will not compile if partmc is off.
+    !call partmc_inti()
+    call partmc_mam_inti()
 
   end subroutine chem_init
 
@@ -1405,7 +1411,7 @@ end function chem_is_active
     use mo_chem_utls,        only : get_spc_ndx
     use cam_abortutils,      only: endrun
 
-    use mo_partmc_interface, only: invoke_partmc
+    use mo_partmc_interface, only: invoke_partmc, partmc_mam_invoke
 
     implicit none
 
@@ -1706,7 +1712,8 @@ end function chem_is_active
 
     call t_startf( 'partmc' )
     ! FIXME: It will not compile if PartMC is off.
-    call invoke_partmc(ncol)
+    !call invoke_partmc(ncol)
+    call partmc_mam_invoke(state)
     call t_stopf( 'partmc' )
 
 !-----------------------------------------------------------------------
