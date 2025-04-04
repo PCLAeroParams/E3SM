@@ -334,44 +334,67 @@ contains
     gas_state = gas_state_init
     !!aero_state = aero_state_init
     !!call aero_state_set_n_part_ideal(aero_state, n_part)
-    call aero_state_zero(aero_state)
-    aero_mode_type_exp_present &
-      = aero_dist_contains_aero_mode_type(aero_dist_init, &
-      AERO_MODE_TYPE_EXP) &
-      .or. scenario_contains_aero_mode_type(scenario, &
-      AERO_MODE_TYPE_EXP)
-
-    if (aero_mode_type_exp_present) then
-      if (masterproc) then
-        write(102,*) 'aero_mode_type_exp_present true ... '
-      endif
-      call warn_msg(245301880, "using flat weighting only due to " &
-         // "presence of exp aerosol mode")
-      call aero_state_set_weight(aero_state, aero_data, &
-        AERO_STATE_WEIGHT_FLAT)
-    else
-      if (masterproc) then
-        write(102,*) 'aero_mode_type_exp_present false ... '
-      endif
-      call aero_state_set_weight(aero_state, aero_data, &
-       run_part_opt%weighting_type, run_part_opt%weighting_exponent)
-    end if
-
-    call aero_state_set_n_part_ideal(aero_state, n_part)
-    call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-               aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-               run_part_opt%allow_halving)
-
-    env_state = env_state_init
     !call scenario_init_env_state(scenario, env_state, &
     !        env_state_init%elapsed_time)
 
     call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
                gas_state, run_part_opt)
 
+    if (masterproc) then
+      write(102,*) '  ---- '
+      call print_aero_state(aero_state)
+      endif
     end do
 
   end subroutine partmc_mam_invoke
+
+  subroutine print_aero_state(aero_state)
+  implicit none
+  !> aero_state to write.
+  type(aero_state_t), intent(in) :: aero_state
+  integer :: n_part,i_part
+  real(kind=dp) :: aero_particle_mass(aero_state_n_part(aero_state), &
+         aero_data_n_spec(aero_data))
+  integer :: aero_component_len(aero_state_n_part(aero_state))
+  integer :: array_position, i_comp, next_start_component_ind
+  integer :: aero_component_particle_num(aero_state_total_n_components( &
+         aero_state))
+  integer :: aero_component_source_num(aero_state_total_n_components( &
+         aero_state))
+  real(kind=dp) :: aero_component_create_time( &
+         aero_state_total_n_components(aero_state))
+  integer :: aero_component_start_ind(aero_state_n_part(aero_state))
+
+  n_part=aero_state_n_part(aero_state)
+  if ( n_part> 0) then
+    next_start_component_ind = 1
+    do i_part = 1,n_part
+     aero_particle_mass(i_part, :) &
+               = aero_state%apa%particle(i_part)%vol * aero_data%density
+     aero_component_len(i_part) = aero_particle_n_components( &
+              aero_state%apa%particle(i_part))
+     aero_component_start_ind(i_part) = next_start_component_ind
+          next_start_component_ind = next_start_component_ind &
+               + aero_component_len(i_part)
+    do i_comp = 1,aero_component_len(i_part)
+             array_position = aero_component_start_ind(i_part) + i_comp - 1
+             aero_component_particle_num(array_position) = i_part
+             aero_component_source_num(array_position) &
+                  = aero_state%apa%particle(i_part)%component(i_comp)%source_id
+             aero_component_create_time(array_position) &
+                  = aero_state%apa%particle(i_part)%component( &
+                  i_comp)%create_time
+    end do
+
+
+    !  write(102,*) 'i_part ', i_part
+     write(102,*) 'aero_particle_mass ', aero_particle_mass(i_part,:)
+     write(102,*) 'aero_component_len ', aero_component_len(i_part)
+     !write(102,*) 'aero_component_particle_num ', aero_component_particle_num(i_part)
+
+    end do
+  end if
+  end subroutine
 
   subroutine partmc_mam_inti()
   use mo_tracname, only : solsym
@@ -424,6 +447,36 @@ contains
        n_part, rand_init, do_init_equilibrate, do_restart)
 
   call uuid4_str(run_part_opt%uuid)
+
+  call aero_state_zero(aero_state)
+  aero_mode_type_exp_present &
+      = aero_dist_contains_aero_mode_type(aero_dist_init, &
+      AERO_MODE_TYPE_EXP) &
+      .or. scenario_contains_aero_mode_type(scenario, &
+      AERO_MODE_TYPE_EXP)
+
+  if (aero_mode_type_exp_present) then
+    if (masterproc) then
+      write(102,*) 'aero_mode_type_exp_present true ... '
+    endif
+    call warn_msg(245301880, "using flat weighting only due to " &
+         // "presence of exp aerosol mode")
+    call aero_state_set_weight(aero_state, aero_data, &
+    AERO_STATE_WEIGHT_FLAT)
+  else
+    if (masterproc) then
+        write(102,*) 'aero_mode_type_exp_present false ... '
+    endif
+    call aero_state_set_weight(aero_state, aero_data, &
+       run_part_opt%weighting_type, run_part_opt%weighting_exponent)
+  end if
+
+  call aero_state_set_n_part_ideal(aero_state, n_part)
+  call aero_state_add_aero_dist_sample(aero_state, aero_data, &
+               aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
+               run_part_opt%allow_halving)
+
+  env_state = env_state_init
 
   end subroutine partmc_mam_inti
 
