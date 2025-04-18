@@ -1,5 +1,5 @@
 module mo_partmc_interface
-    use ppgrid,       only : pver, begchunk, endchunk
+    use ppgrid,       only : pver, begchunk, endchunk, pcols
     use spmd_utils,   only : masterproc
     use pmc_spec_file
     use pmc_mpi
@@ -32,6 +32,8 @@ module mo_partmc_interface
     type(run_part_opt_t) :: run_part_opt
     integer :: i_repeat, i_group
     integer :: rand_init
+    integer, parameter, public :: n_part_max = 100
+    integer, parameter, public :: n_aero_sp_max = 25
     character, allocatable :: buffer(:)
     integer :: buffer_size, max_buffer_size
     integer :: position
@@ -41,52 +43,6 @@ module mo_partmc_interface
     real(kind=dp) :: n_part
 contains
 !-----------------------------------------------------------------------
-!-----------------------------------------------------------------------
-  subroutine partmc_inti()
-    !-----------------------------------------------------------------------
-    !	... initialize the hetero sox routine
-    !-----------------------------------------------------------------------
-
-
-    implicit none
-    logical :: history_aerosol   ! Output aerosol diagnostics
-    character(len=100) :: spec_name
-    type(spec_file_t) :: file_name
-    character(len=100) :: run_type
-
-    !FIXME: part is hard-coded.
-    spec_name="/home/odiazib/v3/partmc/partmc/scenarios/1_urban_plume/urban_plume.spec"
-    call pmc_srand(0, pmc_mpi_rank())
-
-    if (masterproc) then
-      call spec_file_open(spec_name, file_name)
-      call spec_file_read_string(file_name, 'run_type', run_type)
-
-      call spec_file_read_run_part(file_name, run_part_opt, aero_data, &
-            aero_state_init, gas_data, gas_state_init, env_state_init, &
-            aero_dist_init, scenario, &
-            n_part, rand_init, do_init_equilibrate, do_restart)
-      write(102,*) '-----------------------------------------'
-      write(102,*) 'mozart will do partmc...'
-      write(102,*) "spec_name: ", spec_name
-      write(102,*) "file: ", file_name
-      write(102,*) "n_part: ", n_part
-      write(102,*) "gas_state_init%mix_rat(1): ", gas_state_init%mix_rat(1)
-      write(102,*) "gas_data%name(1) ", gas_data%name(1)
-      write(102,*) '-----------------------------------------'
-
-      call pmc_mpi_broadcast_run_part(run_part_opt, aero_data, &
-         aero_state_init, gas_data, gas_state_init, env_state_init, &
-         aero_dist_init, scenario, &
-         n_part, rand_init, do_init_equilibrate, do_restart)
-    endif
-  ! re-initialize RNG with the given seed
-    !call pmc_rand_finalize()
-    !call pmc_srand(rand_init, pmc_mpi_rank())
-
-
-  end subroutine partmc_inti
-
   subroutine spec_file_read_run_part_eam(file, run_part_opt, aero_data, &
        aero_state_init, &
        !gas_data, gas_state_init,
@@ -131,6 +87,7 @@ contains
     type(spec_file_t) :: sub_file
     character(len=PMC_MAX_FILENAME_LEN) :: camp_config_filename
 
+
     call spec_file_read_string(file, 'output_prefix', &
          run_part_opt%output_prefix)
     call spec_file_read_integer(file, 'n_repeat', run_part_opt%n_repeat)
@@ -157,8 +114,8 @@ contains
        end if
     end if
 
-    call spec_file_read_real(file, 't_max', run_part_opt%t_max)
-    call spec_file_read_real(file, 'del_t', run_part_opt%del_t)
+    !call spec_file_read_real(file, 't_max', run_part_opt%t_max)
+    !call spec_file_read_real(file, 'del_t', run_part_opt%del_t)
     call spec_file_read_real(file, 't_output', run_part_opt%t_output)
     call spec_file_read_real(file, 't_progress', run_part_opt%t_progress)
 
@@ -251,153 +208,10 @@ contains
 
   end subroutine spec_file_read_run_part_eam
 
-  subroutine partmc_mam_invoke(state)
-    use physics_types,    only : physics_state
-    implicit none
-    type(physics_state), intent(in):: state
-    integer :: i, n_species, icol, kk
-
-    n_species=46 ! get from eam
-    icol=1
-    kk=1
-
-   if (masterproc) then
-         write(102,*) '-----------------------------------------'
-         write(102,*) 'Setting gas_state_init'
-   endif
-   do i = 1,n_species
-       !units?
-       gas_state_init%mix_rat(i) = state%q(icol,kk,i)
-       if (masterproc) then
-         write(102,*) gas_data%name(i), " : ", gas_state_init%mix_rat(i)
-       endif
-   end do
-
-  if (masterproc) then
-    write(102,*) '-----------------------------------------'
-  endif
-
-  !
-  scenario%temp_time(:)=0
-  scenario%temp(:)=state%t(icol,kk)
-  scenario%pressure_time=0
-  scenario%pressure=state%pmid(icol,kk)
-  scenario%height_time(:)=0
-  scenario%height(:)=state%zm(icol,kk)
-
-  !FIXME
-  scenario%gas_emission_time(:)=0.0
-  scenario%gas_emission_rate_scale(:)=0.0
-  !scenario%gas_emission(:)=0.0
-
-  scenario%gas_dilution_time(:) = 0.0
-  scenario%gas_dilution_rate(:) = 0.0
-  !scenario%gas_background(:) = 0.0
-
-  scenario%aero_emission_time(:) = 0.0
-  scenario%aero_emission_rate_scale(:) = 0.0
-  !scenario%aero_emission(:) = 0.0
-
-  scenario%aero_dilution_time(:) = 0.0
-  scenario%aero_dilution_rate(:) = 0.0
-  !scenario%aero_background(:) = 0.0
-
-  !FIXME:
-  env_state%rel_humid=0.95
-  env_state%latitude=state%lat(icol)
-  env_state%longitude=state%lon(icol)
-  env_state%altitude=state%zm(icol,kk)
-  env_state%start_time=0
-  env_state%start_day=0
-  env_state%temp=state%t(icol,kk)
-  env_state%pressure=state%pmid(icol,kk)
-  env_state%height=state%zm(icol,kk)
-  env_state%elapsed_time=0d0
-  ! FIXME: should compute this at some point
-  env_state%solar_zenith_angle = 0d0
-
-  if (masterproc) then
-    write(102,*) '-----------------------------------------'
-    write(102,*) 'Setting scenario'
-    write(102,*)  "scenario%temp(:) ", scenario%temp(1)
-    write(102,*)  "scenario%pressure(:) ", scenario%pressure(1)
-    write(102,*)  "scenario%height(:) ", scenario%height(1)
-    write(102,*) '-----------------------------------------'
-  endif
-
-  do i_repeat = 1,run_part_opt%n_repeat
-    run_part_opt%i_repeat = i_repeat
-    if (masterproc) then
-      write(102,*) 'i_repeat ', i_repeat
-    endif
-
-    gas_state = gas_state_init
-    !!aero_state = aero_state_init
-    !!call aero_state_set_n_part_ideal(aero_state, n_part)
-    !call scenario_init_env_state(scenario, env_state, &
-    !        env_state_init%elapsed_time)
-
-    call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
-               gas_state, run_part_opt)
-
-    if (masterproc) then
-      write(102,*) '  ---- '
-      call print_aero_state(aero_state)
-      endif
-    end do
-
-  end subroutine partmc_mam_invoke
-
-  subroutine print_aero_state(aero_state)
-  implicit none
-  !> aero_state to write.
-  type(aero_state_t), intent(in) :: aero_state
-  integer :: n_part,i_part
-  real(kind=dp) :: aero_particle_mass(aero_state_n_part(aero_state), &
-         aero_data_n_spec(aero_data))
-  integer :: aero_component_len(aero_state_n_part(aero_state))
-  integer :: array_position, i_comp, next_start_component_ind
-  integer :: aero_component_particle_num(aero_state_total_n_components( &
-         aero_state))
-  integer :: aero_component_source_num(aero_state_total_n_components( &
-         aero_state))
-  real(kind=dp) :: aero_component_create_time( &
-         aero_state_total_n_components(aero_state))
-  integer :: aero_component_start_ind(aero_state_n_part(aero_state))
-
-  n_part=aero_state_n_part(aero_state)
-  if ( n_part> 0) then
-    next_start_component_ind = 1
-    do i_part = 1,n_part
-     aero_particle_mass(i_part, :) &
-               = aero_state%apa%particle(i_part)%vol * aero_data%density
-     aero_component_len(i_part) = aero_particle_n_components( &
-              aero_state%apa%particle(i_part))
-     aero_component_start_ind(i_part) = next_start_component_ind
-          next_start_component_ind = next_start_component_ind &
-               + aero_component_len(i_part)
-    do i_comp = 1,aero_component_len(i_part)
-             array_position = aero_component_start_ind(i_part) + i_comp - 1
-             aero_component_particle_num(array_position) = i_part
-             aero_component_source_num(array_position) &
-                  = aero_state%apa%particle(i_part)%component(i_comp)%source_id
-             aero_component_create_time(array_position) &
-                  = aero_state%apa%particle(i_part)%component( &
-                  i_comp)%create_time
-    end do
-
-
-    !  write(102,*) 'i_part ', i_part
-     write(102,*) 'aero_particle_mass ', aero_particle_mass(i_part,:)
-     write(102,*) 'aero_component_len ', aero_component_len(i_part)
-     !write(102,*) 'aero_component_particle_num ', aero_component_particle_num(i_part)
-
-    end do
-  end if
-  end subroutine
-
   subroutine partmc_mam_inti()
-  use mo_tracname, only : solsym
+   use mo_tracname, only : solsym
+   use cam_history,  only :addfld
+   use cam_history_support, only: add_hist_coord
    implicit none
    integer :: i, n_species, n_aero_species, n_times
    character(len=100) :: file_name
@@ -405,7 +219,7 @@ contains
    file_name='/home/odiazib/acme/scratch/data/urban_plume.spec'
 
   n_species=46 ! get from eam
-  n_aero_species=7 ! get from eam
+  ! n_aero_species=7 ! get from eam
   n_times=1
 
   call ensure_string_array_size(gas_data%name, n_species)
@@ -439,6 +253,7 @@ contains
   do i = 1,n_species
     gas_data%name(i) = solsym(i)
   end do
+
   call spec_file_open(file_name, file)
   call spec_file_read_run_part_eam(file, run_part_opt, aero_data, &
        aero_state_init, &
@@ -478,202 +293,208 @@ contains
 
   env_state = env_state_init
 
-  end subroutine partmc_mam_inti
-
-
-  subroutine partmc_mam_inti_v0()
-
-  use mo_tracname, only : solsym
-  use pmc_gas_state, only : gas_state_set_size
-
-  use mo_gas_phase_chemdr, only : map2chm
-
-  implicit none
-
-  !partmc has real for n_part
-  !real(kind=dp) :: n_part
-  integer :: i, n_species, n_aero_species, n_times
-  integer :: lchnk, ncol
-  type(spec_file_t) :: file_aero_data
-  character(len=100) :: file_name
-  logical :: read_aero_weight_classes
-
-  run_part_opt%n_repeat=3
-  run_part_opt%t_max=2
-  run_part_opt%del_t=1
-  run_part_opt%t_output=-1
-  run_part_opt%do_camp_chem=.false.
-  n_part=10
-  n_species=46 ! get from eam
-  n_aero_species=7 ! get from eam
-  n_times=1
-
-  run_part_opt%output_type = OUTPUT_TYPE_SINGLE
-  run_part_opt%mix_timescale = 0d0
-  run_part_opt%gas_average = .false.
-  run_part_opt%env_average = .false.
-  run_part_opt%parallel_coag_type = PARALLEL_COAG_TYPE_LOCAL
-
-  call uuid4_str(run_part_opt%uuid)
-
-  read_aero_weight_classes=.false.
-
-  call ensure_string_array_size(gas_data%name, n_species)
-  call gas_state_set_size(gas_state_init, n_species)
-  call ensure_string_array_size(aero_data%name, n_aero_species)
-
-  allocate(scenario%temp_time(n_times))
-  allocate(scenario%temp(n_times))
-  allocate(scenario%height_time(n_times))
-  allocate(scenario%height(n_times))
-  allocate(scenario%pressure_time(n_times))
-  allocate(scenario%pressure(n_times))
-
-  !FIXME
-  allocate(scenario%gas_emission_time(n_times))
-  allocate(scenario%gas_emission_rate_scale(n_times))
-  allocate(scenario%gas_emission(n_times))
-
-  allocate(scenario%gas_dilution_time(n_times))
-  allocate(scenario%gas_dilution_rate(n_times))
-  allocate(scenario%gas_background(n_times))
-
-  allocate(scenario%aero_emission_time(n_times))
-  allocate(scenario%aero_emission_rate_scale(n_times))
-  allocate(scenario%aero_emission(n_times))
-
-  allocate(scenario%aero_dilution_time(n_times))
-  allocate(scenario%aero_dilution_rate(n_times))
-  allocate(scenario%aero_background(n_times))
-
-  scenario%loss_function_type = SCENARIO_LOSS_FUNCTION_NONE
-
-  rand_init=0
-
-  run_part_opt%do_coagulation=.true.
-  run_part_opt%coag_kernel_type = COAG_KERNEL_TYPE_BROWN
-  run_part_opt%parallel_coag_type = PARALLEL_COAG_TYPE_LOCAL
-  run_part_opt%do_condensation=.false.
-  run_part_opt%do_mosaic=.false.
-  run_part_opt%do_optical = .false.
-  run_part_opt%do_nucleation=.false.
-  run_part_opt%allow_doubling=.true.
-  run_part_opt%allow_halving=.true.
-  run_part_opt%record_removals=.true.
-  run_part_opt%do_parallel=.false.
-
-  do i = 1,n_species
-    gas_data%name(i) = solsym(i)
-    if (masterproc) then
-      write(102,*) gas_data%name(i)
-    endif
+  call add_hist_coord('npartmax',    n_part_max,    'NPARTMAX')
+  call add_hist_coord('na_spmax',    n_aero_sp_max,    'NAEROSPMAX')
+  call add_hist_coord('na_sp_partmax',    n_aero_sp_max,    'NAEROSPPARTMAX')
+  ! call addfld( 'aero_particle_mass', (/ 'lev     ', 'npartmax','na_spmax'/), 'A', 'kg', 'constituent masses of each aerosol particle' )
+  ! call addfld( 'aero_particle_mass', (/'lev          ', 'na_sp_partmax' /), 'I', 'kg', 'constituent masses of each aerosol particle' )
+  n_aero_species=aero_data_n_spec(aero_data)
+  do i = 1, n_aero_species
+    call addfld( 'aero_particle_mass_'// trim(aero_data%name(i)), (/'lev     ', 'npartmax' /), 'I', 'kg', 'constituent masses of each aerosol particle' )
   end do
 
-  file_name='/home/odiazib/acme/scratch/data/aero_data.dat'
-  call spec_file_open(file_name, file_aero_data)
-  call spec_file_read_aero_data(file_aero_data, aero_data)
-  call spec_file_close(file_aero_data)
+  call addfld( 'aero_component_len', (/'lev     ', 'npartmax' /), 'I', '-', 'number of aero_components for each aerosol particle' )
+  call addfld( 'number_of_particles', (/'lev     ' /), 'I', '-', 'number of particles per cell' )
+  call addfld( 'aero_num_conc', (/'lev     ', 'npartmax' /), 'I', 'm^{-3}', 'number concentration for each particle' )
 
-  file_name="/home/odiazib/acme/scratch/data/aero_init_dist.dat"
-  call spec_file_open(file_name, file_aero_data)
-  call spec_file_read_aero_dist(file_aero_data, aero_data, &
-            read_aero_weight_classes, aero_dist_init)
-  call spec_file_close(file_aero_data)
+  end subroutine partmc_mam_inti
 
-  run_part_opt%weighting_type = AERO_STATE_WEIGHT_NUMMASS_SOURCE
-  run_part_opt%weighting_exponent = 0.0d0
+  subroutine partmc_mam_invoke(state, dt)
+    use physics_types,    only : physics_state
+    use cam_history,       only : outfld
 
-  env_state_init%elapsed_time=0
-  run_part_opt%output_prefix="/home/odiazib/acme/scratch/outputs/urban_plume"
+    implicit none
+    type(physics_state), intent(in):: state
+    real(kind=dp),            intent(in)    :: dt              ! time step
+    integer :: i, n_species, icol, kk, lchnk, ncol, n_aero_species
+    ! real(kind=dp)                  ::  aero_particle_mass_out(pcols, pver,  n_part_max*n_aero_sp_max)
+    real(kind=dp)                  ::  aero_particle_mass_out(pcols, pver,  n_part_max,n_aero_sp_max)
+    real(kind=dp)                  ::  aero_component_len_out(pcols, pver,  n_part_max)
+    real(kind=dp)                  ::  aero_num_conc_out(pcols, pver,  n_part_max)
+    real(kind=dp)                  ::  number_of_particles_out(pcols, pver)
 
-  !gas_state_init
-  if (masterproc) then
-      write(102,*) '-----------------------------------------'
-      write(102,*) 'mozart will do partmc_mam_inti...'
-      write(102,*) aero_data%name(1)
-      write(102,*) aero_data%name(2)
-      write(102,*) '-----------------------------------------'
-  endif
+    n_species=46 ! get from eam
+    run_part_opt%del_t = dt/10d0
+    run_part_opt%t_max = dt
+    ! icol=1
+    ! kk=1
+    lchnk = state%lchnk
+    ncol  = state%ncol
+    aero_particle_mass_out(:,:,:,:)=-1000d0
+    aero_component_len_out(:,:,:)=-1
+    number_of_particles_out(:,:)=-1
 
-  end subroutine partmc_mam_inti_v0
+    if (masterproc) then
+         write(102,*) '-----------------------------------------'
+         write(102,*) 'Time step and Time max'
+         write(102,*) 'run_part_opt%del_t: ', run_part_opt%del_t
+         write(102,*) 'run_part_opt%t_max: ', run_part_opt%t_max
+         write(102,*) '-----------------------------------------'
+   endif
 
+    ! if (masterproc) then
+    !      write(102,*) '-----------------------------------------'
+    !      write(102,*) 'Setting gas_state_init'
+    ! endif
 
-  subroutine invoke_partmc(ncol)
-  use ppgrid,    only : pcols, pver
-  implicit none
-  integer,          intent(in)    :: ncol              ! num of columns in chunk
+    scenario%temp_time(:)=0
+    scenario%pressure_time=0
+    scenario%height_time(:)=0
+        !FIXME
+    scenario%gas_emission_time(:)=0.0
+    scenario%gas_emission_rate_scale(:)=0.0
+    !scenario%gas_emission(:)=0.0
 
-  if (masterproc) then
-#if 1
-  call cpu_time(run_part_opt%t_wall_start)
-      do i_repeat = 1,run_part_opt%n_repeat
-       run_part_opt%i_repeat = i_repeat
+    scenario%gas_dilution_time(:) = 0.0
+    scenario%gas_dilution_rate(:) = 0.0
+    !scenario%gas_background(:) = 0.0
 
-       gas_state = gas_state_init
-       if (do_restart) then
-          aero_state = aero_state_init
-          call aero_state_set_n_part_ideal(aero_state, n_part)
-       else
-          call aero_state_zero(aero_state)
-          aero_mode_type_exp_present &
-               = aero_dist_contains_aero_mode_type(aero_dist_init, &
-               AERO_MODE_TYPE_EXP) &
-               .or. scenario_contains_aero_mode_type(scenario, &
-               AERO_MODE_TYPE_EXP)
-          if (aero_mode_type_exp_present) then
-             call warn_msg(245301880, "using flat weighting only due to " &
-                  // "presence of exp aerosol mode")
-             call aero_state_set_weight(aero_state, aero_data, &
-                  AERO_STATE_WEIGHT_FLAT)
-          else
-             call aero_state_set_weight(aero_state, aero_data, &
-                  run_part_opt%weighting_type, run_part_opt%weighting_exponent)
-          end if
-          call aero_state_set_n_part_ideal(aero_state, n_part)
-          call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-               aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-               run_part_opt%allow_halving)
-       end if
-       env_state = env_state_init
-       call scenario_init_env_state(scenario, env_state, &
-            env_state_init%elapsed_time)
+    scenario%aero_emission_time(:) = 0.0
+    scenario%aero_emission_rate_scale(:) = 0.0
+    !scenario%aero_emission(:) = 0.0
 
-#ifdef PMC_USE_SUNDIALS
-       if (do_init_equilibrate) then
-          call condense_equilib_particles(env_state, aero_data, aero_state)
-       end if
-#endif
+    scenario%aero_dilution_time(:) = 0.0
+    scenario%aero_dilution_rate(:) = 0.0
+    !scenario%aero_background(:) = 0.0
 
-       if (run_part_opt%do_camp_chem) then
-#ifdef PMC_USE_CAMP
-          call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
-               gas_state, run_part_opt, camp_core=camp_core, &
-               photolysis=photolysis)
-#endif
-       else
-          call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
+    env_state%start_time=0
+    env_state%start_day=0
+    env_state%elapsed_time=0d0
+
+    do kk = 1,pver
+     do icol = 1, ncol
+      do i = 1,n_species
+        !units?
+        gas_state_init%mix_rat(i) = state%q(icol,kk,i)
+        ! if (masterproc) then
+        !   write(102,*) gas_data%name(i), " : ", gas_state_init%mix_rat(i)
+        !  endif
+      end do
+    scenario%temp(:)  = state%t(icol,kk)
+    scenario%pressure = state%pmid(icol,kk)
+    scenario%height(:) = state%zm(icol,kk)
+    !FIXME:
+    env_state%rel_humid = 0.95
+    env_state%latitude = state%lat(icol)
+    env_state%longitude = state%lon(icol)
+    env_state%altitude = state%zm(icol,kk)
+
+    env_state%temp = state%t(icol,kk)
+    env_state%pressure = state%pmid(icol,kk)
+    env_state%height = state%zm(icol,kk)
+    ! FIXME: should compute this at some point
+    env_state%solar_zenith_angle = 0d0
+
+    do i_repeat = 1,run_part_opt%n_repeat
+      run_part_opt%i_repeat = i_repeat
+
+      gas_state = gas_state_init
+      call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
                gas_state, run_part_opt)
-       end if
 
+      call write_nc_aero_state(aero_state,aero_particle_mass_out,&
+                            aero_component_len_out, &
+                            number_of_particles_out, &
+                            aero_num_conc_out, &
+                            icol, kk)
     end do
-#endif
+    end do ! kk
+    end do ! icol
+    n_aero_species=aero_data_n_spec(aero_data)
+    do i = 1, n_aero_species
+        call outfld( 'aero_particle_mass_'// trim(aero_data%name(i)), &
+         aero_particle_mass_out(:ncol, :, :, i), ncol, lchnk )
+    end do
+    call outfld( 'aero_component_len', aero_component_len_out(:ncol, :, :), ncol, lchnk )
+    call outfld( 'number_of_particles', number_of_particles_out(:ncol, :), ncol, lchnk )
+    call outfld( 'aero_num_conc', aero_num_conc_out(:ncol, :, :), ncol, lchnk )
 
-    write(102,*) '-----------------------------------------'
-    write(102,*) 'mozart will do invoke partmc...'
-    write(102,*) "n_part: ", n_part
-    write(102,*) "gas_state%mix_rat(1): ", gas_state%mix_rat(1)
-    write(102,*) "env_state%temp: ", env_state%temp
-    write(102,*) "env_state%pressure: ", env_state%pressure
+  end subroutine partmc_mam_invoke
 
-    write(102,*) "gas_data%name(1) ", gas_data%name(1)
-    write(102,*) '-----------------------------------------'
+  subroutine write_nc_aero_state(aero_state, &
+                              aero_particle_mass_out,&
+                              aero_component_len_out,&
+                              number_of_particles_out,&
+                              aero_num_conc_out,&
+                              icol, kk)
 
+  implicit none
+  !> aero_state to write.
+  integer :: n_part, i_part, n_sp_aero
+  type(aero_state_t), intent(in) :: aero_state
+  ! real(kind=dp), intent(inout)  ::  aero_particle_mass_out(pcols,  pver, n_part_max*n_aero_sp_max)
+  real(kind=dp), intent(inout)  ::  aero_particle_mass_out(pcols,  pver, n_part_max,n_aero_sp_max)
+  real(kind=dp), intent(inout)  ::  aero_component_len_out(pcols, pver,  n_part_max)
+  real(kind=dp), intent(inout)  ::  number_of_particles_out(pcols, pver)
+  real(kind=dp), intent(inout)  ::  aero_num_conc_out(pcols, pver,  n_part_max)
+  integer, intent(in) :: icol,kk
+
+  real(kind=dp) :: aero_particle_mass(aero_state_n_part(aero_state), &
+         aero_data_n_spec(aero_data))
+  integer :: aero_component_len(aero_state_n_part(aero_state))
+  integer :: array_position, i_comp, next_start_component_ind
+  integer :: aero_component_particle_num(aero_state_total_n_components( &
+         aero_state))
+  integer :: aero_component_source_num(aero_state_total_n_components( &
+         aero_state))
+  real(kind=dp) :: aero_component_create_time( &
+         aero_state_total_n_components(aero_state))
+  integer :: aero_component_start_ind(aero_state_n_part(aero_state))
+  real(kind=dp) :: aero_num_conc(aero_state_n_part(aero_state))
+
+  n_part=aero_state_n_part(aero_state)
+  n_sp_aero=aero_data_n_spec(aero_data)
+  if ( n_part> 0) then
+    next_start_component_ind = 1
+    do i_part = 1,n_part
+     aero_particle_mass(i_part, :) &
+               = aero_state%apa%particle(i_part)%vol * aero_data%density
+     aero_component_len(i_part) = aero_particle_n_components( &
+              aero_state%apa%particle(i_part))
+     aero_component_start_ind(i_part) = next_start_component_ind
+          next_start_component_ind = next_start_component_ind &
+               + aero_component_len(i_part)
+
+    do i_comp = 1,aero_component_len(i_part)
+             array_position = aero_component_start_ind(i_part) + i_comp - 1
+             aero_component_particle_num(array_position) = i_part
+             aero_component_source_num(array_position) &
+                  = aero_state%apa%particle(i_part)%component(i_comp)%source_id
+             aero_component_create_time(array_position) &
+                  = aero_state%apa%particle(i_part)%component( &
+                  i_comp)%create_time
+    end do ! i_comp
+
+    aero_num_conc(i_part) &
+               = aero_state_particle_num_conc(aero_state, &
+               aero_state%apa%particle(i_part), aero_data)
+
+
+    end do !i-par
+    if (masterproc) then
+     write(102,*) 'n_part ', n_part
+     write(102,*) 'n_sp_aero ', n_sp_aero
     endif
-    !call pmc_rand_finalize()
+    !aero_particle_mass(:,:)=1
+    aero_particle_mass_out(icol,kk, 1:n_part,1:n_sp_aero) = aero_particle_mass(:, :)
+    ! do i_part = 1,n_part
+    !    aero_particle_mass_out(icol,kk, ((i_part-1)*n_sp_aero+1):i_part*n_sp_aero) =  aero_particle_mass(i_part, :)
+    ! end do
+    aero_component_len_out(icol,kk,1:n_part) =aero_component_len(:)
+    aero_num_conc_out(icol,kk,1:n_part) =aero_num_conc(:)
+    number_of_particles_out(icol, kk) = n_part
 
-
-
-
-  end subroutine invoke_partmc
+  end if
+  end subroutine
 
 end module mo_partmc_interface
