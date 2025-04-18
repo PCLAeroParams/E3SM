@@ -210,7 +210,7 @@ contains
 
   subroutine partmc_mam_inti()
    use mo_tracname, only : solsym
-   use cam_history,  only :addfld
+   use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
    implicit none
    integer :: i, n_species, n_aero_species, n_times
@@ -226,29 +226,32 @@ contains
   call gas_state_set_size(gas_state_init, n_species)
   !call ensure_string_array_size(aero_data%name, n_aero_species)
 
-  allocate(scenario%temp_time(n_times))
-  allocate(scenario%temp(n_times))
-  allocate(scenario%height_time(n_times))
-  allocate(scenario%height(n_times))
-  allocate(scenario%pressure_time(n_times))
-  allocate(scenario%pressure(n_times))
+  ! allocate(scenario%temp_time(n_times))
+  ! allocate(scenario%temp(n_times))
+  ! allocate(scenario%height_time(n_times))
+  ! allocate(scenario%height(n_times))
+  ! allocate(scenario%pressure_time(n_times))
+  ! allocate(scenario%pressure(n_times))
 
-  !FIXME
-  allocate(scenario%gas_emission_time(n_times))
-  allocate(scenario%gas_emission_rate_scale(n_times))
-  allocate(scenario%gas_emission(n_times))
+  ! !FIXME
+  ! allocate(scenario%gas_emission_time(n_times))
+  ! allocate(scenario%gas_emission_rate_scale(n_times))
+  ! allocate(scenario%gas_emission(n_times))
 
-  allocate(scenario%gas_dilution_time(n_times))
-  allocate(scenario%gas_dilution_rate(n_times))
-  allocate(scenario%gas_background(n_times))
+  ! allocate(scenario%gas_dilution_time(n_times))
+  ! allocate(scenario%gas_dilution_rate(n_times))
+  ! allocate(scenario%gas_background(n_times))
 
-  allocate(scenario%aero_emission_time(n_times))
-  allocate(scenario%aero_emission_rate_scale(n_times))
-  allocate(scenario%aero_emission(n_times))
+  ! allocate(scenario%aero_emission_time(n_times))
+  ! allocate(scenario%aero_emission_rate_scale(n_times))
+  ! allocate(scenario%aero_emission(n_times))
 
-  allocate(scenario%aero_dilution_time(n_times))
-  allocate(scenario%aero_dilution_rate(n_times))
-  allocate(scenario%aero_background(n_times))
+  ! allocate(scenario%aero_dilution_time(n_times))
+  ! allocate(scenario%aero_dilution_rate(n_times))
+  ! allocate(scenario%aero_background(n_times))
+  if (masterproc) then
+      write(102,*) 'gas_data%name(i) = solsym(i) ... '
+  endif
 
   do i = 1,n_species
     gas_data%name(i) = solsym(i)
@@ -261,14 +264,21 @@ contains
        aero_dist_init, &
        n_part, rand_init, do_init_equilibrate, do_restart)
 
-  call uuid4_str(run_part_opt%uuid)
+  !call uuid4_str(run_part_opt%uuid)
 
   call aero_state_zero(aero_state)
+  if (masterproc) then
+      write(102,*) 'Before aero_mode_type_exp_present ... '
+    endif
   aero_mode_type_exp_present &
       = aero_dist_contains_aero_mode_type(aero_dist_init, &
-      AERO_MODE_TYPE_EXP) &
-      .or. scenario_contains_aero_mode_type(scenario, &
       AERO_MODE_TYPE_EXP)
+      ! &
+      ! .or. scenario_contains_aero_mode_type(scenario, &
+      ! AERO_MODE_TYPE_EXP)
+  if (masterproc) then
+      write(102,*) 'After aero_mode_type_exp_present ... '
+    endif
 
   if (aero_mode_type_exp_present) then
     if (masterproc) then
@@ -323,11 +333,12 @@ contains
     real(kind=dp)                  ::  aero_num_conc_out(pcols, pver,  n_part_max)
     real(kind=dp)                  ::  number_of_particles_out(pcols, pver)
 
-    n_species=46 ! get from eam
+    !FIXME: get n_species this values from eam
+    n_species=46 !
+    !FIXME: we must pass a delta time factor
     run_part_opt%del_t = dt/10d0
     run_part_opt%t_max = dt
-    ! icol=1
-    ! kk=1
+
     lchnk = state%lchnk
     ncol  = state%ncol
     aero_particle_mass_out(:,:,:,:)=-1000d0
@@ -340,31 +351,31 @@ contains
          write(102,*) 'run_part_opt%del_t: ', run_part_opt%del_t
          write(102,*) 'run_part_opt%t_max: ', run_part_opt%t_max
          write(102,*) '-----------------------------------------'
-   endif
+    endif
 
     ! if (masterproc) then
     !      write(102,*) '-----------------------------------------'
     !      write(102,*) 'Setting gas_state_init'
     ! endif
 
-    scenario%temp_time(:)=0
-    scenario%pressure_time=0
-    scenario%height_time(:)=0
-        !FIXME
-    scenario%gas_emission_time(:)=0.0
-    scenario%gas_emission_rate_scale(:)=0.0
-    !scenario%gas_emission(:)=0.0
+    ! scenario%temp_time(:)=0
+    ! scenario%pressure_time=0
+    ! scenario%height_time(:)=0
+    !     !FIXME
+    ! scenario%gas_emission_time(:)=0.0
+    ! scenario%gas_emission_rate_scale(:)=0.0
+    ! !scenario%gas_emission(:)=0.0
 
-    scenario%gas_dilution_time(:) = 0.0
-    scenario%gas_dilution_rate(:) = 0.0
-    !scenario%gas_background(:) = 0.0
+    ! scenario%gas_dilution_time(:) = 0.0
+    ! scenario%gas_dilution_rate(:) = 0.0
+    ! !scenario%gas_background(:) = 0.0
 
-    scenario%aero_emission_time(:) = 0.0
-    scenario%aero_emission_rate_scale(:) = 0.0
-    !scenario%aero_emission(:) = 0.0
+    ! scenario%aero_emission_time(:) = 0.0
+    ! scenario%aero_emission_rate_scale(:) = 0.0
+    ! !scenario%aero_emission(:) = 0.0
 
-    scenario%aero_dilution_time(:) = 0.0
-    scenario%aero_dilution_rate(:) = 0.0
+    ! scenario%aero_dilution_time(:) = 0.0
+    ! scenario%aero_dilution_rate(:) = 0.0
     !scenario%aero_background(:) = 0.0
 
     env_state%start_time=0
@@ -372,49 +383,51 @@ contains
     env_state%elapsed_time=0d0
 
     do kk = 1,pver
-     do icol = 1, ncol
-      do i = 1,n_species
-        !units?
-        gas_state_init%mix_rat(i) = state%q(icol,kk,i)
-        ! if (masterproc) then
-        !   write(102,*) gas_data%name(i), " : ", gas_state_init%mix_rat(i)
-        !  endif
-      end do
-    scenario%temp(:)  = state%t(icol,kk)
-    scenario%pressure = state%pmid(icol,kk)
-    scenario%height(:) = state%zm(icol,kk)
-    !FIXME:
-    env_state%rel_humid = 0.95
-    env_state%latitude = state%lat(icol)
-    env_state%longitude = state%lon(icol)
-    env_state%altitude = state%zm(icol,kk)
+      do icol = 1, ncol
+        do i = 1,n_species
+          !FIXME: units?
+          gas_state_init%mix_rat(i) = state%q(icol,kk,i)
+          ! if (masterproc) then
+          !   write(102,*) gas_data%name(i), " : ", gas_state_init%mix_rat(i)
+          !  endif
+        end do ! species
+        ! scenario%temp(:)  = state%t(icol,kk)
+        ! scenario%pressure = state%pmid(icol,kk)
+        ! scenario%height(:) = state%zm(icol,kk)
+        !FIXME: we need to compute rel_humid
+        env_state%rel_humid = 0.95
+        env_state%latitude = state%lat(icol)
+        env_state%longitude = state%lon(icol)
+        env_state%altitude = state%zm(icol,kk)
 
-    env_state%temp = state%t(icol,kk)
-    env_state%pressure = state%pmid(icol,kk)
-    env_state%height = state%zm(icol,kk)
-    ! FIXME: should compute this at some point
-    env_state%solar_zenith_angle = 0d0
+        env_state%temp = state%t(icol,kk)
+        env_state%pressure = state%pmid(icol,kk)
+        env_state%height = state%zm(icol,kk)
+        ! FIXME: should compute this at some point
+        env_state%solar_zenith_angle = 0d0
 
-    do i_repeat = 1,run_part_opt%n_repeat
-      run_part_opt%i_repeat = i_repeat
+        do i_repeat = 1,run_part_opt%n_repeat
+          run_part_opt%i_repeat = i_repeat
 
-      gas_state = gas_state_init
-      call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
-               gas_state, run_part_opt)
+          gas_state = gas_state_init
+          call run_part(scenario, env_state, aero_data, aero_state, gas_data, &
+                 gas_state, run_part_opt)
+        end do
 
-      call write_nc_aero_state(aero_state,aero_particle_mass_out,&
+        call write_nc_aero_state(aero_state,aero_particle_mass_out,&
                             aero_component_len_out, &
                             number_of_particles_out, &
                             aero_num_conc_out, &
                             icol, kk)
-    end do
+
+      end do ! icol
     end do ! kk
-    end do ! icol
     n_aero_species=aero_data_n_spec(aero_data)
     do i = 1, n_aero_species
         call outfld( 'aero_particle_mass_'// trim(aero_data%name(i)), &
          aero_particle_mass_out(:ncol, :, :, i), ncol, lchnk )
     end do
+
     call outfld( 'aero_component_len', aero_component_len_out(:ncol, :, :), ncol, lchnk )
     call outfld( 'number_of_particles', number_of_particles_out(:ncol, :), ncol, lchnk )
     call outfld( 'aero_num_conc', aero_num_conc_out(:ncol, :, :), ncol, lchnk )
@@ -481,20 +494,19 @@ contains
 
 
     end do !i-par
+
     if (masterproc) then
-     write(102,*) 'n_part ', n_part
-     write(102,*) 'n_sp_aero ', n_sp_aero
+      write(102,*) 'n_part ', n_part
+      write(102,*) 'n_sp_aero ', n_sp_aero
     endif
-    !aero_particle_mass(:,:)=1
+
     aero_particle_mass_out(icol,kk, 1:n_part,1:n_sp_aero) = aero_particle_mass(:, :)
-    ! do i_part = 1,n_part
-    !    aero_particle_mass_out(icol,kk, ((i_part-1)*n_sp_aero+1):i_part*n_sp_aero) =  aero_particle_mass(i_part, :)
-    ! end do
     aero_component_len_out(icol,kk,1:n_part) =aero_component_len(:)
     aero_num_conc_out(icol,kk,1:n_part) =aero_num_conc(:)
     number_of_particles_out(icol, kk) = n_part
 
   end if
+
   end subroutine
 
 end module mo_partmc_interface
