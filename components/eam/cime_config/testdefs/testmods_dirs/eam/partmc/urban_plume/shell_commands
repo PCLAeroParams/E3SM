@@ -1,4 +1,2 @@
 #!/bin/bash
-
-./xmlchange --append CAM_CONFIG_OPTS='-cosp'
 ./xmlchange --append CAM_CONFIG_OPTS="-partmc"
