@@ -7,6 +7,8 @@
 #include "siqk_exe_space.hpp"
 #include "siqk_intersect.hpp" // Mesh, and polygonal intersections based on them.
 
+#include "partmcsl_sphere_geometry.hpp" // spherical triangle area
+
 namespace partmcsl {
   using siqk::Real;
   using siqk::Int;
@@ -34,35 +36,43 @@ namespace partmcsl {
     using Ptr = std::shared_ptr<SlSourcePartition>;
     using R3Array = siqk::InExeSpace<siqk::ConstVec3s, Kokkos::HostSpace>::type;
     using I2Array = siqk::InExeSpace<siqk::Idxs, Kokkos::HostSpace>::type;
+    using R1Array = siqk::InExeSpace<Kokkos::View<Real*>, Kokkos::HostSpace>::type;
 
     explicit SlSourcePartition(const Int nelem)
     {
       mesh_.resize(nelem);
+      area_.resize(nelem);
     }
 
     const LocalMesh& mesh(const Int ie) const {
       return mesh_[ie];
     }
 
-
     /*
+      Copy the local fv mesh from fortran into the siqk Mesh struct.
+
+      ie [in] is the element, amongst those owned by this rank, that we're working on.
+
+      Array3D corners [in] dimension (3, 4*ncells), passed from Fortran; its entries are the
+        3D cartesian coordinates of the physgrid quadrilaterals' corners.
+
+      CellArray [in] dimension (4, ncells), passed from Fortran; its entries are the quad
+        connectivities of the physgrid cell vertices in the corners array.
+
+      Firt, this routine just copies the fortran arrays into LayoutRight views. This
+      could be optimized away in the future by passing only those fortran
+      pointers to this local mesh structure.  For now, we'll keep it this way
+      because we need to compute edge normals here (fortran doesn't provide them)
+      and this ensures we conform to the array layouts that fill_normals expects.
+
+      Second, it computes the static source cell areas.
+
       the original impl of init_local_mesh_if_needed, from SLMMIR commit 80d80b7822...,
       only needed element-element intersections. It therefore only needed basic
       info from fortran and could construct its own meshes.
       For PartMCSL, however, we need physgrid cells; this impl assumes
       they've already been constructed in fortran and that they're passed to this function
       as array arguments.
-
-      Array3D corners has dimension (3, 4*ncells), passed from Fortran; its entries are the
-        3D cartesian coordinates of the physgrid quadrilaterals' corners.
-      CellArray has dimension (4, ncells), passed from Fortran; its entries are the quad
-        connectivities of the physgrid cell vertices in the corners array.
-
-      Basically, this routine just copies the fortran arrays into LayoutRight views. This
-      could be optimized away in the future by passing only those fortran
-      pointers to this local mesh structure.  For now, we'll keep it this way
-      because we need to compute edge normals here (fortran doesn't provide them)
-      and this ensures we conform to the array layouts fill_normals expects.
     */
     template <typename Array3D, typename CellArray>
     void init_local_mesh_if_needed(const Int ie, const Array3D& corners, const CellArray& cells) {
@@ -72,27 +82,44 @@ namespace partmcsl {
 
       slmm_throw_if( nverts != cells.dimension_0(), "unexpected cells array shape");
 
+
+
       if (mesh_[ie].p.dimension_0() != 0) return;
 
       auto& m = mesh_[ie];
+      auto& a = area_[ie];
 
       const Int ncells = cells.dimension_1();
       const Int npts = nverts * ncells;
 
-      slmm_assert(npts == corners.dimension_1);
+      slmm_assert(npts == corners.dimension_1());
+      slmm_throw_if(npts == corners.dimension_1(), nverts != cells.dimension_0(), "unexpected number of points");
 
       m.p = R3Array("p", npts, ndim);
       m.e = I2Array("e", ncells, nverts);
+      a = R1Array("a", ncells);
+
 
       Int pt_idx=0;
+      Kokkos::View<Real[3][3]> t1pts("t1pts");
+      Kokkos::View<Real[3][3]> t2pts("t2pts");
       for (Int ci=0; ci<ncells; ++ci) {
-        for (Int vi=0; vi<nvertss; ++vi) {
+        const Int cell_start_pt = pt_idx;
+        // step 1: copy vertex-cell connectivity
+        for (Int vi=0; vi<nverts; ++vi) {
           for (int j=0; j<ndim; ++j) {
             m.p(pt_idx,j) = corners(j, pt_idx);
           }
           m.e(ci,vi) = pt_idx;
           ++pt_idx;
         }
+        // step 2: cell area
+        a(ci) = tri_area(slice(m.p, m.e(ci, cell_start_pt)), // tri. 1 = quad verts [0,1,2]
+                         slice(m.p, m.e(ci, cell_start_pt+1)),
+                         slice(m.p, m.e(ci, cell_start_pt+2))) +
+                tri_area(slice(m.p, m.e(ci, cell_start_pt+2)), // tri. 2 = quad verts [2,3,0]
+                         slice(m.p, m.e(ci, cell_start_pt+3)),
+                         slice(m.p, m.e(ci, cell_start_pt))) +
       }
       //
       // an updated version of fill_normals shows up in compose_slmm_departure_point.hpp
@@ -104,8 +131,7 @@ namespace partmcsl {
 
     private:
       std::vector<LocalMesh> mesh_;
-
-
+      std::vector<R1Array> area_;
 
       /*
       Given a subcell index, return the reference coordinates of the vertex at vert_idx,

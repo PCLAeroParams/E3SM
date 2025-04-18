@@ -229,7 +229,7 @@ module partmc_sl_advection_mod
       ! Match gll node indices (i,j) for i,j in [1,np] to elem(ie) corners
       !--------------------------------------------
       !
-      ! This is likely a convention defined in Homme, which means we don't need
+      ! This is likely a convention defined in Homme, which would mean we don't need
       ! to do this search procedure.  However, since our local mesh indexing may differ
       ! from Homme's indexing, we'll do it this way to be sure. 
       !
@@ -296,17 +296,17 @@ module partmc_sl_advection_mod
   subroutine ref_coords_ab(a, b, subcell_idx, vert_idx) 
     !   Warning: subcell_idx and vert_idx are 0-based indices.
     ! 
-    !       Given a subcell index, subcell_idx, return the (a,b) 
+    !       Given a subcell index return the (a,b) 
     !       reference coordinates of the vertex at vert_idx,
     !       in ccw order starting at SW corner.
     ! 
     !                 (0,1)
     !      (-1,1) o----x----o (1,1)
-    !             | 3  | 2  |
+    !             | 3  |  2 |
     !             |    |    |
     !      (-1,0) x----x----x (1,0)
-    !             | 0  | 1  |
     !             |    |    |
+    !             | 0  |  1 |
     !     (-1,-1) o----x----o (1,-1)
     !                 (0,-1)
     !       

@@ -34,14 +34,17 @@ template <typename ES = ko::DefaultExecutionSpace>
 struct Mesh {
   typename InExeSpace<ConstVec3s, ES>::type p, nml;
   typename InExeSpace<ConstIdxs, ES>::type e, en;
+  typename InExeSpace<Kokkos::View<Real*>, ES>::type a;
 
   Mesh () {}
 
   Mesh (const Mesh<ko::HostSpace>& m) {
     typename InExeSpace<Vec3s, ES>::type tp, tnml;
     typename InExeSpace<Idxs, ES>::type te, ten;
+    typename InExeSpace<Kokkos::View<Real*>>::type ta;
     resize_and_copy(tp, m.p); p = tp;
     resize_and_copy(tnml, m.nml); nml = tnml;
+    resize_and_copy(ta, m.a); a = ta;
     resize_and_copy(te, m.e); e = te;
     resize_and_copy(ten, m.en); en = ten;
   }

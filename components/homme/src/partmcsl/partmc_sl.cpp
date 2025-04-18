@@ -101,12 +101,11 @@ void calc_partmcsl_source_partition(const Int lev_idx,
   slmm_assert(m.p.dimension_1() == n_cells_in_mesh);
   slmm_throw_if(m.p.dimension_1() != n_cells_in_mesh, "mesh points mismatch with n_cells_in_mesh");
 
-  for (int sci=0; sci < n_subcells_per_elem; ++sci) {// loop over subcells that elem(ie) owns
-
-
+  for (int sci=0; sci < n_subcells_per_elem; ++sci) {// loop over subcells of elem(ie)
     for (Int ci=0; ci < n_cells_in_mesh; ++ci) {// loop over cells in mesh
-
-      // compute intersections
+      //
+      // compute intersection of advected subcell sci with static cell ci
+      //
       const siqk::RawVec3s verts_in(vi_buf, nverts, 3);
       siqk::RawVec3s verts_out(vo_buf, max_num_intersections, 3);
       Int n_overlap_verts = 0;
