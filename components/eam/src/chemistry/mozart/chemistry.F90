@@ -939,7 +939,7 @@ end function chem_is_active
     use mo_setsox,             only : sox_inti
     use constituents,          only : sflxnam
     use UCI_cloudJ_interface,  only : cloudJ_init
-    use mo_partmc_interface, only: partmc_inti, partmc_mam_inti
+    use mo_partmc_interface, only: partmc_mam_inti
 
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
     type(physics_state), intent(in):: phys_state(begchunk:endchunk)
@@ -1411,7 +1411,7 @@ end function chem_is_active
     use mo_chem_utls,        only : get_spc_ndx
     use cam_abortutils,      only: endrun
 
-    use mo_partmc_interface, only: invoke_partmc, partmc_mam_invoke
+    use mo_partmc_interface, only: partmc_mam_invoke
 
     implicit none
 
@@ -1713,7 +1713,7 @@ end function chem_is_active
     call t_startf( 'partmc' )
     ! FIXME: It will not compile if PartMC is off.
     !call invoke_partmc(ncol)
-    call partmc_mam_invoke(state)
+    call partmc_mam_invoke(state, dt)
     call t_stopf( 'partmc' )
 
 !-----------------------------------------------------------------------
