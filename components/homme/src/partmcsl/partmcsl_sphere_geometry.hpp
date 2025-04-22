@@ -22,16 +22,16 @@ namespace partmcsl {
     }
   };
 
-    /** \brief  Computes the area of the spherical triangle whose vertices a
+    /** \brief  Computes the area of the spherical triangle whose vertices are
     defined (in ccw order) by a, b, c.
 
     \param a vertex a = [a0,a1,a2]
     \param b vertex b = [b0,b1,b2]
     \param c vertex c = [c0,c1,c2]
   */
-  template <typename CV, typename CV2>
-  KOKKOS_INLINE_FUNCTION Real tri_area(const CV& a, const CV2& b,
-                                              const CV2& c) {
+  template <typename CV1, typename CV2, typename CV3>
+  KOKKOS_INLINE_FUNCTION Real tri_area(const CV1& a, const CV2& b,
+                                              const CV3& c) {
     const Real s1 = distance(a, b);
     const Real s2 = distance(b, c);
     const Real s3 = distance(c, a);
@@ -46,4 +46,24 @@ namespace partmcsl {
     return 4 * atan(sqrt(zz));
   }
 
-}
+    /** \brief Computes the spherical barycenter defined by n vertices on the
+    sphere.
+
+    \param v output view, contains coordinates of barycenter on the sphere
+    \param cv input view of vertex vectors
+    \param n number of vertices
+  */
+  template <typename V, typename CV>
+  KOKKOS_INLINE_FUNCTION void barycenter(V v, const CV& cv,
+                                                const Int n) {
+    set_zero(v);
+    for (int i = 0; i < n; ++i) {
+      v[0] += cv(i, 0);
+      v[1] += cv(i, 1);
+      v[2] += cv(i, 2);
+    }
+    scale(1.0 / n, v);
+    normalize(v);
+  }
+
+} // namespace partmcsl

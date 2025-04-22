@@ -16,6 +16,7 @@ module partmc_sl_advection_mod
   use parallel_mod, only       : parallel_t, abortmp
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
+  use partmcsl_mod
 
   implicit none
   private
@@ -187,7 +188,7 @@ module partmc_sl_advection_mod
     do ie = 1, nelemd ! loop over elements owned by this rank
       pt_idx = 1
       cell_idx = 1
-      ! create a local mesh of physics cells for each element
+      ! create a local mesh of physics cells 
       do in = 1, fv_mesh%nneighbors(ie) ! loop over element neighbors
       ! neighbor corners defined by bndry_mod.F90
       ! and stored in elem(ie)%desc%neigh_corners(:,in)
@@ -230,8 +231,8 @@ module partmc_sl_advection_mod
       !--------------------------------------------
       !
       ! This is likely a convention defined in Homme, which would mean we don't need
-      ! to do this search procedure.  However, since our local mesh indexing may differ
-      ! from Homme's indexing, we'll do it this way to be sure. 
+      ! to do this search procedure.  However, our local mesh indexing may differ
+      ! from Homme's indexing, so we'll do it this way to be sure. 
       !
       do vi=1,4 ! loop over corners of current element, find gll i,j indices that match corner points
         iloc = -1
@@ -376,6 +377,7 @@ module partmc_sl_advection_mod
     type(cartesian3D_t) :: advected_pts(nverts * nphys_cell_per_elem)
     integer :: ie, k ! loop iterators
     integer :: t1 ! time point 1 (end of advection timestep)
+    integer :: di, ci, dest_idx, src_idx
     
     ! TODO: barrier (if necessary)
     ! TODO: timer start
@@ -389,7 +391,27 @@ module partmc_sl_advection_mod
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         !------------------------
         ! step 2: compute overlap portions (c++)
-        call calc_partmcsl_source_partition(k, ie, advected_pts, fv_mesh%points, fv_mesh%cells, fv_mesh%nneighbors)
+        call calc_partmcsl_source_partition(ie, nelemd, fv_mesh%max_nneighbors(ie), &
+          fv_mesh%my_local_idx(ie), k, nlev, advected_pts, fv_mesh%points, &
+          fv_mesh%cells, fv_mesh%nneighbors, src_partition%ndest, &
+          src_partition%dest_cell_idxs, src_partition%dest_portions)
+        !------------------------
+        ! step 3: move partmc particles
+        do ci=1,4 ! loop over subcells owned by this element
+          ! TODO: get partmc instance from source cell
+          src_idx = fv_mesh%subcell_idx(fv_mesh%my_local_idx(ie) + ci, ie)
+          do di=1, src_partition%ndest(k,ci,ie)
+            ! TODO: get partmc instance from destination cell
+            dest_idx = src_partition%dest_cell_idxs(di, k, ci, ie)
+            dest_frac = src_partition%dest_portions(di, k, ci, ie)
+            !------------------------
+            ! step 3a: accumulate particle info, make sure send/receive buffers are big enough
+            !------------------------
+            ! step 3b: send particles from src_idx to dest_idx
+            ! TODO: send dest_frac of src particles from src_idx to dst_idx
+            ! TODO: PartMC MPI send/receive subroutines
+          enddo
+        enddo
       enddo
     enddo ! loop over elements worked by this thread
 
@@ -398,7 +420,7 @@ module partmc_sl_advection_mod
   end subroutine partmcsl_step_forward
  
   subroutine partmcsl_fwd_advection(acart, vt0, vt1, fvm, elem, ie, dt)
-    type(cartesian3D_t), intent(out) :: acart(16)  ! output: cartesian coordinates of advected fv cell corners
+    type(cartesian3D_t), intent(out) :: acart(16)  ! output: cartesian coordinates of advected fv cell corners ; shared corners are duplicated -- could be changed later.
     real(kind=real_kind), intent(in) :: vt0(np, np, 2) ! input: spherical coordinate velocity components at beginning of tracer time step
     real(kind=real_kind), intent(in) :: vt1(np, np, 2) ! input: spherical coordinate velocity components at end of tracer time step
     type(local_fv_mesh_t), intent(in) :: fvm
@@ -419,8 +441,8 @@ module partmc_sl_advection_mod
     !--------------------------------------------
     ! gather velocity at element corners
     do vi=1,4
-      ci = fvm%gll_ij_corners(1,vi,ie)
-      cj = fvm%gll_ij_corners(2,vi,ie)
+      ci = fvm%gll_ij_corners(1,vi,ie) ! gll i index of corner
+      cj = fvm%gll_ij_corners(2,vi,ie) ! gll j index of corner
       ! convert velocity from lat/lon to cartesian 3D
       ! see cube_mod.F90 vec_sphere2cart and sl_advection.F90 subroutine ALE_departure_from_gll 
       ! for explanation of this dot product      

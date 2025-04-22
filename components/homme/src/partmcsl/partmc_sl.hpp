@@ -31,17 +31,20 @@ namespace partmcsl {
   static constexpr Int max_ndest_elem = 9;
   // upper bound on number of cell-cell intersections
   static constexpr Int max_ndest_cell = n_subcells_per_elem * max_ndest_elem;
+  static constexpr Real fp_tol = 1e-14;
 
   struct SlSourcePartition {
     using Ptr = std::shared_ptr<SlSourcePartition>;
     using R3Array = siqk::InExeSpace<siqk::ConstVec3s, Kokkos::HostSpace>::type;
     using I2Array = siqk::InExeSpace<siqk::Idxs, Kokkos::HostSpace>::type;
     using R1Array = siqk::InExeSpace<Kokkos::View<Real*>, Kokkos::HostSpace>::type;
+    using I1Array = siqk::InExeSpace<Kokkos::View<Int*>, Kokkos::HostSpace>::type;
 
     explicit SlSourcePartition(const Int nelem)
     {
       mesh_.resize(nelem);
       area_.resize(nelem);
+      ie_start_idx_.resize(nelem);
     }
 
     const LocalMesh& mesh(const Int ie) const {
@@ -75,19 +78,18 @@ namespace partmcsl {
       as array arguments.
     */
     template <typename Array3D, typename CellArray>
-    void init_local_mesh_if_needed(const Int ie, const Array3D& corners, const CellArray& cells) {
+    void init_local_mesh_if_needed(const Int ie, const Int ie_self_idx, const Array3D& corners, const CellArray& cells) {
 
       slmm_assert( (ie >= 0 and ie < static_cast<Int>(mesh_.size())) );
       slmm_assert( nverts == cells.dimension_0() );
 
       slmm_throw_if( nverts != cells.dimension_0(), "unexpected cells array shape");
 
-
-
       if (mesh_[ie].p.dimension_0() != 0) return;
 
       auto& m = mesh_[ie];
       auto& a = area_[ie];
+      ie_start_idx_[ie] = n_subcells_per_elem*ie_self_idx;
 
       const Int ncells = cells.dimension_1();
       const Int npts = nverts * ncells;
@@ -99,10 +101,7 @@ namespace partmcsl {
       m.e = I2Array("e", ncells, nverts);
       a = R1Array("a", ncells);
 
-
       Int pt_idx=0;
-      Kokkos::View<Real[3][3]> t1pts("t1pts");
-      Kokkos::View<Real[3][3]> t2pts("t2pts");
       for (Int ci=0; ci<ncells; ++ci) {
         const Int cell_start_pt = pt_idx;
         // step 1: copy vertex-cell connectivity
@@ -110,16 +109,15 @@ namespace partmcsl {
           for (int j=0; j<ndim; ++j) {
             m.p(pt_idx,j) = corners(j, pt_idx);
           }
-          m.e(ci,vi) = pt_idx;
-          ++pt_idx;
+          m.e(ci,vi) = pt_idx++;
         }
-        // step 2: cell area
+        // step 2: compute cell area
         a(ci) = tri_area(slice(m.p, m.e(ci, cell_start_pt)), // tri. 1 = quad verts [0,1,2]
                          slice(m.p, m.e(ci, cell_start_pt+1)),
                          slice(m.p, m.e(ci, cell_start_pt+2))) +
                 tri_area(slice(m.p, m.e(ci, cell_start_pt+2)), // tri. 2 = quad verts [2,3,0]
                          slice(m.p, m.e(ci, cell_start_pt+3)),
-                         slice(m.p, m.e(ci, cell_start_pt))) +
+                         slice(m.p, m.e(ci, cell_start_pt)));
       }
       //
       // an updated version of fill_normals shows up in compose_slmm_departure_point.hpp
@@ -132,6 +130,7 @@ namespace partmcsl {
     private:
       std::vector<LocalMesh> mesh_;
       std::vector<R1Array> area_;
+      std::vector<Int> ie_start_idx_;
 
       /*
       Given a subcell index, return the reference coordinates of the vertex at vert_idx,
@@ -154,7 +153,7 @@ namespace partmcsl {
 
   void src_partition_init(const Int nelem);
 
-  void calc_partmcsl_source_partition();
+  void calc_partmcsl_source_partition(/* TODO: args */);
 
 } // namespace partmcsl
 #endif
