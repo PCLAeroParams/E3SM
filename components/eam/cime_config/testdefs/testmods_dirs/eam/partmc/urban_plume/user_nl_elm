@@ -1,4 +1,4 @@
 hist_dov2xy = .true.,.true.
-ist_mfilt = 1,365
+hist_mfilt = 1,365
 hist_nhtfrq = -24,-24
 hist_avgflag_pertape = 'A','A'
