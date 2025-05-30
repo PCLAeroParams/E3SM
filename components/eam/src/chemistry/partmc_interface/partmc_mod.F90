@@ -218,13 +218,15 @@ contains
   call add_hist_coord('npartmax',    n_part_max,    'NPARTMAX')
   call add_hist_coord('na_spmax',    n_aero_sp_max,    'NAEROSPMAX')
   call add_hist_coord('na_sp_partmax',    n_aero_sp_max,    'NAEROSPPARTMAX')
-  ! call addfld( 'aero_particle_mass', (/'lev          ', 'na_sp_partmax' /), 'I', 'kg', 'constituent masses of each aerosol particle' )
   do i_spec = 1,aero_data_n_spec(aero_data)
-    call addfld( 'aero_particle_mass_'// trim(aero_data%name(i_spec)), (/'lev     ', 'npartmax' /), 'I', 'kg', 'constituent masses of each aerosol particle' )
+    call addfld( 'aero_particle_mass_'// trim(aero_data%name(i_spec)), &
+         (/'lev     ', 'npartmax' /), 'I', 'kg', 'constituent masses of each aerosol particle' )
   end do
 
-  call addfld( 'number_concentration', (/'lev     ' /), 'I', 'm^{-3}', 'number concentration per cell' )
-  call addfld( 'aero_num_conc', (/'lev     ', 'npartmax' /), 'I', 'm^{-3}', 'number concentration for each particle' )
+  call addfld( 'number_concentration', (/'lev     ' /), 'I', 'm^{-3}', &
+       'number concentration per cell' )
+  call addfld( 'aero_num_conc', (/'lev     ', 'npartmax' /), 'I', 'm^{-3}', &
+       'number concentration for each particle' )
 
   end subroutine partmc_mam_inti
 
@@ -240,7 +242,7 @@ contains
     real(kind=dp) ::  aero_particle_mass_out(pcols, pver,  n_part_max,n_aero_sp_max)
     real(kind=dp) ::  aero_component_len_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  aero_num_conc_out(pcols, pver,  n_part_max)
-    real(kind=dp) ::  number_of_particles_out(pcols, pver)
+    real(kind=dp) ::  number_conc_out(pcols, pver)
 
     integer ::  n_samp, n_coag, i_time, n_time, n_emit
     real(kind=dp) :: emission_rate_scale, p
@@ -260,7 +262,7 @@ contains
 
     ! Output arrays
     aero_particle_mass_out(:,:,:,:)=-1000d0
-    number_of_particles_out(:,:)=-1
+    number_conc_out(:,:) = 0d0
     aero_num_conc_out(:,:,:) = 0d0
 
     if (masterproc) then
@@ -294,21 +296,20 @@ contains
         ! FIXME: we need to compute rel_humid
         !   See relhum array calculation in mo_gas_phase_chemdr.F90
         env_state%rel_humid = 0.95
+
         env_state%latitude = state%lat(icol)
         env_state%longitude = state%lon(icol)
-        env_state%altitude = state%zm(icol,kk)
+        env_state%altitude = state%zm(icol,kk) ! Geopotential height (m)
 
         env_state%temp = state%t(icol,kk) ! Midpoint temperature (K)
         env_state%pressure = state%pmid(icol,kk) ! Midpoint pressure (Pa)
         ! FIXME: zm is midpoint geopotential height
         !        zi  is interface geopotential height
-        env_state%height = state%zi(icol,kk+1) - state%zi(icol,kk)
+        !        we really want geometric height
+        env_state%height = state%zi(icol,kk) - state%zi(icol,kk+1)
         ! FIXME: should compute this at some point
         !        see zenith() code in mo_gas_phase_chemdr.F90
         env_state%solar_zenith_angle = 0d0
-
-!        print*, 'number of particles', aero_state_n_part(aero_state), aero_data_n_spec(aero_data), &
-!            gas_data_n_spec(gas_data)
 
         ! For now, lets just try coagulation + emission.
         ! We probably want a custom code here anyway to have better control:
@@ -332,12 +333,6 @@ contains
            ! Coagulation
            call mc_coag(run_part_opt%coag_kernel_type, env_state, &
                   aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
-!           if(n_coag > 0) then
-!              print*, icol, kk, 'we coagulated', n_coag
-!           end if
-!           if (n_emit > 0) then
-!              print*, icol, kk, 'n_emit', n_emit
-!           end if
 
            ! Rebalance
            call aero_state_rebalance(aero_state, aero_data, &
@@ -345,32 +340,29 @@ contains
                 run_part_opt%allow_halving, initial_state_warning=.false.)
 
         end do
-        call write_nc_aero_state(aero_state,aero_particle_mass_out,&
+        call write_nc_aero_state(aero_state,aero_particle_mass_out, &
                             aero_num_conc_out, &
+                            number_conc_out, &
                             icol, kk)
-
-        ! FIXME: We need to copy back mixing ratios from gas_states to state%q
-        do i = 1,gas_data_n_spec(gas_data)
-           state%q(icol,kk,i) = gas_state%mix_rat(i) / 1d9
-        end do
       end do ! icol
     end do ! kk
 
    ! Output to E3SM
-!    do i = 1,aero_data_n_spec(aero_data) 
-!        call outfld( 'aero_particle_mass_'// trim(aero_data%name(i)), &
-!             aero_particle_mass_out(:ncol, :, :, i), ncol, lchnk )
-!    end do
+    do i = 1,aero_data_n_spec(aero_data) 
+        call outfld( 'aero_particle_mass_'// trim(aero_data%name(i)), &
+             aero_particle_mass_out(:ncol, :, :, i), ncol, lchnk )
+    end do
 
-    call outfld( 'number_concentration', number_of_particles_out(:ncol, :), ncol, lchnk )
+    call outfld( 'number_concentration', number_conc_out(:ncol, :), ncol, lchnk )
     call outfld( 'aero_num_conc', aero_num_conc_out(:ncol, :, :), ncol, lchnk )
 
   end subroutine partmc_mam_invoke
 
   ! Compute bulk statistics
   subroutine write_nc_aero_state(aero_state, &
-                              aero_particle_mass_out,&
-                              aero_num_conc_out,&
+                              aero_particle_mass_out, &
+                              aero_num_conc_out, &
+                              number_conc_out, &
                               icol, kk)
 
   implicit none
@@ -379,6 +371,7 @@ contains
   type(aero_state_t), intent(in) :: aero_state
   real(kind=dp), intent(inout)  ::  aero_particle_mass_out(pcols,  pver, n_part_max,n_aero_sp_max)
   real(kind=dp), intent(inout)  ::  aero_num_conc_out(pcols, pver,  n_part_max)
+  real(kind=dp), intent(inout)  ::  number_conc_out(pcols, pver)
   integer, intent(in) :: icol,kk
 
   real(kind=dp) :: aero_particle_mass(aero_state_n_part(aero_state), &
@@ -414,6 +407,7 @@ contains
 
     aero_particle_mass_out(icol,kk, 1:n_part,1:n_sp_aero) = aero_particle_mass(:, :)
     aero_num_conc_out(icol,kk,1:n_part) = aero_num_conc(:)
+    number_conc_out(icol,kk) = sum(aero_num_conc)
 
   end if
 
@@ -444,7 +438,7 @@ contains
                weight_class_name)
        emissions%mode(i_mode)%char_radius = 1.0d-8
        emissions%mode(i_mode)%log10_std_dev_radius = log10(1.6d0)
-       emissions%mode(i_mode)%num_conc = 1.0d7
+       emissions%mode(i_mode)%num_conc = 1.0d6
        allocate(emissions%mode(i_mode)%vol_frac(aero_data_n_spec(aero_data)))
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
        emissions%mode(i_mode)%vol_frac = 1.0d0 / 20
