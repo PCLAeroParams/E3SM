@@ -38,3 +38,6 @@
 
 /* Detect whether COMPOSE passive tracer transport is enabled */
 #cmakedefine HOMME_ENABLE_COMPOSE
+
+/* Detect whether PartMC stochastic transport is enabled */
+#cmakedefine HOMME_ENABLE_PARTMCSL

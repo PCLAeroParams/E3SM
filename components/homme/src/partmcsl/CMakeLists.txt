@@ -1,9 +1,6 @@
 # Experimental Stochastic transport with semi-Lagrangian remap
 # for use with PartMC aerosol parameterizations.
 #
-#
-#
-#
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR} # polygonal intersection, and area quadrature
   ${CMAKE_CURRENT_BINARY_DIR}

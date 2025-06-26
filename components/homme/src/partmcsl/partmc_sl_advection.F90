@@ -22,7 +22,7 @@ module partmc_sl_advection_mod
   private
   
   public :: partmcsl_init, partmcsl_finalize
-!   public :: partmcsl_step_forward
+  public :: partmcsl_step_forward
   
   ! we assume pg2 grid 
   integer, parameter :: nphys = 2, & ! the "2" in pg2, 2 physics cell edges per spectral element edge
@@ -311,6 +311,8 @@ module partmc_sl_advection_mod
     !     (-1,-1) o----x----o (1,-1)
     !                 (0,-1)
     !       
+    !TODO: replace this function with an interface to its c++ counterpart.
+    !
     real(real_kind), intent(out) :: a, b ! output: (a,b) coordinates in ref. quad.
     integer, intent(in) :: subcell_idx, vert_idx ! input: *0-based* subcell and vertex indices
     ! local
@@ -378,6 +380,7 @@ module partmc_sl_advection_mod
     integer :: ie, k ! loop iterators
     integer :: t1 ! time point 1 (end of advection timestep)
     integer :: di, ci, dest_idx, src_idx
+    real(kind=real_kind) :: dest_frac
     
     ! TODO: barrier (if necessary)
     ! TODO: timer start
@@ -391,10 +394,10 @@ module partmc_sl_advection_mod
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         !------------------------
         ! step 2: compute overlap portions (c++)
-        call calc_partmcsl_source_partition(ie, nelemd, fv_mesh%max_nneighbors(ie), &
-          fv_mesh%my_local_idx(ie), k, nlev, advected_pts, fv_mesh%points, &
-          fv_mesh%cells, fv_mesh%nneighbors, src_partition%ndest, &
-          src_partition%dest_cell_idxs, src_partition%dest_portions)
+!         call calc_partmcsl_source_partition(ie, nelemd, fv_mesh%max_nneighbors(ie), &
+!           fv_mesh%my_local_idx(ie), k, nlev, advected_pts, fv_mesh%points, &
+!           fv_mesh%cells, fv_mesh%nneighbors, src_partition%ndest, &
+!           src_partition%dest_cell_idxs, src_partition%dest_portions)
         !------------------------
         ! step 3: move partmc particles
         do ci=1,4 ! loop over subcells owned by this element
@@ -479,12 +482,6 @@ module partmc_sl_advection_mod
       enddo
     enddo
     
-  end subroutine partmcsl_fwd_advection
-
-
-  
-
-  
-
+  end subroutine partmcsl_fwd_advection  
 
 end module partmc_sl_advection_mod
