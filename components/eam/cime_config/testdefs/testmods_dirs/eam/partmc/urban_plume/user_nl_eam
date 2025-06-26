@@ -1,0 +1,18 @@
+cosp_lite = .true.
+
+empty_htapes = .true.
+
+avgflag_pertape = 'A','A','A','A','I','I'
+nhtfrq = -24,-24,-6,-3,-1,-24
+mfilt  = 1,30,120,240,720,1
+
+fincl5 = 'aero_particle_mass_SO4','aero_particle_mass_BC','aero_num_conc','number_concentration'
+
+! -- chemUCI settings ------------------
+history_chemdyg_summary = .true.
+history_gaschmbudget_2D = .false.
+history_gaschmbudget_2D_levels = .false.
+history_gaschmbudget_num = 6 !! no impact if  history_gaschmbudget_2D = .false.
+
+! -- MAM5 settings ------------------
+is_output_interactive_volc = .true.

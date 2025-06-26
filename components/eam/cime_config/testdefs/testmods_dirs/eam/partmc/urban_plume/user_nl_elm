@@ -1,0 +1,4 @@
+hist_dov2xy = .true.,.true.
+hist_mfilt = 1,365
+hist_nhtfrq = -24,-24
+hist_avgflag_pertape = 'A','A'
