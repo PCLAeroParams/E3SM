@@ -14,6 +14,23 @@ set(GW_SRCS
 if (NOT EAMXX_ENABLE_GPU OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE OR Kokkos_ENABLE_HIP_RELOCATABLE_DEVICE_CODE)
   list(APPEND GW_SRCS
     eti/gw_gwd_compute_tendencies_from_stress_divergence.cpp
+    eti/gw_gw_prof.cpp
+    eti/gw_momentum_energy_conservation.cpp
+    eti/gw_gwd_compute_stress_profiles_and_diffusivities.cpp
+    eti/gw_gwd_project_tau.cpp
+    eti/gw_gwd_precalc_rhoi.cpp
+    eti/gw_gw_drag_prof.cpp
+    eti/gw_gw_front_project_winds.cpp
+    eti/gw_gw_front_gw_sources.cpp
+    eti/gw_gw_cm_src.cpp
+    eti/gw_gw_convect_project_winds.cpp
+    eti/gw_gw_heating_depth.cpp
+    eti/gw_gw_storm_speed.cpp
+    eti/gw_gw_convect_gw_sources.cpp
+    eti/gw_gw_beres_src.cpp
+    eti/gw_gw_ediff.cpp
+    eti/gw_gw_diff_tend.cpp
+    eti/gw_gw_oro_src.cpp
   ) # GW ETI SRCS
 endif()
 
