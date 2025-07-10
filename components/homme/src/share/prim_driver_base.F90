@@ -1262,6 +1262,9 @@ contains
     use reduction_mod,      only: parallelmax
     use time_mod,           only: time_at,TimeLevel_t, timelevel_update, nsplit
     use prim_state_mod,     only: prim_printstate
+#ifdef HOMME_ENABLE_PARTMCSL    
+    use partmc_sl_advection_mod, only: partmcsl_step_forward
+#endif        
 
     type(element_t),      intent(inout) :: elem(:)
     type(hybrid_t),       intent(in)    :: hybrid   ! distributed parallel structure (shared)
@@ -1327,6 +1330,12 @@ contains
       call t_stopf("PAT_remap")  
     end if
     call t_stopf("prim_step_advec")
+    
+#ifdef HOMME_ENABLE_PARTMCSL      
+      ! TODO: add timer start call here
+      call partmcsl_step_forward(elem, dt, nets, nete, tl)
+      ! TODO: add timer stop call here
+#endif      
   end subroutine prim_step
 
   subroutine prim_step_flexible(hybrid, elem, nets, nete, dt, tl, hvcoord, compute_diagnostics)
@@ -1340,9 +1349,7 @@ contains
     use prim_state_mod,     only: prim_printstate
     use vertremap_mod,      only: vertical_remap
     use sl_advection,       only: sl_vertically_remap_tracers
-#ifdef HOMME_ENABLE_PARTMCSL    
-    use partmc_sl_advection_mod, only: partmcsl_step_forward
-#endif    
+
 
     type(element_t),      intent(inout) :: elem(:)
     type(hybrid_t),       intent(in)    :: hybrid   ! distributed parallel structure (shared)
@@ -1463,11 +1470,7 @@ contains
     if (qsize > 0) then
        call sl_vertically_remap_tracers(hybrid, elem, nets, nete, tl, dt_q)
     end if
-#ifdef HOMME_ENABLE_PARTMCSL      
-      ! TODO: add timer start call here
-      call partmcsl_step_forward(elem, dt, nets, nete, tl)
-      ! TODO: add timer stop call here
-#endif          
+        
   end subroutine prim_step_flexible
 
   subroutine run_diagnostics(elem, hvcoord, tl, n, t_before_advance, nets, nete)
