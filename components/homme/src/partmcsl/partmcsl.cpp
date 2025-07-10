@@ -1,4 +1,4 @@
-#include "partmc_sl.hpp"
+#include "partmcsl.hpp"
 #include "compose_homme.hpp" // FA types
 
 namespace partmcsl {

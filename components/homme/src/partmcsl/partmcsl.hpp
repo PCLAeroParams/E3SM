@@ -95,7 +95,7 @@ namespace partmcsl {
       const Int npts = nverts * ncells;
 
       slmm_assert(npts == corners.dimension_1());
-      slmm_throw_if(npts == corners.dimension_1(), nverts != cells.dimension_0(), "unexpected number of points");
+      slmm_throw_if(npts != corners.dimension_1() or nverts != cells.dimension_0(), "unexpected number of points");
 
       m.p = R3Array("p", npts, ndim);
       m.e = I2Array("e", ncells, nverts);

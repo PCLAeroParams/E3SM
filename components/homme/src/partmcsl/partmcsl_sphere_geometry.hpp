@@ -1,8 +1,11 @@
-#ifndef PARTMC_SPHERE_GEOMETRY_HPP
-#define PARTMC_SPHERE_GEOMETRY_HPP
+#ifndef PARTMCSL_SPHERE_GEOMETRY_HPP
+#define PARTMCSL_SPHERE_GEOMETRY_HPP
 
 #include "compose_slmm.hpp"
-#include "compose_slmm_siqk.hpp" // geometry, sqr, slice, kokkos view types
+#include "compose_homme.hpp"
+#include "compose_slmm_siqk.hpp"
+
+#include <cmath>
 
 namespace partmcsl {
 
@@ -15,12 +18,12 @@ namespace partmcsl {
     */
     template <typename CV, typename CV2>
     KOKKOS_INLINE_FUNCTION Real distance(const CV a, const CV2 b) {
-      Real cp[3];
-      siqk::SphereGeometry::cross(cp, a, b);
-      const Real dp = siqk::SphereGeometry::dot(a, b);
-      return std::atan2(std::sqrt(siqk::SphereGeometry::norm2(cp), dp);
+//       Real cp[3];
+//       siqk::SphereGeometry::cross(cp, a, b);
+//       const Real dp = siqk::SphereGeometry::dot(a, b);
+//       return std::atan2(std::sqrt(siqk::SphereGeometry::norm2(cp)) , dp);
+        return std::acos(siqk::SphereGeometry::dot(a,b));
     }
-  };
 
     /** \brief  Computes the area of the spherical triangle whose vertices are
     defined (in ccw order) by a, b, c.
@@ -32,6 +35,7 @@ namespace partmcsl {
   template <typename CV1, typename CV2, typename CV3>
   KOKKOS_INLINE_FUNCTION Real tri_area(const CV1& a, const CV2& b,
                                               const CV3& c) {
+    constexpr Real fp_tol = 1e-14;
     const Real s1 = distance(a, b);
     const Real s2 = distance(b, c);
     const Real s3 = distance(c, a);
@@ -39,8 +43,8 @@ namespace partmcsl {
     Real zz = std::tan(0.5 * half_perim) * std::tan(0.5 * (half_perim - s1)) *
               std::tan(0.5 * (half_perim - s2)) *
               std::tan(0.5 * (half_perim - s3));
-    if (FloatingPoint<Real>::zero(zz)) {
-      // guard against (0 - epsilon)
+    if (std::abs(zz) < fp_tol) {
+      // guard against "negative zero"
       zz = 0;
     }
     return 4 * atan(sqrt(zz));
@@ -67,3 +71,5 @@ namespace partmcsl {
   }
 
 } // namespace partmcsl
+
+#endif

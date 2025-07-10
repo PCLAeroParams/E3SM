@@ -16,7 +16,7 @@ module partmc_sl_advection_mod
   use parallel_mod, only       : parallel_t, abortmp
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
-  use partmcsl_mod
+  use partmcsl_mod, only       : tri_area
 
   implicit none
   private
@@ -66,11 +66,10 @@ module partmc_sl_advection_mod
   !  fv_mesh%subcell_idx(i, ie) gives the subcell index, in [1,4], of fv cell i relative to its
   !     enclosing element, fv_mesh%gll_local_id(i,ie).  
   type :: local_fv_mesh_t
-    type(cartesian3D_t), allocatable :: points(:, :) ! (nverts * nphys_cell_per_elem * max_num_neighbors, nelemd)
-    integer, allocatable :: cells(:, :, :) ! (nverts, nphys_cell_per_elem * max_num_neighbors, nelemd)
-    integer, allocatable :: subcell_idx(:,:) ! (nphys_cell_per_elem * max_num_neighbors, nelemd)
-    integer, allocatable :: gll_local_id(:,:) ! (nphys_cell_per_elem * max_num_neighbors, nelemd)
-    integer, allocatable :: gll_global_id(:,:) !(nphys_cell_per_elem * max_num_neighbors, nelemd)
+    type(cartesian3D_t), allocatable :: points(:,:,:,:) ! (nverts, nphys_cell_per_elem, max_num_neighbors, nelemd)
+    integer, allocatable :: subcell_idx(:,:,:) ! (nphys_cell_per_elem, max_num_neighbors, nelemd)
+    integer, allocatable :: gll_local_id(:,:,:) ! (nphys_cell_per_elem, max_num_neighbors, nelemd)
+    integer, allocatable :: gll_global_id(:,:,:) !(nphys_cell_per_elem, max_num_neighbors, nelemd)
     integer, allocatable :: gll_ij_corners(:,:,:) ! (2, 4, nelemd)
     integer, allocatable :: nneighbors(:) ! (nelemd)
     integer, allocatable :: my_local_idx(:) ! (nelemd)
@@ -122,9 +121,9 @@ module partmc_sl_advection_mod
     !
     ! local variables
     !
-    integer :: ie, in, ci, vi, pt_idx, cell_idx, i, j, iloc, jloc    
+    integer :: ie, in, ci, vi, i, j, iloc, jloc    
     type(cartesian3D_t) :: p_cart, gll_cart
-    real(real_kind) :: a, b, dist
+    real(real_kind) :: a, b, dist, elem_area
     integer :: num_neighbors, max_num_neighbors
     !
     ! not used, but needed for interfaces
@@ -138,11 +137,8 @@ module partmc_sl_advection_mod
     if (cubed_sphere_map /= 2) then
       call abortmp("partmcsl only supports cubed_sphere_map = 2.")
     endif
-    if (dt_tracer_factor > dt_remap_factor) then
-      call abortmp("partmcsl requires dt_tracer_factor <= dt_remap_factor.")
-    endif
-    if (mod(dt_tracer_factor, dt_remap_factor) /= 0) then
-      call abortmp("partmcsl requires dt_tracer_factor to be a multiple of dt_remap_factor.")
+    if (dt_tracer_factor /= dt_remap_factor) then
+      call abortmp("partmcsl requires dt_tracer_factor == dt_remap_factor.")
     endif
     
     if (par%masterproc) then
@@ -162,11 +158,10 @@ module partmc_sl_advection_mod
       if (num_neighbors > max_num_neighbors) max_num_neighbors = num_neighbors
     enddo
     fv_mesh%max_nneighbors = max_num_neighbors
-    allocate(fv_mesh%points(nverts * nphys_cell_per_elem * max_num_neighbors, nelemd))
-    allocate(fv_mesh%cells(nverts, nphys_cell_per_elem * max_num_neighbors, nelemd))
-    allocate(fv_mesh%gll_local_id(nphys_cell_per_elem * max_num_neighbors, nelemd))
-    allocate(fv_mesh%gll_global_id(nphys_cell_per_elem * max_num_neighbors, nelemd))
-    allocate(fv_mesh%subcell_idx(nphys_cell_per_elem * max_num_neighbors, nelemd))
+    allocate(fv_mesh%points(nverts, nphys_cell_per_elem, max_num_neighbors, nelemd))
+    allocate(fv_mesh%gll_local_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
+    allocate(fv_mesh%gll_global_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
+    allocate(fv_mesh%subcell_idx(nphys_cell_per_elem, max_num_neighbors, nelemd))
     
     !--------------------------------------------
     ! allocate memory for source partitions
@@ -181,14 +176,13 @@ module partmc_sl_advection_mod
     !--------------------------------------------
     ! construct local mesh for each local element
     !--------------------------------------------
-    fv_mesh%cells = -1 
     fv_mesh%my_local_idx = -1
     fv_mesh%gll_ij_corners = -1
     
     do ie = 1, nelemd ! loop over elements owned by this rank
-      pt_idx = 1
-      cell_idx = 1
+      !
       ! create a local mesh of physics cells 
+      !
       do in = 1, fv_mesh%nneighbors(ie) ! loop over element neighbors
       ! neighbor corners defined by bndry_mod.F90
       ! and stored in elem(ie)%desc%neigh_corners(:,in)
@@ -196,35 +190,41 @@ module partmc_sl_advection_mod
         ! find this element is in its own neighbors list
         if (elem(ie)%GlobalId == elem(ie)%desc%globalID_neigh_corners(in)) then
           fv_mesh%my_local_idx(ie) = in
-!           if (par%masterproc) then
             write(iulog,*) 'partmcsl init: "elem self" is local index ', in
-!           endif
         endif
                 
         do ci = 1, nphys_cell_per_elem ! loop over subcells in element
           do vi = 1, nverts ! loop over vertices in subcell
-          
             ! subcells are defined in the reference quadrilateral's (a,b) coordinates;
             ! see subroutine ref_coords_ab.
             call ref_coords_ab(a, b, ci-1, vi-1) ! ref_coords_ab uses 0-based indexing
-            
             ! spherical coordinates of subcells are then defined through the reference quad.
             ! to sphere map.
-            !
             ! see cube_mod.F90.  On output, p_cart has the sphere point's xyz coords.
             p_sph = ref2sphere(a, b, elem(ie)%desc%neigh_corners(:,in), cubed_sphere_map, elem(ie)%corners, facenum, p_cart)
-
-            fv_mesh%points(pt_idx, ie) = p_cart
-            fv_mesh%cells(vi, cell_idx, ie) = pt_idx
-            
-            pt_idx = pt_idx + 1
+            fv_mesh%points(vi, ci, in, ie) = p_cart
           enddo ! loop over vertices in subcell
-          fv_mesh%subcell_idx(cell_idx, ie) = ci
-          fv_mesh%gll_local_id(cell_idx, ie) = in 
-          fv_mesh%gll_global_id(cell_idx, ie) = elem(ie)%desc%globalID_neigh_corners(in)
-          cell_idx = cell_idx + 1
+          fv_mesh%gll_local_id(ci, in, ie) = in 
+          fv_mesh%gll_global_id(ci, in, ie) = elem(ie)%desc%globalID_neigh_corners(in)
         enddo ! loop over subcells in element
       enddo ! loop over element neighbors
+      
+      !
+      ! check that subcell areas sum to element area
+      !
+      elem_area = zero
+      do ci = 1, nphys_cell_per_elem
+          elem_area = elem_area + &
+              tri_area(fv_mesh%points(1, ci, fv_mesh%my_local_idx(ie), ie), &
+                       fv_mesh%points(2, ci, fv_mesh%my_local_idx(ie), ie), &
+                       fv_mesh%points(3, ci, fv_mesh%my_local_idx(ie), ie)) + &
+              tri_area(fv_mesh%points(2, ci, fv_mesh%my_local_idx(ie), ie), &
+                       fv_mesh%points(3, ci, fv_mesh%my_local_idx(ie), ie), &
+                       fv_mesh%points(4, ci, fv_mesh%my_local_idx(ie), ie))
+      enddo
+      if (abs(elem_area - elem(ie)%area) > fp_tol) then
+          call abortmp("partmcsl element area mismatch.")
+      endif
       
       !--------------------------------------------
       ! Match gll node indices (i,j) for i,j in [1,np] to elem(ie) corners
@@ -279,13 +279,11 @@ module partmc_sl_advection_mod
   subroutine partmcsl_finalize()
     if (allocated(fv_mesh%points)) then 
       deallocate(fv_mesh%points)
-      deallocate(fv_mesh%cells)
       deallocate(fv_mesh%gll_local_id)
       deallocate(fv_mesh%gll_global_id)
       deallocate(fv_mesh%gll_ij_corners)
       deallocate(fv_mesh%nneighbors)
       deallocate(fv_mesh%my_local_idx)
-      deallocate(fv_mesh%subcell_idx)
     endif
     if (allocated(src_partition%ndest)) then
       deallocate(src_partition%dest_cell_idxs)
@@ -402,7 +400,6 @@ module partmc_sl_advection_mod
         ! step 3: move partmc particles
         do ci=1,4 ! loop over subcells owned by this element
           ! TODO: get partmc instance from source cell
-          src_idx = fv_mesh%subcell_idx(fv_mesh%my_local_idx(ie) + ci, ie)
           do di=1, src_partition%ndest(k,ci,ie)
             ! TODO: get partmc instance from destination cell
             dest_idx = src_partition%dest_cell_idxs(di, k, ci, ie)

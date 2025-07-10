@@ -527,7 +527,7 @@ if (HOMME_BUILD_COMPOSE_CPP)
 endif ()
 
 if (HOMME_ENABLE_PARTMCSL)
-  add_subdirectory(src/partmcsl)
+  add_subdirectory(src/partmcsl partmcsl)
 endif()
 
 SET(EXEC_LIST ""  CACHE INTERNAL "List of configured executables")

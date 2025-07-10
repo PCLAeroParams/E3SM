@@ -32,8 +32,21 @@ IF (HOMME_ENABLE_PARTMCSL)
  SET(PARTMCSL_DIR ${SRC_DIR}/partmcsl)
  SET(TARGET_F90
    ${TARGET_F90}
-   ${PARTMCSL_DIR}/partmc_sl_advection.F90
+   ${PARTMCSL_DIR}/partmcsl_mod.F90
+   ${PARTMCSL_DIR}/partmcsl_advection.F90
  )
+ SET(THETAL_SRCS_CXX 
+    ${THETAL_SRCS_CXX}
+    ${PARTMCSL_DIR}/partmcsl_sphere_geometry.cpp
+#    ${PARTMCSL_DIR}/partmcsl.cpp
+ )
+ SET(EXEC_INCLUDE_DIRS
+    ${EXEC_INCLUDE_DIRS}
+    ${SRC_DIR}/partmcsl
+    ${SRC_SHARE_DIR}
+    ${SRC_SHARE_DIR}/compose
+)
+      
 ENDIF(HOMME_ENABLE_PARTMCSL)
 
 SET(THETAL_SRCS_F90
@@ -89,7 +102,7 @@ IF (DEFINED THETA_CUSTOM_FLAGS_FILE)
 ENDIF ()
 
 # Make SRCS global so the tests can access it
-SET(EXEC_SOURCES ${THETAL_SRCS} ${THETAL_SRCS_C} ${THETAL_SRCS_F90} )
+SET(EXEC_SOURCES ${THETAL_SRCS} ${THETAL_SRCS_C} ${THETAL_SRCS_F90} ${THETAL_SRCS_CXX} )
 
 # Set up defaults
 IF (NOT PREQX_NP)
