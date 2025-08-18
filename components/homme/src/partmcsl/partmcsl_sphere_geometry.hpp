@@ -18,11 +18,11 @@ namespace partmcsl {
     */
     template <typename CV, typename CV2>
     KOKKOS_INLINE_FUNCTION Real distance(const CV a, const CV2 b) {
-//       Real cp[3];
-//       siqk::SphereGeometry::cross(cp, a, b);
-//       const Real dp = siqk::SphereGeometry::dot(a, b);
-//       return std::atan2(std::sqrt(siqk::SphereGeometry::norm2(cp)) , dp);
-        return std::acos(siqk::SphereGeometry::dot(a,b));
+      Real cp[3];
+      siqk::SphereGeometry::cross(a, b, cp);
+      const Real dp = siqk::SphereGeometry::dot(a, b);
+      return std::atan2(std::sqrt(siqk::SphereGeometry::norm2(cp)) , dp);
+//         return std::acos(siqk::SphereGeometry::dot(a,b));
     }
 
     /** \brief  Computes the area of the spherical triangle whose vertices are
@@ -45,7 +45,7 @@ namespace partmcsl {
               std::tan(0.5 * (half_perim - s3));
     if (std::abs(zz) < fp_tol) {
       // guard against "negative zero"
-      zz = 0;
+      zz = 0.0;
     }
     return 4 * atan(sqrt(zz));
   }
