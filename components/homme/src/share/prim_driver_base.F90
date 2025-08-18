@@ -135,7 +135,6 @@ contains
     call prim_init1_buffers(elem,par)
 
 #ifdef HOMME_ENABLE_PARTMCSL
-    ! this must be called after the exchange buffers are initialized
     call prim_init1_partmcsl(par, elem)
 #endif    
 

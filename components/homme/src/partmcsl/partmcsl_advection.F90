@@ -191,7 +191,7 @@ module partmc_sl_advection_mod
         ! find this element is in its own neighbors list
         if (elem(ie)%GlobalId == elem(ie)%desc%globalID_neigh_corners(in)) then
           fv_mesh%my_elem_local_idx(ie) = in
-!             write(iulog,*) 'partmcsl init: "elem self" is local index ', in
+            write(iulog,*) 'partmcsl init: elem(', ie, ') "self" is local index ', in
         endif
                 
         do ci = 1, nphys_cell_per_elem ! loop over subcells in element
@@ -314,6 +314,21 @@ module partmc_sl_advection_mod
       write(iulog,*) 'partmcsl: exiting partmcsl_init'
     endif
   end subroutine partmcsl_init
+  
+  function ij_idx_from_corner_idx(corner_idx)
+    integer, intent(in) :: corner_idx
+    integer, dimension(2) :: ij_idx_from_corner_idx
+    if (corner_idx == 1) then
+        ij_idx_from_corner_idx = [ 1, 1 ]
+    else if (corner_idx == 2) then
+        ij_idx_from_corner_idx = [ 4, 1 ]
+    else if (corner_idx == 3) then
+        ij_idx_from_corner_idx = [ 4, 4 ]
+    else if (corner_idx == 4) then
+        ij_idx_from_corner_idx = [ 1, 4 ]
+    else
+    endif
+  end function 
   
   subroutine partmcsl_finalize()
     if (allocated(fv_mesh%points)) then 
