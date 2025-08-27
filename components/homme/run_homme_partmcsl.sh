@@ -16,7 +16,7 @@ runFlag=
 submitFlag=
 
 jobFile=batch_run.cmd
-nnodes=2
+nnodes=1
 nranksPerNode=2
 wtime="00:30:00"
 res=flight-cldera
@@ -67,7 +67,7 @@ cat <<EOF > $jobFile
 #SBATCH -A fy210162
 #SBATCH -n 112
 #SBATCH --reservation flight-cldera
-mpirun -np $nnodes --bind-to core -N $ntasks $wdir/test_execs/$execName/$execName < $namelistFile
+mpirun --map-by ppr:56:socket:PE=1 --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile
 EOF
 chmod +x $jobFile
 cat $jobFile

@@ -2,12 +2,12 @@
 #include "config.h"
 #endif
 
-module partmc_sl_advection_mod
+module partmcsl_advection_mod
 !   Terms like "elem" and "element" refer to Homme's spectral elements and related data structures.
 !   Terms such as "cell" and "fv" refer to the physics grid's finite volume cells.
 
   use coordinate_systems_mod, only : cartesian3D_t, cartesian2D_t, &
-                  spherical_polar_t, distance, change_coordinates
+                  spherical_polar_t, distance, change_coordinates, sphere_tri_area
   use control_mod, only: cubed_sphere_map, dt_tracer_factor, dt_remap_factor
   use cube_mod, only: ref2sphere
   use dimensions_mod, only     : nlev, np, nelemd
@@ -21,7 +21,7 @@ module partmc_sl_advection_mod
   implicit none
   private
   
-  public :: partmcsl_init, partmcsl_finalize
+  public :: partmcsl_init, partmcsl_finalize, partmcsl_test
   public :: partmcsl_step_forward
   
   ! we assume pg2 grid 
@@ -106,7 +106,7 @@ module partmc_sl_advection_mod
   
   contains
 
-  subroutine partmcsl_init(par, elem)
+subroutine partmcsl_init(par, elem)
     type(parallel_t), intent(in) :: par
     type(element_t), intent(in) :: elem(:)
     !
@@ -114,7 +114,7 @@ module partmc_sl_advection_mod
     !
     integer :: ie, in, ci, vi, i, j, iloc, jloc    
     type(cartesian3D_t) :: p_cart, elem_cart
-    real(real_kind) :: a, b, dist, elem_area, elem_area_sum
+    real(real_kind) :: a, b, dist, elem_area, elem_area_sum, atmp
     integer :: num_neighbors, max_num_neighbors
     logical :: error_out
     !
@@ -159,11 +159,11 @@ module partmc_sl_advection_mod
     
     fv_mesh%max_nneighbors = max_num_neighbors
     allocate(fv_mesh%points(nverts, nphys_cell_per_elem, max_num_neighbors, nelemd))
-!     allocate(fv_mesh%elem_local_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
+    !     allocate(fv_mesh%elem_local_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
     allocate(fv_mesh%elem_global_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
-!     allocate(fv_mesh%subcell_idx(nphys_cell_per_elem, max_num_neighbors, nelemd))
+    !     allocate(fv_mesh%subcell_idx(nphys_cell_per_elem, max_num_neighbors, nelemd))
     allocate(fv_mesh%subcell_area(nphys_cell_per_elem, max_num_neighbors, nelemd))
-!     fv_mesh%elem_local_id = -1
+    !     fv_mesh%elem_local_id = -1
     fv_mesh%elem_global_id = -1
     fv_mesh%subcell_area = zero
     
@@ -191,7 +191,6 @@ module partmc_sl_advection_mod
         ! find this element is in its own neighbors list
         if (elem(ie)%GlobalId == elem(ie)%desc%globalID_neigh_corners(in)) then
           fv_mesh%my_elem_local_idx(ie) = in
-            write(iulog,*) 'partmcsl init: elem(', ie, ') "self" is local index ', in
         endif
                 
         do ci = 1, nphys_cell_per_elem ! loop over subcells in element
@@ -206,25 +205,95 @@ module partmc_sl_advection_mod
             fv_mesh%points(vi, ci, in, ie) = p_cart
           enddo ! loop over vertices in subcell
           fv_mesh%elem_global_id(ci, in, ie) = elem(ie)%desc%globalID_neigh_corners(in)
+    !           call sphere_tri_area(fv_mesh%points(1, ci, in, ie), &
+    !                           fv_mesh%points(2, ci, in, ie), &
+    !                           fv_mesh%points(3, ci, in, ie), fv_mesh%subcell_area(ci, in, ie))
+    !           call sphere_tri_area(fv_mesh%points(1, ci, in, ie), &
+    !                           fv_mesh%points(3, ci, in, ie), &
+    !                           fv_mesh%points(4, ci, in, ie), atmp)
+    !           fv_mesh%subcell_area(ci, in, ie) = fv_mesh%subcell_area(ci, in, ie) + atmp
           fv_mesh%subcell_area(ci, in, ie) = &
               tri_area(fv_mesh%points(1, ci, in, ie), &
                        fv_mesh%points(2, ci, in, ie), &
                        fv_mesh%points(3, ci, in, ie)) + &
-              tri_area(fv_mesh%points(2, ci, in, ie), &
+              tri_area(fv_mesh%points(1, ci, in, ie), &
                        fv_mesh%points(3, ci, in, ie), &
                        fv_mesh%points(4, ci, in, ie))
         enddo ! loop over subcells in element
       enddo ! loop over element neighbors
       
-     
-      !--------------------------------------------
-      ! We need the gll node indices (i,j) for i,j in [1,np] of elem(ie)'s corners
-      ! to get velocity data from Homme's arrays.
-      !
-      ! This is likely a convention defined in Homme, which would mean we don't need
-      ! to do this search procedure.  However, our local mesh indexing may differ
-      ! from Homme's indexing, so we'll do it this way to be sure. 
-      !
+      do vi=1,4
+        call ij_idx_from_corner_idx(iloc, jloc, vi)
+        fv_mesh%elem_ij_corners(1, vi, ie) = iloc
+        fv_mesh%elem_ij_corners(2, vi, ie) = jloc
+      enddo
+    enddo ! loop over elements owned by this rank
+       
+    !
+    ! check to make sure we found each element in the sets of neighbors
+    !
+    do ie = 1, nelemd
+      if (fv_mesh%my_elem_local_idx(ie) == -1) then
+        call abortmp('elem "self" not found in neighbors')
+      endif
+    enddo
+    
+    if (par%masterproc) then
+      write(iulog,*) 'partmcsl: exiting partmcsl_init'
+    endif
+end subroutine partmcsl_init
+  
+subroutine ij_idx_from_corner_idx(iloc, jloc, corner_idx)
+    integer, intent(out) :: iloc, jloc
+    integer, intent(in) :: corner_idx
+    select case (corner_idx)
+        case (1)
+            iloc = 1; jloc = 1
+        case (2)
+            iloc = 4; jloc = 1
+        case (3)
+            iloc = 4; jloc = 4
+        case (4)
+            iloc = 1; jloc = 4
+        case default
+            call abortmp("corner_idx out of range")
+    end select
+    !     if (corner_idx == 1) then
+    !         iloc = 1; jloc = 1
+    !     else if (corner_idx == 2) then
+    !         iloc = 4; jloc = 1
+    !     else if (corner_idx == 3) then
+    !         iloc = 4; jloc = 4
+    !     else if (corner_idx == 4) then
+    !         iloc = 1; jloc = 4
+    !     endif
+end subroutine 
+
+subroutine partmcsl_test(par, elem)
+    type(parallel_t), intent(in) :: par
+    type(element_t), intent(in) :: elem(:)
+    
+    if (do_checks) then
+        call check_ij_corners(par, elem)
+        call partmcsl_check_elem_area(par, elem)
+    endif
+    if (par%masterproc) then
+        write(iulog,*) "partmcsl_test: all tests passed."
+    endif
+end subroutine   
+  
+subroutine check_ij_corners(par, elem)
+    type(parallel_t), intent(in) :: par
+    type(element_t), intent(in) :: elem(:)
+    !
+    integer :: vi, iloc, jloc, ie, i, j
+    type(cartesian3D_t) :: p_cart, elem_cart
+    real(real_kind) :: a, b, dist
+    integer :: facenum ! not used, but needed for interfaces
+    type(spherical_polar_t) :: p_sph ! not used, but needed for interfaces
+    logical :: error_out
+    
+    do ie = 1, nelemd
       do vi=1,4 ! loop over corners of current element, find gll i,j indices that match corner points
         iloc = -1
         jloc = -1
@@ -252,7 +321,7 @@ module partmc_sl_advection_mod
         ! our element corners
         fv_mesh%elem_ij_corners(1, vi, ie) = iloc
         fv_mesh%elem_ij_corners(2, vi, ie) = jloc
-!         write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
+    !         write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
         error_out = .false.
         if (vi == 1) then
             if (iloc /= 1 .or. jloc /= 1) then
@@ -275,60 +344,53 @@ module partmc_sl_advection_mod
                 error_out = .true.
             endif
         endif
-        if (error_out) then
-            call abortmp('partmcsl_init error: unexpected indices in ij corners.')
-        endif
-      enddo ! loop over corners of current element
-    enddo ! loop over elements owned by this rank
-       
-    !
-    ! check to make sure we found each element in the sets of neighbors
-    !
-    do ie = 1, nelemd
-      if (fv_mesh%my_elem_local_idx(ie) == -1) then
-        call abortmp('elem "self" not found in neighbors')
+      enddo
+      if (error_out) then
+        call abortmp('partmcsl_init error: unexpected indices in ij corners.')
       endif
     enddo
-    
+    if (par%masterproc) then
+        write(iulog,*) "partmcsl_test: check_ij_corners passed."
+    endif
+end subroutine 
+  
+  subroutine partmcsl_check_elem_area(par, elem)
+    type(parallel_t), intent(in) :: par
+    type(element_t), intent(in) :: elem(:)
+    real(real_kind) :: elem_area_sum, elem_area
+    integer :: ie, ci    
     !
     ! check that subcell areas sum to element area
     !
-    elem_area_sum = zero
-    do ci = 1, nphys_cell_per_elem
-      elem_area_sum = elem_area_sum + fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
+    do ie=1, nelemd
+        elem_area_sum = zero
+        do ci = 1, nphys_cell_per_elem
+          elem_area_sum = elem_area_sum + fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
+        enddo
+        ! we compute element area here, from the corners, since we can't use elem(ie)%area
+        ! (it's not yet set; it's not defined until prim_init2)
+        elem_area = tri_area(elem(ie)%corners3D(1), &
+                           elem(ie)%corners3D(2), &
+                           elem(ie)%corners3D(3)) + &
+                  tri_area(elem(ie)%corners3D(1), &
+                           elem(ie)%corners3D(3), &
+                           elem(ie)%corners3D(4))                           
+        !     call sphere_tri_area(elem(ie)%corners3D(1), &
+        !                          elem(ie)%corners3D(2), &
+        !                          elem(ie)%corners3D(3), elem_area)
+        !     call sphere_tri_area(elem(ie)%corners3D(1), &
+        !                          elem(ie)%corners3D(3), &
+        !                          elem(ie)%corners3D(4), atmp)
+        !         elem_area = elem_area + atmp
+        if (abs(elem_area - elem_area_sum) > fp_tol) then
+          write(iulog,*) 'partmcsl init: elem_area_sum = ', elem_area_sum, &
+                        ' elem_area = ', elem_area, &
+                        ' abs(diff) = ', abs(elem_area - elem_area_sum) 
+          call abortmp("partmcsl element area mismatch.")
+        endif
     enddo
-    ! we compute element area here, from the corners, since we can't use elem(ie)%area
-    ! (it's not yet set; it's not defined until prim_init2)
-    elem_area = tri_area(elem(ie)%corners3D(1), &
-                       elem(ie)%corners3D(2), &
-                       elem(ie)%corners3D(3)) + &
-              tri_area(elem(ie)%corners3D(2), &
-                       elem(ie)%corners3D(3), &
-                       elem(ie)%corners3D(4))                           
-    if (abs(elem_area - elem_area_sum) > fp_tol) then
-      write(iulog,*) 'partmcsl init: elem_area_sum = ', elem_area_sum, ' elem_area = ', elem_area, ' abs(diff) = ', abs(elem_area - elem_area_sum)
-      call abortmp("partmcsl element area mismatch.")
-    endif    
-    
-    if (par%masterproc) then
-      write(iulog,*) 'partmcsl: exiting partmcsl_init'
-    endif
-  end subroutine partmcsl_init
-  
-  function ij_idx_from_corner_idx(corner_idx)
-    integer, intent(in) :: corner_idx
-    integer, dimension(2) :: ij_idx_from_corner_idx
-    if (corner_idx == 1) then
-        ij_idx_from_corner_idx = [ 1, 1 ]
-    else if (corner_idx == 2) then
-        ij_idx_from_corner_idx = [ 4, 1 ]
-    else if (corner_idx == 3) then
-        ij_idx_from_corner_idx = [ 4, 4 ]
-    else if (corner_idx == 4) then
-        ij_idx_from_corner_idx = [ 1, 4 ]
-    else
-    endif
-  end function 
+    write(iulog,*) "partmcsl_test: check_elem_area passed."
+  end subroutine
   
   subroutine partmcsl_finalize()
     if (allocated(fv_mesh%points)) then 
@@ -349,7 +411,7 @@ module partmc_sl_advection_mod
   end subroutine partmcsl_finalize
 
   subroutine ref_coords_ab(a, b, subcell_idx, vert_idx) 
-    !   Warning: subcell_idx and vert_idx are 0-based indices.
+    !   heads up: subcell_idx and vert_idx are 0-based indices.
     ! 
     !       Given a subcell index return the (a,b) 
     !       reference coordinates of the vertex at vert_idx,
@@ -537,4 +599,4 @@ module partmc_sl_advection_mod
     
   end subroutine partmcsl_fwd_advection  
 
-end module partmc_sl_advection_mod
+end module partmcsl_advection_mod

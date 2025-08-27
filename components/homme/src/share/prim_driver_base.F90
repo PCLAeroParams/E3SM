@@ -668,7 +668,7 @@ contains
     use parallel_mod, only : parallel_t, abortmp
     use control_mod,  only : transport_alg
 #ifdef HOMME_ENABLE_PARTMCSL
-    use partmc_sl_advection_mod, only:  partmcsl_init
+    use partmcsl_advection_mod, only:  partmcsl_init
     
     type (parallel_t), intent(in) :: par
     type (element_t), pointer, intent(in) :: elem(:)
@@ -1267,7 +1267,7 @@ contains
     use time_mod,           only: time_at,TimeLevel_t, timelevel_update, nsplit
     use prim_state_mod,     only: prim_printstate
 #ifdef HOMME_ENABLE_PARTMCSL    
-    use partmc_sl_advection_mod, only: partmcsl_step_forward
+    use partmcsl_advection_mod, only: partmcsl_step_forward
 #endif        
 
     type(element_t),      intent(inout) :: elem(:)
@@ -1920,7 +1920,7 @@ contains
     use control_mod, only: transport_alg
 #endif
 #ifdef HOMME_ENABLE_PARTMCSL
-    use partmc_sl_advection_mod, only : partmcsl_finalize
+    use partmcsl_advection_mod, only : partmcsl_finalize
 #endif
     implicit none
 

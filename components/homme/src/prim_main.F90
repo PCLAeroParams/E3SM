@@ -29,6 +29,9 @@ program prim_main
 #ifdef HOMME_ENABLE_COMPOSE
   use compose_test_mod, only: compose_test
 #endif
+#ifdef HOMME_ENABLE_PARTMCSL
+  use partmcsl_advection_mod, only: partmcsl_test
+#endif 
   use test_mod,         only: print_test_results
 
 #ifdef PIO_INTERP
@@ -225,6 +228,10 @@ program prim_main
 
 #ifdef HOMME_ENABLE_COMPOSE
   call compose_test(par, hvcoord, dom_mt, elem)
+#endif
+
+#ifdef HOMME_ENABLE_PARTMCSL
+  call partmcsl_test(par, elem)
 #endif
 
   if(par%masterproc) print *,"Entering main timestepping loop"
