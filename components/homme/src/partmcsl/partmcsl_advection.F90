@@ -39,11 +39,11 @@ module partmcsl_advection_mod
   !=====================================
   ! PartMCSL local finite volume mesh
   !
-  ! One mesh for each element owned by this rank.
+  ! One local mesh for each element owned by this rank...
   ! For each elem(ie), ie = 1,...,nelemd:
   !
   !  fv_mesh%points(1:4, ci, in, ie) give the coordinates of the 4 vertices of fv subcell
-  !     ci (in [1,4]) of element in (in [1, nneighbors]) in elem(ie)'s neighbor list.
+  !     ci (in [1,4]) of element `in` (in [1, nneighbors]) in elem(ie)'s neighbor list.
   !  fv_mesh%elem_global_id(i,ie) gives Homme's global index of the element that contains
   !  subcell i.
   ! 
@@ -61,7 +61,7 @@ module partmcsl_advection_mod
     type(cartesian3D_t), allocatable :: points(:,:,:,:) ! (nverts, nphys_cell_per_elem, max_num_neighbors, nelemd)
     real(real_kind), allocatable :: subcell_area(:,:,:) ! (nphys_cell_per_elem, max_num_neighbors, nelemd)
     integer, allocatable :: elem_global_id(:,:,:) !(nphys_cell_per_elem, max_num_neighbors, nelemd)
-    integer, allocatable :: elem_ij_corners(:,:,:) ! (2, 4, nelemd)
+!     integer, allocatable :: elem_ij_corners(:,:,:) ! (2, 4, nelemd)
     integer, allocatable :: nneighbors(:) ! (nelemd)
     integer, allocatable :: my_elem_local_idx(:) ! (nelemd)
     integer :: max_nneighbors
@@ -142,10 +142,10 @@ subroutine partmcsl_init(par, elem)
     ! allocate memory for fv meshes
     !--------------------------------------------
     allocate(fv_mesh%nneighbors(nelemd))
-    allocate(fv_mesh%elem_ij_corners(2,4,nelemd))
+!     allocate(fv_mesh%elem_ij_corners(2,4,nelemd))
     allocate(fv_mesh%my_elem_local_idx(nelemd))
     fv_mesh%my_elem_local_idx = -1
-    fv_mesh%elem_ij_corners = -1
+!     fv_mesh%elem_ij_corners = -1
     max_num_neighbors = 0
     do ie = 1, nelemd
       num_neighbors = elem(ie)%desc%actual_neigh_edges + 1
@@ -222,11 +222,11 @@ subroutine partmcsl_init(par, elem)
         enddo ! loop over subcells in element
       enddo ! loop over element neighbors
       
-      do vi=1,4
-        call ij_idx_from_corner_idx(iloc, jloc, vi)
-        fv_mesh%elem_ij_corners(1, vi, ie) = iloc
-        fv_mesh%elem_ij_corners(2, vi, ie) = jloc
-      enddo
+!       do vi=1,4
+!         call ij_idx_from_corner_idx(iloc, jloc, vi)
+!         fv_mesh%elem_ij_corners(1, vi, ie) = iloc
+!         fv_mesh%elem_ij_corners(2, vi, ie) = jloc
+!       enddo
     enddo ! loop over elements owned by this rank
        
     !
@@ -317,30 +317,26 @@ subroutine check_ij_corners(par, elem)
         if (iloc == -1 .or. jloc == -1) then
           call abortmp("unable to match a corner with a gll node")
         endif
-        ! use these i,j indices to pull the correct nodal velocity values to advect 
-        ! our element corners
-        fv_mesh%elem_ij_corners(1, vi, ie) = iloc
-        fv_mesh%elem_ij_corners(2, vi, ie) = jloc
     !         write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
         error_out = .false.
         if (vi == 1) then
             if (iloc /= 1 .or. jloc /= 1) then
-                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
+                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', iloc, jloc
                 error_out = .true.
             endif
         else if (vi == 2) then
             if (iloc /= 4 .or. jloc /= 1) then
-                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
+                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', iloc, jloc
                 error_out = .true.
             endif
         else if (vi == 3) then
             if (iloc /= 4 .or. jloc /= 4) then
-                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
+                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', iloc, jloc
                 error_out = .true.
             endif
         else
             if (iloc /= 1 .or. jloc /= 4) then
-                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
+                write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', iloc, jloc
                 error_out = .true.
             endif
         endif
@@ -397,7 +393,7 @@ end subroutine
       deallocate(fv_mesh%points)
 !       deallocate(fv_mesh%elem_local_id)
       deallocate(fv_mesh%elem_global_id)
-      deallocate(fv_mesh%elem_ij_corners)
+!       deallocate(fv_mesh%elem_ij_corners)
       deallocate(fv_mesh%nneighbors)
       deallocate(fv_mesh%my_elem_local_idx)
       deallocate(fv_mesh%subcell_area)
@@ -559,8 +555,7 @@ end subroutine
     !--------------------------------------------
     ! gather velocity at element corners
     do vi=1,4
-      ci = fvm%elem_ij_corners(1,vi,ie) ! gll i index of corner
-      cj = fvm%elem_ij_corners(2,vi,ie) ! gll j index of corner
+      call ij_idx_from_corner_idx(ci, cj, vi)
       ! convert velocity from lat/lon to cartesian 3D
       ! see cube_mod.F90 vec_sphere2cart and sl_advection.F90 subroutine ALE_departure_from_gll 
       ! for explanation of this dot product      
@@ -574,11 +569,10 @@ end subroutine
     ! We use velocity data at both time points, u(x0, t0) and u(x0, t1).
     ! However, since a simple temporal midpoint doesn't account
     ! for motion along the trajectory (note both velocities are evaluated at x0), 
-    ! we don't expect anything better than first order. This could be improved later.
+    ! we don't expect anything better than first order. 
     !
     do vi=1,4
-      ci = fvm%elem_ij_corners(1,vi,ie)
-      cj = fvm%elem_ij_corners(2,vi,ie)
+      call ij_idx_from_corner_idx(ci, cj, vi)
       adv_corners(vi) = change_coordinates(elem(ie)%spherep(ci,cj))
       adv_corners(vi)%x = adv_corners(vi)%x + dt * uxyzhalf(1,vi)/rearth
       adv_corners(vi)%y = adv_corners(vi)%y + dt * uxyzhalf(2,vi)/rearth
