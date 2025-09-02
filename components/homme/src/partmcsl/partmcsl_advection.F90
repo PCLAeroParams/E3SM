@@ -16,7 +16,7 @@ module partmcsl_advection_mod
   use parallel_mod, only       : parallel_t, abortmp
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
-  use partmcsl_mod, only       : tri_area
+  use partmcsl_mod, only       : tri_area, calc_src_partition
 
   implicit none
   private
@@ -80,9 +80,9 @@ module partmcsl_advection_mod
   ! ndest(k,ci,ie) is the number of fv cells that subcell ci of elem(ie) sends to at
   !     vertical level k.
   type :: source_partition_t
-    integer, allocatable :: dest_cell_idxs(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
-    real(real_kind), allocatable :: dest_portions(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: ndest(:,:,:) ! (nlev, nphys_cell_per_elem, nelemd)
+    integer, allocatable :: dest_cell_idxs(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    real(real_kind), allocatable :: dest_portions(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)    
   end type
   
 !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
@@ -371,13 +371,6 @@ end subroutine
                   tri_area(elem(ie)%corners3D(1), &
                            elem(ie)%corners3D(3), &
                            elem(ie)%corners3D(4))                           
-        !     call sphere_tri_area(elem(ie)%corners3D(1), &
-        !                          elem(ie)%corners3D(2), &
-        !                          elem(ie)%corners3D(3), elem_area)
-        !     call sphere_tri_area(elem(ie)%corners3D(1), &
-        !                          elem(ie)%corners3D(3), &
-        !                          elem(ie)%corners3D(4), atmp)
-        !         elem_area = elem_area + atmp
         if (abs(elem_area - elem_area_sum) > fp_tol) then
           write(iulog,*) 'partmcsl init: elem_area_sum = ', elem_area_sum, &
                         ' elem_area = ', elem_area, &
@@ -488,7 +481,7 @@ end subroutine
     integer              , intent(in   ) :: nete ! thread ending element idx in [1,nelemd]
     type (TimeLevel_t)   , intent(in   ) :: tl 
     ! local variables
-    type(cartesian3D_t) :: advected_pts(nverts * nphys_cell_per_elem)
+    type(cartesian3D_t) :: advected_pts(nverts, nphys_cell_per_elem)
     integer :: ie, k ! loop iterators
     integer :: t1 ! time point 1 (end of advection timestep)
     integer :: di, ci, dest_idx, src_idx
@@ -506,10 +499,8 @@ end subroutine
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         !------------------------
         ! step 2: compute overlap portions (c++)
-!         call calc_partmcsl_source_partition(ie, nelemd, fv_mesh%max_nneighbors(ie), &
-!           fv_mesh%my_elem_local_idx(ie), k, nlev, advected_pts, fv_mesh%points, &
-!           fv_mesh%cells, fv_mesh%nneighbors, src_partition%ndest, &
-!           src_partition%dest_cell_idxs, src_partition%dest_portions)
+        call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
+            k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, src_partition%dest_cell_idxs, src_partition%dest_portions)
         !------------------------
         ! step 3: move partmc particles
         do ci=1,4 ! loop over subcells owned by this element
@@ -534,7 +525,7 @@ end subroutine
   end subroutine partmcsl_step_forward
  
   subroutine partmcsl_fwd_advection(acart, vt0, vt1, fvm, elem, ie, dt)
-    type(cartesian3D_t), intent(out) :: acart(16)  ! output: cartesian coordinates of advected fv cell corners ; shared corners are duplicated -- could be changed later.
+    type(cartesian3D_t), intent(out) :: acart(4,4)  ! output: cartesian coordinates of advected fv cell corners ; shared corners are duplicated -- could be changed later.
     real(kind=real_kind), intent(in) :: vt0(np, np, 2) ! input: spherical coordinate velocity components at beginning of tracer time step
     real(kind=real_kind), intent(in) :: vt1(np, np, 2) ! input: spherical coordinate velocity components at end of tracer time step
     type(local_fv_mesh_t), intent(in) :: fvm
@@ -582,12 +573,10 @@ end subroutine
     !--------------------------------------------
     ! Step 2: Reconstruct advected subcell points from advected element corners
     !--------------------------------------------
-    pt_idx = 1
     do ci = 1, 4 ! loop over subcells in element
       do vi = 1, 4 ! loop over vertices in subcell
         call ref_coords_ab(a, b, ci-1, vi-1) ! ref_coords_ab uses 0-based indexing
-        p_sph = ref2sphere(a, b, adv_corners, cubed_sphere_map, elem(ie)%corners, facenum, acart(pt_idx))
-        pt_idx = pt_idx + 1
+        p_sph = ref2sphere(a, b, adv_corners, cubed_sphere_map, elem(ie)%corners, facenum, acart(vi, ci))
       enddo
     enddo
     

@@ -1,5 +1,4 @@
 #include "partmcsl.hpp"
-#include "compose_homme.hpp" // FA types
 
 namespace partmcsl {
 
@@ -42,69 +41,82 @@ void src_partition_init(const Int nelem) {
 /*
 
 */
-void calc_partmcsl_source_partition(
-  const Int ie, // index, in [0, nelemd-1] of active owned element on this rank
-  const Int nelemd, // number of owned elements on this rank
-  const Int max_num_neighbors,  // maximum number of neighboring elements (usually 9)
-  const Int elem_self_idx, // index of "self" element in neighbors list in [0, nneighbors_i[ie]-1]
-  const Int lev_idx, // index of active level in [0, nlev-1]
-  const Int nlev, // number of vertical levels
-  const Cartesian3D* adv_points_r, // adv_points(1:4,1:4) coordinates of 16 advected corners of subcells of elem[ie]
-  const Cartesian3D* cell_points_r, // cell_points(1:nneighbors(ie), ie) coordinates of static corners of local elem[ie] fv mesh
-  const Int* cells_i, // cells(:,1:nneighbors(ie), ie) give the quad vertices of fv mesh
-  const Int* nneighbors_i, // number of neighbors for each owned element
-  Int* ndest_i, // number of destination cells each source sends to
-  Int* dest_i, // indices of cells that receive sent source
-  Real* frac_r // fraction of source cells to send
-  )
+// void calc_partmcsl_source_partition(
+//   const Int ie, // index, in [0, nelemd-1] of active owned element on this rank
+//   const Int nelemd, // number of owned elements on this rank
+//   const Int elem_self_idx, // index of "self" element in neighbors list in [0, nneighbors_i[ie]-1]
+//   const Int lev_idx, // index of active level in [0, nlev-1]
+//   const Int nlev, // number of vertical levels
+//   const Cartesian3D* adv_points_r, // adv_points(1:4,1:4) coordinates of 16 advected corners of subcells of elem[ie]
+//   const Cartesian3D* cell_points_r, // cell_points(1:nneighbors(ie), ie) coordinates of static corners of local elem[ie] fv mesh
+//   const Int* cells_i, // cells(:,1:nneighbors(ie), ie) give the quad vertices of fv mesh
+//   const Int* nneighbors_i, // number of neighbors for each owned element
+//   Int* ndest_i, // number of destination cells each source sends to
+//   Int* dest_i, // indices of cells that receive sent source
+//   Real* frac_r // fraction of source cells to send
+//   )
+void calc_partmcsl_source_partition(const int ie,
+            const int nelemd,
+            const int n_elem_neighbors,
+            const int elem_self_idx,
+            const int level_idx,
+            const int nlev,
+            const homme::Cartesian3D* cell_corners_p,
+            const Real* cell_area_p,
+            const homme::Cartesian3D* adv_points_p,
+            Int* ndest_p,
+            Int* dest_idx_p,
+            Real* frac_p
+            )
   {
   using siqk::slice;
+
+  slmm_assert(ie < nelemd);
+  slmm_assert(n_elem_neighbors <= max_num_elem_neighbors);
 
   slmm_assert(src_partition);
   slmm_throw_if(!src_partition, "src_partition pointer not associated.");
 
   // input ptrs come from fortran
-  // convert them to views
-  homme::FA1<const Int>  nneighbors(reinterpret_cast<const Int*>(nneighbors_i), nelemd);
-  homme::FA3<const Real> cell_points(reinterpret_cast<const Real*>(cell_points_r), 3, 4*max_num_neighbors, nelemd);
-  homme::FA3<const Int>  cells(reinterpret_cast<const Int*>(cells_i), 4, max_num_neighbors, nelemd);
-  homme::FA3<const Real> adv_points(reinterpret_cast<const Real*>(adv_points_r), 3, 4, 4);
+  // convert them to kokkos views
+    homme::FA5<const Real> corners(reinterpret_cast<const Real*>(cell_corners_p), ndim, nverts, n_subcells_per_elem, max_num_elem_neighbors, nelemd);
+    homme::FA3<const Real> area(cell_area_p, 4, max_num_elem_neighbors, nelemd);
+    homme::FA4<const Real> adv_points(reinterpret_cast<const Real*>(adv_points_p), ndim, nverts, n_subcells_per_elem, nelemd);
 
-  // convert output ptrs to views
-  homme::FA2<Int> ndest(ndest_i, nlev, n_subcells_per_elem);
-  homme::FA3<Int> dest_cells(ndest_i, max_ndest_cell, nlev, n_subcells_per_elem);
-  homme::FA3<Real> dest_fracs(frac_r, max_ndest_cell, nlev, n_subcells_per_elem);
+  // convert output ptrs to kokkos views
+  homme::FA3<Int> ndest(ndest_p, nlev, n_subcells_per_elem, nelemd);
+  homme::FA4<Int> dest_cells(dest_idx_p, max_ndest_cell, nlev, n_subcells_per_elem, nelemd);
+  homme::FA4<Real> dest_fracs(frac_p,    max_ndest_cell, nlev, 4, nelemd);
 
   // reset output for new computations
-  for (int sci=0; sci < n_subcells_per_elem; ++sci) {
-    ndest(lev_idx, sci) = 0;
+  for (int sci=0; sci<n_subcells_per_elem; ++sci) {
+    ndest(level_idx, sci, ie) = 0;
     for (int i=0; i<max_ndest_cell; ++i) {
-      dest_cells(i, lev_idx, sci) = -1;
-      dest_fracs(i, lev_idx, sci) = 0.0;
+        dest_cells(i, level_idx, sci, ie) = -1;
+        dest_fracs(i, level_idx, sci, ie) = 0.0;
     }
   }
 
   // get local fv cell mesh
-  src_partition->init_local_mesh_if_needed(ie, elem_self_idx,
-    Kokkos::subview(cell_points, Kokkos::ALL, std::pair<Int, Int>(0, 4*nneighbors(ie)), ie),
-    Kokkos::subview(cells, Kokkos::ALL, std::pair<Int,Int>(0, 4*nneighbors(ie)), ie) );
-  const auto& mesh = src_partition->mesh[ie];
-  const auto& area = src_partition->area[ie];
+  src_partition->init_local_mesh_if_needed(ie, n_elem_neighbors, elem_self_idx, corners, area);
+  const auto& mesh = src_partition->mesh(ie);
+  const auto& mesh_area = src_partition->area(ie);
 
   // workspace buffers will be wrapped in unmanaged views for easier indexing shortly
   Real vi_buf[3 * nverts];
   Real vo_buf[3 * max_num_intersections];
   Real wrk_buf[4 * max_num_intersections];
 
-  const Int n_cells_in_mesh = n_subcells_per_elem * nneighbors(ie);
+  const Int n_cells_in_mesh = n_subcells_per_elem * n_elem_neighbors;
+  // index, in local mesh, of first of elem(ie)'s owned subcells
+  const Int start_cell_idx = n_subcells_per_elem * elem_self_idx;
 
-  slmm_assert(m.p.dimension_1() == n_cells_in_mesh);
-  slmm_throw_if(m.p.dimension_1() != n_cells_in_mesh, "mesh points mismatch with n_cells_in_mesh");
+  slmm_assert(mesh.p.extent(1) == n_cells_in_mesh);
+  slmm_throw_if(mesh.p.extent(1) != n_cells_in_mesh, "mesh points mismatch with n_cells_in_mesh");
 
   for (int aci=0; aci < n_subcells_per_elem; ++aci) {// loop over advected subcells of elem(ie)
 
-    const Int src_idx = ie_start_idx_[ie] + aci;
-    const Real src_area = area(src_idx);
+    const Real src_area = mesh_area(start_cell_idx + aci);
 
     for (Int ci=0; ci < n_cells_in_mesh; ++ci) {// loop over subcells in mesh
       //
@@ -123,7 +135,7 @@ void calc_partmcsl_source_partition(
         //   need to check if clip_against_poly modifies its content
         for (int vi=0; vi<nverts; ++vi) {
           siqk::SphereGeometry::copy(slice(verts_in, vi),
-            Kokkos::subview(adv_points, Kokkos::ALL, aci));
+            Kokkos::subview(adv_points, Kokkos::ALL, vi, aci, ie));
         }
 
         siqk::sh::clip_against_poly<siqk::SphereGeometry>(mesh, ci, verts_in, nverts,
@@ -141,43 +153,52 @@ void calc_partmcsl_source_partition(
         for (int i=0; i<n_overlap_verts; ++i) {
           ov_area += tri_area(slice(verts_out, i), slice(verts_out, (i+1)%n_overlap_verts), bc);
         }
-        dest_fracs(ndest(aci)  , lev_idx, aci) = ov_area / src_area;
-        dest_cells(ndest(aci)++, lev_idx, aci) = ci;
+
+        const Int dest_insert_idx = ndest(level_idx, aci, ie)++;
+        dest_cells(dest_insert_idx, level_idx, aci, ie) = ci;
+        dest_fracs(dest_insert_idx, level_idx, aci, ie) = ov_area / src_area;
+
       } // n_overlap_verts > 0
     } // loop over cells in mesh
 
     Real total_frac = 0.0;
-    for (int j=0; j<ndest(aci); ++j) {
-      total_frac += dest_fracs(j, lev_idx, aci);
+    for (int j=0; j<ndest(level_idx, aci, ie); ++j) {
+      total_frac += dest_fracs(j, level_idx, aci, ie);
     }
     slmm_throw_if(std::abs(total_frac - 1.0) > fp_tol, "source total fraction error");
 
   } // loop over subcells that elem(ie) owns
 } // calc_partmcsl_source_partition
 
-
-
-
-
-
 } // namespace partmcsl
 
 
 extern "C" void calc_source_partition_(
-  homme::Int* ie, homme::Int* nelemd,
+  homme::Int* ie,
+  homme::Int* nelemd,
+  homme::Int* n_elem_neighbors,
   homme::Int* self_idx,
-  homme::Int* lev_idx, homme::Int* nlev,
-  homme::Int* max_num_neighbors,
-  homme::Cartesian3D* adv_points, homme::Cartesian3D** cell_points,
-  homme::Int** cells, homme::Int* nneighbors,
-  homme::Int* ndest, homme::Int* dest, homme::Real* frac) {
-
-  partmcsl::calc_partmcsl_source_partition(*ie-1, *nelemd,
-    *self_idx-1, *lev_idx-1, *nlev, *max_num_neighbors,
-    adv_points, *cell_points, *cells, nneighbors,
-    ndest, dest, frac);
-
-
+  homme::Int* lev_idx,
+  homme::Int* nlev,
+  homme::Cartesian3D* corners,
+  homme::Real* area,
+  homme::Cartesian3D* adv_points,
+  homme::Int* ndest,
+  homme::Int* dest,
+  homme::Real* frac
+) {
+  return partmcsl::calc_partmcsl_source_partition(*ie -1,
+    *nelemd,
+    *self_idx -1,
+    *n_elem_neighbors -1,
+    *lev_idx -1,
+    *nlev,
+    corners,
+    area,
+    adv_points,
+    ndest,
+    dest,
+    frac);
 }
 
 

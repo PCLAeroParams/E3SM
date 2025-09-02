@@ -38,7 +38,7 @@ IF (HOMME_ENABLE_PARTMCSL)
  SET(THETAL_SRCS_CXX 
     ${THETAL_SRCS_CXX}
     ${PARTMCSL_DIR}/partmcsl_sphere_geometry.cpp
-#    ${PARTMCSL_DIR}/partmcsl.cpp
+    ${PARTMCSL_DIR}/partmcsl.cpp
  )
  SET(EXEC_INCLUDE_DIRS
     ${EXEC_INCLUDE_DIRS}
@@ -46,7 +46,6 @@ IF (HOMME_ENABLE_PARTMCSL)
     ${SRC_SHARE_DIR}
     ${SRC_SHARE_DIR}/compose
 )
-      
 ENDIF(HOMME_ENABLE_PARTMCSL)
 
 SET(THETAL_SRCS_F90

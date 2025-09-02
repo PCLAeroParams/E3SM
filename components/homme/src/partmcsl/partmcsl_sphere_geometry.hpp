@@ -60,14 +60,15 @@ namespace partmcsl {
   template <typename V, typename CV>
   KOKKOS_INLINE_FUNCTION void barycenter(V v, const CV& cv,
                                                 const Int n) {
-    set_zero(v);
+    for (int i=0; i<3; ++i)
+        v[i] = 0.0;
     for (int i = 0; i < n; ++i) {
       v[0] += cv(i, 0);
       v[1] += cv(i, 1);
       v[2] += cv(i, 2);
     }
-    scale(1.0 / n, v);
-    normalize(v);
+    siqk::SphereGeometry::scale(1.0 / n, v);
+    siqk::SphereGeometry::normalize(v);
   }
 
 } // namespace partmcsl

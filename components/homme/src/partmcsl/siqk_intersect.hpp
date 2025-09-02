@@ -41,7 +41,7 @@ struct Mesh {
   Mesh (const Mesh<ko::HostSpace>& m) {
     typename InExeSpace<Vec3s, ES>::type tp, tnml;
     typename InExeSpace<Idxs, ES>::type te, ten;
-    typename InExeSpace<Kokkos::View<Real*>>::type ta;
+    typename InExeSpace<Kokkos::View<Real*>, ES>::type ta;
     resize_and_copy(tp, m.p); p = tp;
     resize_and_copy(tnml, m.nml); nml = tnml;
     resize_and_copy(ta, m.a); a = ta;
@@ -49,6 +49,48 @@ struct Mesh {
     resize_and_copy(ten, m.en); en = ten;
   }
 };
+
+template <typename CV, typename V> KOKKOS_INLINE_FUNCTION
+bool geo_output (const CV v, Int& no, V vo) {
+#ifdef SIQK_DEBUG
+    if (no >= nslices(vo)) {
+      std::stringstream ss;
+      ss << "output: No room in vo; vo.n() is " << nslices(vo) << " but no is "
+         << no << "\n";
+      message(ss.str().c_str());
+    }
+#endif
+    if (no >= nslices(vo)) return false;
+    vo(no,0) = v[0];
+    vo(no,1) = v[1];
+    vo(no,2) = v[2];
+    ++no;
+    return true;
+  }
+
+  /* Let
+       en = edge normal
+       e1 = edge starting point
+       d = en' e1
+       v(a) = (1 - a) v1 + a v2.
+     Solve n' v = d for a:
+       a = (en' (e1 - v1)) / (en' (v2 - v1)).
+     Then uvec(v(a)) is the intersection point on the unit sphere. Assume
+     intersection exists. (Already filtered by 'inside'.)
+  */
+  template <typename CV, typename V> KOKKOS_INLINE_FUNCTION
+  static void geo_intersect (const CV v1, const CV v2, const CV e1, const CV en,
+                         V intersection) {
+    Real a; {
+      const Real
+        num = siqk::SphereGeometry::dot_c_amb(en, e1, v1),
+        den = siqk::SphereGeometry::dot_c_amb(en, v2, v1);
+      a = num == 0 || den == 0 ? 0 : num/den;
+      a = a < 0 ? 0 : a > 1 ? 1 : a;
+    }
+    SphereGeometry::combine(v1, v2, a, intersection);
+    SphereGeometry::normalize(intersection);
+  }
 
 // Generally not a user routine.
 template <typename geo, typename CV3s, typename V3s, typename CV>
@@ -70,15 +112,15 @@ bool clip_against_edge (
     auto p = const_slice(vi,j);
     if (geo::inside(p, ce1, cen)) {
       if (geo::inside(s, ce1, cen)) {
-        if ( ! geo::output(p, no, vo)) return false;
+        if ( ! geo_output(p, no, vo)) return false;
       } else {
-        geo::intersect(s, p, ce1, cen, intersection);
-        if ( ! geo::output(intersection, no, vo)) return false;
-        if ( ! geo::output(p, no, vo)) return false;
+        geo_intersect(s, p, ce1, cen, intersection);
+        if ( ! geo_output(intersection, no, vo)) return false;
+        if ( ! geo_output(p, no, vo)) return false;
       }
     } else if (geo::inside(s, ce1, cen)) {
-      geo::intersect(s, p, ce1, cen, intersection);
-      if ( ! geo::output(intersection, no, vo)) return false;
+      geo_intersect(s, p, ce1, cen, intersection);
+      if ( ! geo_output(intersection, no, vo)) return false;
     }
     s = p;
   }
@@ -116,8 +158,8 @@ bool clip_against_poly (
   no = 0;
   if (nv % 2 == 0) {
     // Make sure the final vertex output list is in the caller's buffer.
-    swap(vs[0], vs[1]);
-    swap(nos[0], nos[1]);
+    siqk::swap(vs[0], vs[1]);
+    siqk::swap(nos[0], nos[1]);
   }
 
   if ( ! clip_against_edge<geo>(vi, ni, *vs[0], nos[0], const_slice(m.p, e[0]),
@@ -132,8 +174,8 @@ bool clip_against_poly (
       return false;
     if ( ! nos[1]) return true;
     if (ie == ielim) break;
-    swap(vs[0], vs[1]);
-    swap(nos[0], nos[1]);
+    siqk::swap(vs[0], vs[1]);
+    siqk::swap(nos[0], nos[1]);
   }
 
   no = nos[1];
@@ -161,8 +203,8 @@ bool clip_against_poly (
   no = 0;
   if (nslices(clip_poly) % 2 == 0) {
     // Make sure the final vertex output list is in the caller's buffer.
-    swap(vs[0], vs[1]);
-    swap(nos[0], nos[1]);
+    siqk::swap(vs[0], vs[1]);
+    siqk::swap(nos[0], nos[1]);
   }
 
   if ( ! clip_against_edge<geo>(vi, ni, *vs[0], nos[0],
@@ -178,8 +220,8 @@ bool clip_against_poly (
       return false;
     if ( ! nos[1]) return true;
     if (ie == ielim) break;
-    swap(vs[0], vs[1]);
-    swap(nos[0], nos[1]);
+    siqk::swap(vs[0], vs[1]);
+    siqk::swap(nos[0], nos[1]);
   }
 
   no = nos[1];

@@ -266,8 +266,8 @@ struct PlaneGeometry {
 // All inputs and outputs are relative to the unit-radius sphere. Vectors and
 // points are 3D.
 struct SphereGeometry {
-  template <typename CV, typename V> KOKKOS_INLINE_FUNCTION
-  static void cross (const CV a, const CV b, V c) {
+  template <typename CV, typename CV2, typename V> KOKKOS_INLINE_FUNCTION
+  static void cross (const CV a, const CV2 b, V c) {
     c[0] = a[1]*b[2] - a[2]*b[1];
     c[1] = a[2]*b[0] - a[0]*b[2];
     c[2] = a[0]*b[1] - a[1]*b[0];

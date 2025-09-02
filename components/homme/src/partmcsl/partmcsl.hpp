@@ -3,6 +3,7 @@
 
 #include "compose_slmm.hpp"
 #include "compose_slmm_siqk.hpp" // geometry, sqr, slice, kokkos view types
+#include "compose_homme.hpp" // FA types, Cartesian3D
 
 #include "siqk_exe_space.hpp"
 #include "siqk_intersect.hpp" // Mesh, and polygonal intersections based on them.
@@ -18,6 +19,8 @@ namespace partmcsl {
 
   // Convex quad-quad intersection yields <= 8 intersection points.
   static constexpr Int max_num_intersections = 8;
+  // We don't do RRM, so elements have <= 9 neighbors
+  static constexpr Int max_num_elem_neighbors = 9;
   // we use symmetric order-12 quadrature.  see siqk_quadrature.hpp for more detail.
   static constexpr Int tri_quadrature_order = 12;
   // computations are in R3
@@ -44,11 +47,15 @@ namespace partmcsl {
     {
       mesh_.resize(nelem);
       area_.resize(nelem);
-      ie_start_idx_.resize(nelem);
+      elem_self_idx_.resize(nelem);
     }
 
     const LocalMesh& mesh(const Int ie) const {
       return mesh_[ie];
+    }
+
+    const R1Array& area(const Int ie) const {
+        return area_[ie];
     }
 
     /*
@@ -77,48 +84,38 @@ namespace partmcsl {
       they've already been constructed in fortran and that they're passed to this function
       as array arguments.
     */
-    template <typename Array3D, typename CellArray>
-    void init_local_mesh_if_needed(const Int ie, const Int ie_self_idx, const Array3D& corners, const CellArray& cells) {
+    template <typename Array3D, typename RArray>
+    void init_local_mesh_if_needed(const Int ie, const Int nneighbor_elem, const Int elem_self_idx, const Array3D& corners, const RArray& area) {
 
       slmm_assert( (ie >= 0 and ie < static_cast<Int>(mesh_.size())) );
-      slmm_assert( nverts == cells.dimension_0() );
 
-      slmm_throw_if( nverts != cells.dimension_0(), "unexpected cells array shape");
-
-      if (mesh_[ie].p.dimension_0() != 0) return;
+      if (mesh_[ie].p.extent(0) != 0) return;
 
       auto& m = mesh_[ie];
       auto& a = area_[ie];
-      ie_start_idx_[ie] = n_subcells_per_elem*ie_self_idx;
+      elem_self_idx_[ie] = elem_self_idx;
 
-      const Int ncells = cells.dimension_1();
-      const Int npts = nverts * ncells;
-
-      slmm_assert(npts == corners.dimension_1());
-      slmm_throw_if(npts != corners.dimension_1() or nverts != cells.dimension_0(), "unexpected number of points");
+      const Int ncells = n_subcells_per_elem * nneighbor_elem;
+      const Int npts = 4 * ncells;
 
       m.p = R3Array("p", npts, ndim);
       m.e = I2Array("e", ncells, nverts);
       a = R1Array("a", ncells);
 
-      Int pt_idx=0;
-      for (Int ci=0; ci<ncells; ++ci) {
-        const Int cell_start_pt = pt_idx;
-        // step 1: copy vertex-cell connectivity
-        for (Int vi=0; vi<nverts; ++vi) {
-          for (int j=0; j<ndim; ++j) {
-            m.p(pt_idx,j) = corners(j, pt_idx);
+      Int pt_idx = 0;
+      Int cell_idx = 0;
+      for (Int ni=0; ni<nneighbor_elem; ++ni) {
+          for (Int ci=0; ci<n_subcells_per_elem; ++ci) {
+              for (Int vi=0; vi<nverts; ++vi) {
+                  for (Int j=0; j<ndim; ++j) {
+                      m.p(pt_idx, j) = corners(j, vi, ci, ni, ie);
+                  }
+                  m.e(cell_idx, vi) = pt_idx++;
+              }
+              a(cell_idx++) = area(ci, ni, ie);
           }
-          m.e(ci,vi) = pt_idx++;
-        }
-        // step 2: compute cell area
-        a(ci) = tri_area(slice(m.p, m.e(ci, cell_start_pt)), // tri. 1 = quad verts [0,1,2]
-                         slice(m.p, m.e(ci, cell_start_pt+1)),
-                         slice(m.p, m.e(ci, cell_start_pt+2))) +
-                tri_area(slice(m.p, m.e(ci, cell_start_pt+2)), // tri. 2 = quad verts [2,3,0]
-                         slice(m.p, m.e(ci, cell_start_pt+3)),
-                         slice(m.p, m.e(ci, cell_start_pt)));
       }
+
       //
       // an updated version of fill_normals shows up in compose_slmm_departure_point.hpp
       // but it has some extra stuff that we don't need.
@@ -130,7 +127,7 @@ namespace partmcsl {
     private:
       std::vector<LocalMesh> mesh_;
       std::vector<R1Array> area_;
-      std::vector<Int> ie_start_idx_;
+      std::vector<Int> elem_self_idx_;
 
       /*
       Given a subcell index, return the reference coordinates of the vertex at vert_idx,
@@ -153,7 +150,19 @@ namespace partmcsl {
 
   void src_partition_init(const Int nelem);
 
-  void calc_partmcsl_source_partition(/* TODO: args */);
+  void calc_partmcsl_source_partition(const int ie,
+            const int nelemd,
+            const int n_elem_neighbors,
+            const int elem_self_idx,
+            const int level_idx,
+            const int nlev,
+            const homme::Cartesian3D* cell_corners_p,
+            const Real* cell_area,
+            const homme::Cartesian3D* adv_points_p,
+            Int* ndest,
+            Int* dest_idx,
+            Real* frac_p
+            );
 
 } // namespace partmcsl
 #endif
