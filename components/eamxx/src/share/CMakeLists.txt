@@ -1,8 +1,7 @@
-include (EkatSetCompilerFlags)
+# Core types and configuration options
+add_subdirectory(core)
 
 set(SHARE_SRC
-  eamxx_config.cpp
-  eamxx_session.cpp
   atm_process/atmosphere_process.cpp
   atm_process/atmosphere_process_hash.cpp
   atm_process/atmosphere_process_group.cpp
@@ -34,7 +33,7 @@ set(SHARE_SRC
   property_checks/property_check.cpp
   property_checks/field_nan_check.cpp
   property_checks/field_within_interval_check.cpp
-  property_checks/mass_and_energy_column_conservation_check.cpp
+  property_checks/mass_and_energy_conservation_check.cpp
   util/eamxx_data_interpolation.cpp
   util/eamxx_fv_phys_rrtmgp_active_gases_workaround.cpp
   util/eamxx_time_interpolation.cpp
@@ -42,47 +41,61 @@ set(SHARE_SRC
   util/eamxx_timing.cpp
   util/eamxx_utils.cpp
   util/eamxx_bfbhash.cpp
+  util/eamxx_repro_sum_mod.F90
 )
 
 # Append ETI sources (I didn't do it above for clarity of reading)
 list (APPEND SHARE_SRC
   field/eti/field_eti_deep_copy_double_device.cpp
-  field/eti/field_eti_deep_copy_double_host.cpp
   field/eti/field_eti_deep_copy_float_device.cpp
-  field/eti/field_eti_deep_copy_float_host.cpp
   field/eti/field_eti_deep_copy_int_device.cpp
-  field/eti/field_eti_deep_copy_int_host.cpp
   field/eti/field_eti_get_strided_view_double_device.cpp
-  field/eti/field_eti_get_strided_view_double_host.cpp
   field/eti/field_eti_get_strided_view_float_device.cpp
-  field/eti/field_eti_get_strided_view_float_host.cpp
   field/eti/field_eti_get_strided_view_int_device.cpp
-  field/eti/field_eti_get_strided_view_int_host.cpp
   field/eti/field_eti_get_view_double_device.cpp
-  field/eti/field_eti_get_view_double_host.cpp
   field/eti/field_eti_get_view_float_device.cpp
-  field/eti/field_eti_get_view_float_host.cpp
   field/eti/field_eti_get_view_int_device.cpp
-  field/eti/field_eti_get_view_int_host.cpp
   field/eti/field_eti_update_double_device.cpp
-  field/eti/field_eti_update_double_host.cpp
   field/eti/field_eti_update_float_device.cpp
-  field/eti/field_eti_update_float_host.cpp
   field/eti/field_eti_update_impl_double_device.cpp
-  field/eti/field_eti_update_impl_double_host.cpp
   field/eti/field_eti_update_impl_fill_double_device.cpp
-  field/eti/field_eti_update_impl_fill_double_host.cpp
   field/eti/field_eti_update_impl_fill_float_device.cpp
-  field/eti/field_eti_update_impl_fill_float_host.cpp
   field/eti/field_eti_update_impl_fill_int_device.cpp
-  field/eti/field_eti_update_impl_fill_int_host.cpp
   field/eti/field_eti_update_impl_float_device.cpp
-  field/eti/field_eti_update_impl_float_host.cpp
   field/eti/field_eti_update_impl_int_device.cpp
-  field/eti/field_eti_update_impl_int_host.cpp
   field/eti/field_eti_update_int_device.cpp
-  field/eti/field_eti_update_int_host.cpp
+  field/eti/field_utils_eti_compute_mask_le_int.cpp
+  field/eti/field_utils_eti_compute_mask_le_float.cpp
+  field/eti/field_utils_eti_compute_mask_le_double.cpp
+  field/eti/field_utils_eti_compute_mask_ne_int.cpp
+  field/eti/field_utils_eti_compute_mask_ne_float.cpp
+  field/eti/field_utils_eti_compute_mask_ne_double.cpp
+  field/eti/field_eti_update_max_min_double_device.cpp
+  field/eti/field_eti_update_max_min_float_device.cpp
+  field/eti/field_eti_update_max_min_impl_double_device.cpp
+  field/eti/field_eti_update_max_min_impl_fill_double_device.cpp
+  field/eti/field_eti_update_max_min_impl_fill_float_device.cpp
+  field/eti/field_eti_update_max_min_impl_fill_int_device.cpp
+  field/eti/field_eti_update_max_min_impl_float_device.cpp
+  field/eti/field_eti_update_max_min_impl_int_device.cpp
+  field/eti/field_eti_update_max_min_int_device.cpp
 )
+
+if (EAMXX_ENABLE_GPU)
+  # The HostOrDevice::Device is different from HostOrDevice::Host,
+  # so we need to ETI also these fcns for HostOrDevice::Host
+  # NOTE: we DON'T do ETI for the update/max/min utils, as they are
+  #       only used on device (at least for now). OTOH, the methods
+  #       to extract views are used in a few places
+  list (APPEND SHARE_SRC
+    field/eti/field_eti_get_strided_view_double_host.cpp
+    field/eti/field_eti_get_strided_view_float_host.cpp
+    field/eti/field_eti_get_strided_view_int_host.cpp
+    field/eti/field_eti_get_view_double_host.cpp
+    field/eti/field_eti_get_view_float_host.cpp
+    field/eti/field_eti_get_view_int_host.cpp
+  )
+endif()
 
 if (EAMXX_ENABLE_EXPERIMENTAL_CODE)
   list (APPEND
@@ -92,14 +105,21 @@ if (EAMXX_ENABLE_EXPERIMENTAL_CODE)
 endif()
 
 add_library(scream_share ${SHARE_SRC})
+set_target_properties(scream_share PROPERTIES Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules)
+target_include_directories (scream_share PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/modules)
+
 target_include_directories(scream_share PUBLIC
   ${SCREAM_SRC_DIR}
   ${SCREAM_BIN_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+target_link_libraries(scream_share PUBLIC eamxx_core)
+
 # Used in the data interpolation
 target_link_libraries(scream_share PUBLIC stdc++fs)
 
+target_link_libraries(scream_share PUBLIC csm_share)
 
 if (GPTL_PATH)
   target_include_directories(scream_share PUBLIC ${GPTL_PATH})
@@ -107,27 +127,8 @@ else()
   target_include_directories(scream_share PUBLIC ${INSTALL_SHAREDPATH}/include)
 endif()
 
-target_link_libraries(scream_share PUBLIC ekat pioc)
-target_compile_options(scream_share PUBLIC
-  $<$<COMPILE_LANGUAGE:Fortran>:${SCREAM_Fortran_FLAGS}>
-)
+target_link_libraries(scream_share PUBLIC ekat::AllLibs pioc)
 
-# This used to be in `eamxx_config.h/eamxx_config.f`, but we did accidentally remove
-# the includes at least twice. To avoid this from happening again, we add this crucial
-# macro as a compile definition of the scream_share, which is linked to all other
-# scream libraries.
-if (SCREAM_CIME_BUILD)
-  target_compile_definitions (scream_share PUBLIC SCREAM_CIME_BUILD)
-endif()
-# We have some issues with RDC and repeated libraries in the link line.
-# It's a known issue, and nvcc_wrapper has a flag for handling this.
-if (Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE)
-  if(CMAKE_VERSION VERSION_LESS "3.13.0")
-    target_link_librarires(scream_share PUBLIC "--remove-duplicate-link-files")
-  else()
-    target_link_options(scream_share PUBLIC "--remove-duplicate-link-files")
-  endif()
-endif()
 SetOmpFlags(scream_share Fortran)
 
 # The "build_cf_dictionary" target downloads an XML file containing valid field
@@ -152,9 +153,10 @@ if (NOT SCREAM_LIB_ONLY)
   # Create test_support lib
   add_library(scream_test_support
     grid/mesh_free_grids_manager.cpp
-    util/eamxx_test_session.cpp
   )
   target_link_libraries(scream_test_support PUBLIC scream_share scream_io)
+  target_include_directories (scream_test_support PUBLIC ${EKAT_SOURCE_DIR}/extern/Catch2/single_include)
 
   add_subdirectory(tests)
+  add_subdirectory(io/tests)
 endif()

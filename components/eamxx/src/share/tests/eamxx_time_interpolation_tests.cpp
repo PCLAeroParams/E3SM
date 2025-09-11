@@ -7,12 +7,12 @@
 #include "share/field/field_manager.hpp"
 
 #include "share/util/eamxx_time_interpolation.hpp"
-#include "share/util/eamxx_setup_random_test.hpp"
+#include "eamxx_setup_random_test.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
 
 #include "share/io/eamxx_output_manager.hpp"
 
-#include "ekat/ekat_parameter_list.hpp"
+#include <ekat_parameter_list.hpp>
 /*-----------------------------------------------------------------------------------------------
  * Test TimeInterpolation class
  *-----------------------------------------------------------------------------------------------*/

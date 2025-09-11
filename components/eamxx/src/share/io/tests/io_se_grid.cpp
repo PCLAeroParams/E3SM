@@ -11,14 +11,14 @@
 #include "share/field/field_manager.hpp"
 #include "share/field/field_utils.hpp"
 
-#include "share/util/eamxx_setup_random_test.hpp"
+#include "eamxx_setup_random_test.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
-#include "share/eamxx_types.hpp"
+#include "share/core/eamxx_types.hpp"
 
-#include "ekat/ekat_pack.hpp"
-#include "ekat/util/ekat_units.hpp"
-#include "ekat/io/ekat_yaml.hpp"
-#include "ekat/ekat_parameter_list.hpp"
+#include <ekat_pack.hpp>
+#include <ekat_parameter_list.hpp>
+#include <ekat_assert.hpp>
+#include <ekat_comm.hpp>
 
 namespace {
 
@@ -80,7 +80,7 @@ TEST_CASE("se_grid_io")
   const auto fnames = {"field_1", "field_2", "field_3", "field_packed"};
   for (const auto& fname : fnames) {
     auto f = fm1->get_field(fname);
-    f.deep_copy(ekat::ScalarTraits<Real>::invalid());
+    f.deep_copy(ekat::invalid<Real>());
   }
 
   // Check fields were written correctly

@@ -5,16 +5,16 @@
 #include "share/field/field_manager.hpp"
 #include "share/grid/grids_manager.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
-#include "share/eamxx_types.hpp"
+#include "share/core/eamxx_types.hpp"
 #include "share/io/eamxx_output_manager.hpp"
 #include "share/io/scorpio_input.hpp"
 #include "share/atm_process/ATMBufferManager.hpp"
 #include "share/atm_process/SCDataManager.hpp"
 #include "share/atm_process/IOPDataManager.hpp"
 
-#include "ekat/logging/ekat_logger.hpp"
-#include "ekat/mpi/ekat_comm.hpp"
-#include "ekat/ekat_parameter_list.hpp"
+#include <ekat_logger.hpp>
+#include <ekat_comm.hpp>
+#include <ekat_parameter_list.hpp>
 
 #include <memory>
 
