@@ -38,9 +38,33 @@ module mo_partmc_interface
     logical :: do_init_equilibrate, aero_mode_type_exp_present
     character(len=PMC_MAX_FILENAME_LEN) :: restart_filename
     integer :: dummy_index, dummy_i_repeat
+    integer :: h2o_ndx
     real(kind=dp) :: n_part
 contains
 !-----------------------------------------------------------------------
+  subroutine emissions_in_partmc(cflx )
+  use dust_model, only: dust_names
+  use constituents,     only: pcnst, sflxnam
+  use mo_gas_phase_chemdr, only : map2chm
+  use camsrfexch,     only: cam_in_t
+  real(kind=dp),       intent(inout) :: cflx(pcols,pcnst)              ! constituent surface flux (kg/m^2/s)
+  integer :: m,n
+
+  if (masterproc) then
+         write(102,*) '-----------------------------------------'
+         write(102,*) 'PartMC emission ...'
+  ! units: num is 1 /m2/s and species  kg /m2/s
+  do m = 1,pcnst
+       n = map2chm(m)
+       if ( n /= h2o_ndx .and. n > 0 ) then
+          write(102,*)  sflxnam(m), " : ",  cflx(1,m)
+       endif
+  enddo
+  write(102,*) '-----------------------------------------'
+  endif
+
+  end subroutine emissions_in_partmc
+
   subroutine spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
        aero_dist_init, &
@@ -169,7 +193,7 @@ contains
     do i_mode = 1,n_emit_mode
        write(mode_name,'(a,i2.2)') 'emit_mode_', i_mode
        dummy = aero_data_source_by_name(aero_data, mode_name)
-       weight_class_name = mode_name 
+       weight_class_name = mode_name
        dummy = aero_data_weight_class_by_name(aero_data, &
             weight_class_name)
     end do
@@ -180,8 +204,11 @@ contains
    use mo_tracname, only : solsym
    use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
+   use mo_chem_utls,        only : get_spc_ndx
+
    implicit none
    integer :: i, n_species, n_aero_species, n_times, i_spec
+
    character(len=100) :: file_name
    type(spec_file_t) :: file
    type(spec_file_t) :: sub_file
@@ -192,6 +219,8 @@ contains
   n_species=46 ! get from eam
   ! n_aero_species=7 ! get from eam
   n_times=1
+
+  h2o_ndx   = get_spc_ndx('H2O')
 
   call ensure_string_array_size(gas_data%name, n_species)
   call gas_state_set_size(gas_state, n_species)
@@ -253,7 +282,7 @@ contains
     n_species= gas_data_n_spec(gas_data)
     !FIXME: we must pass a delta time factor
     n_time = 30
-    run_part_opt%del_t = dt / n_time 
+    run_part_opt%del_t = dt / n_time
     run_part_opt%t_max = dt
     run_part_opt%i_repeat = 1
 
@@ -329,7 +358,7 @@ contains
            call aero_state_add_aero_dist_sample(aero_state, aero_data, &
                emissions, p, characteristic_factor, env_state%elapsed_time, &
                run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
-       
+
            ! Coagulation
            call mc_coag(run_part_opt%coag_kernel_type, env_state, &
                   aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
@@ -348,7 +377,7 @@ contains
     end do ! kk
 
    ! Output to E3SM
-    do i = 1,aero_data_n_spec(aero_data) 
+    do i = 1,aero_data_n_spec(aero_data)
         call outfld( 'aero_particle_mass_'// trim(aero_data%name(i)), &
              aero_particle_mass_out(:ncol, :, :, i), ncol, lchnk )
     end do
