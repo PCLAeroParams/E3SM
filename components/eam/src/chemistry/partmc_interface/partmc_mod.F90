@@ -22,7 +22,13 @@ module mo_partmc_interface
     type(gas_data_t) :: gas_data
     type(gas_state_t) :: gas_state
     type(aero_data_t) :: aero_data
-    type(aero_state_t) :: aero_state
+
+    type aero_state_array_t
+       type(aero_state_t), allocatable, dimension(:,:) :: aero_state 
+    end type aero_state_array_t
+
+    type(aero_state_array_t), allocatable, dimension(:) :: aero_state_array
+!    type(aero_state_t), allocatable, dimension(:,:) :: aero_state
     type(scenario_t) :: scenario
     type(env_state_t) :: env_state
     type(env_state_t) :: env_state_init
@@ -176,22 +182,41 @@ contains
 
   end subroutine spec_file_read_run_part_eam
 
-  subroutine partmc_mam_inti()
+  subroutine partmc_mam_inti(phys_state)
    use mo_tracname, only : solsym
    use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
+   use physics_types,    only : physics_state
+   use mpi
+   use constituents,     only: pcnst, sflxnam, cnst_name
+   use mo_gas_phase_chemdr, only : map2chm
+   use modal_aero_calcsize, only: extract_cnst_name
+
    implicit none
-   integer :: i, n_species, n_aero_species, n_times, i_spec
+
+   type(physics_state), intent(in) :: phys_state(begchunk:endchunk)
+
+   integer :: i, n_species, n_aero_species, i_spec
    character(len=100) :: file_name
    type(spec_file_t) :: file
    type(spec_file_t) :: sub_file
    type(aero_dist_t) :: aero_dist_init
+   integer :: kk, icol, ncol
+   integer :: rank, ierr, ichunk
+   integer :: m, n
 
-   print*, 'in partmc initialization (new)'
+   call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
+
+   print*, 'in partmc initialization (new)', begchunk, endchunk, rank 
+
+   allocate(aero_state_array(begchunk:endchunk))
+   do i = begchunk, endchunk
+      ncol = phys_state(i)%ncol
+      allocate(aero_state_array(i)%aero_state(ncol,pver))
+   end do
 
   n_species=46 ! get from eam
   ! n_aero_species=7 ! get from eam
-  n_times=1
 
   call ensure_string_array_size(gas_data%name, n_species)
   call gas_state_set_size(gas_state, n_species)
@@ -205,13 +230,27 @@ contains
        aero_dist_init, &
        n_part, rand_init)
 
-  call aero_state_zero(aero_state)
-  call aero_state_set_weight(aero_state, aero_data, &
-       AERO_STATE_WEIGHT_FLAT_SOURCE)
-  call aero_state_set_n_part_ideal(aero_state, n_part)
-  call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-       aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-       run_part_opt%allow_halving)
+  do m = 1,pcnst
+       n = map2chm(m)
+       if (n > 0 ) then
+          write(102,*)  m, n, cnst_name(m), extract_cnst_name(cnst_name(m))
+       endif
+  enddo
+
+  do ichunk = begchunk,endchunk
+  do kk = 1,pver
+  do icol = 1, ncol
+     aero_dist_init%mode(1)%num_conc = 1e6 + 1e6*phys_state(ichunk)%lon(icol) ** 2
+     call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
+     call aero_state_set_weight(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
+          AERO_STATE_WEIGHT_FLAT_SOURCE)
+     call aero_state_set_n_part_ideal(aero_state_array(ichunk)%aero_state(icol,kk), n_part)
+     call aero_state_add_aero_dist_sample(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
+          aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
+          run_part_opt%allow_halving)
+  end do
+  end do
+  end do
 
   env_state = env_state_init
 
@@ -233,6 +272,7 @@ contains
   subroutine partmc_mam_invoke(state, dt)
     use physics_types,    only : physics_state
     use cam_history,       only : outfld
+    use mpi
 
     implicit none
     type(physics_state), intent(inout):: state
@@ -249,6 +289,11 @@ contains
     real(kind=dp) :: characteristic_factor
     type(aero_dist_t) :: emissions
 
+   integer :: rank, ierr
+
+   call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
+
+
     !FIXME: get n_species this values from eam
     n_species= gas_data_n_spec(gas_data)
     !FIXME: we must pass a delta time factor
@@ -259,6 +304,8 @@ contains
 
     lchnk = state%lchnk
     ncol  = state%ncol
+
+    print*, 'solving on ', rank, ' for chunk', lchnk, 'with ', ncol, 'columns and', pver, 'levels'
 
     ! Output arrays
     aero_particle_mass_out(:,:,:,:)=-1000d0
@@ -314,33 +361,37 @@ contains
         ! For now, lets just try coagulation + emission.
         ! We probably want a custom code here anyway to have better control:
         !    - We might need a custom time stepper for efficiency in TChem solving
-        !    - E3SM probably will control emissions
+        !    - E3SM probably will control emissions of gases
         !    - We have to remove dilution
-        !    - It appears we have no (stored) time varying scenario data.
         n_coag = 0
         n_samp = 0
         n_emit = 0
+        print*, kk, 'pressure', env_state%pressure, 'temperature', env_state%temp, &
+             'height', env_state%height
         do i_time = 1,n_time
 
-           ! Aerosol emissions
-           emission_rate_scale = 1.0d0
-           characteristic_factor = 3600.0d0 / run_part_opt%del_t
-           p = emission_rate_scale * run_part_opt%del_t / env_state%height
-           call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-               emissions, p, characteristic_factor, env_state%elapsed_time, &
-               run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
+           ! Surface emissions
+!           if (kk == 1) then
+!              ! Aerosol emissions
+!              emission_rate_scale = 1.0d0
+!              characteristic_factor = 3600.0d0 / run_part_opt%del_t
+!              p = emission_rate_scale * run_part_opt%del_t / env_state%height
+!              call aero_state_add_aero_dist_sample(aero_state_array(lchnk)%aero_state(icol,kk), &
+!                  aero_data, emissions, p, characteristic_factor, env_state%elapsed_time, &
+!                  run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
+!           end if
        
            ! Coagulation
-           call mc_coag(run_part_opt%coag_kernel_type, env_state, &
-                  aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
+!           call mc_coag(run_part_opt%coag_kernel_type, env_state, &
+!                  aero_data, aero_state_array(lchnk)%aero_state(icol,kk), run_part_opt%del_t, n_samp, n_coag)
 
            ! Rebalance
-           call aero_state_rebalance(aero_state, aero_data, &
-                run_part_opt%allow_doubling, &
-                run_part_opt%allow_halving, initial_state_warning=.false.)
+!           call aero_state_rebalance(aero_state_array(lchnk)%aero_state(icol,kk), aero_data, &
+!                run_part_opt%allow_doubling, &
+!                run_part_opt%allow_halving, initial_state_warning=.false.)
 
         end do
-        call write_nc_aero_state(aero_state,aero_particle_mass_out, &
+        call write_nc_aero_state(aero_state_array(lchnk)%aero_state(icol,kk), aero_particle_mass_out, &
                             aero_num_conc_out, &
                             number_conc_out, &
                             icol, kk)
