@@ -44,6 +44,7 @@ save
 
 public :: modal_aero_calcsize_init, modal_aero_calcsize_sub, modal_aero_calcsize_diag
 public :: modal_aero_calcsize_reg
+public :: extract_cnst_name
 !Mimic enumerators for aerosol types
 integer, parameter:: inter_aero   = 1 !interstitial aerosols
 integer, parameter:: cld_brn_aero = 2 !cloud borne species

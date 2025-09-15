@@ -93,6 +93,11 @@ contains
 
     env_state_init%elapsed_time = 0d0
 
+    ! n_spec from ntot_aspectype in modal_aero_data
+    ! ntot_aspectype in modal_aero_data
+    ! specdens_amode from physprop files via rad_cnst_get_aer_prop (rad_constituents)
+    ! specmw_amodei from modal_aero_data 
+
     ! aero_data
     n_swbands = 1
     call ensure_string_array_size(aero_data%name, n_aero_spec)
@@ -119,6 +124,8 @@ contains
     call aero_data_set_mosaic_map(aero_data)
 
     call fractal_set_spherical(aero_data%fractal)
+
+    call partmc_interface_set_aero_data()
 
     ! Create a single mode to sample
     ! TODO: Replace with something informed by initial conditions
@@ -182,15 +189,19 @@ contains
 
   end subroutine spec_file_read_run_part_eam
 
-  subroutine partmc_mam_inti(phys_state)
+  subroutine partmc_mam_inti(phys_state, species_class)
    use mo_tracname, only : solsym
    use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
    use physics_types,    only : physics_state
+   use physconst,    only: spec_class_aerosol
    use mpi
    use constituents,     only: pcnst, sflxnam, cnst_name
    use mo_gas_phase_chemdr, only : map2chm
    use modal_aero_calcsize, only: extract_cnst_name
+   use modal_aero_data, only: ntot_amode, modename_amode, sigmag_amode, &
+       nspec_amode, numptr_amode, lmassptr_amode
+   use modal_aero_initialize_data, only: modal_aero_register !xname_massptr, xname_numptr, nspec_amode
 
    implicit none
 
@@ -204,6 +215,7 @@ contains
    integer :: kk, icol, ncol
    integer :: rank, ierr, ichunk
    integer :: m, n
+   integer, dimension(:) :: species_class
 
    call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
 
@@ -225,16 +237,36 @@ contains
     gas_data%name(i) = solsym(i)
   end do
 
+!  if (masterproc) then 
+!     write(*,*) 'gas_data names'
+!     do i =1, gas_data_n_spec(gas_data)
+!         write(*,*) gas_data%name(i)
+!     end do
+!  end if
+
+  ! This is how we can get the mode names
+  do i = 1,ntot_amode
+    print*, 'mode:', i, 'name: ', modename_amode(i), 'sigma:', sigmag_amode(i), &
+       'total species in mode:', nspec_amode(i), 'num mode index:', numptr_amode(i) !, xname_numptr(i)
+    do m = 1, nspec_amode(i)
+      print*, lmassptr_amode(m,i)
+    end do
+!    call modal_aero_register(species_class)
+!    do m = 1,nspec_amode(i)
+!      print*, xname_massptr(m,i)
+!    end do
+  end do
+
   call spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
        aero_dist_init, &
        n_part, rand_init)
 
   do m = 1,pcnst
-       n = map2chm(m)
-       if (n > 0 ) then
-          write(102,*)  m, n, cnst_name(m), extract_cnst_name(cnst_name(m))
-       endif
+     if (species_class(m) == spec_class_aerosol) then
+        write(*,*) 'aerosol species', cnst_name(m) , species_class(m), &
+             extract_cnst_name(cnst_name(m))
+     end if
   enddo
 
   do ichunk = begchunk,endchunk
@@ -500,5 +532,54 @@ contains
     end do
 
   end subroutine partmc_interface_e3sm_emissions
+
+  subroutine partmc_interface_set_aero_data()
+
+    use modal_aero_data, only: ntot_aspectype, specmw_amode, spechygro, specdens_amode
+
+    type(aero_data_t) :: aero_data_e3sm
+
+    integer :: i_spec, n_swbands, n_aero_spec
+
+    ! n_spec from ntot_aspectype in modal_aero_data
+    ! ntot_aspectype in modal_aero_data
+    ! specdens_amode from physprop files via rad_cnst_get_aer_prop (rad_constituents)
+    ! specmw_amodei from modal_aero_data 
+
+    n_aero_spec = ntot_aspectype
+    n_swbands = 1
+    call ensure_string_array_size(aero_data_e3sm%name, n_aero_spec)
+    call ensure_integer_array_size(aero_data_e3sm%mosaic_index, n_aero_spec)
+    call ensure_real_array_size(aero_data_e3sm%wavelengths, n_swbands)
+    call ensure_real_array_size(aero_data_e3sm%density, n_aero_spec)
+    call ensure_integer_array_size(aero_data_e3sm%num_ions, n_aero_spec)
+    call ensure_real_array_size(aero_data_e3sm%molec_weight, n_aero_spec)
+    call ensure_real_array_size(aero_data_e3sm%kappa, n_aero_spec)
+
+    do i_spec = 1,n_aero_spec
+       aero_data_e3sm%name(i_spec) = 'test' !mosaic_spec_name(i_spec)
+       aero_data_e3sm%density(i_spec) = specdens_amode(i_spec)
+       aero_data_e3sm%kappa(i_spec) = spechygro(i_spec) 
+       aero_data_e3sm%molec_weight(i_spec) = specmw_amode(i_spec)
+       aero_data_e3sm%num_ions(i_spec) = 0
+!       if (mosaic_spec_name(i_spec) == "H2O") then
+!          aero_data_e3sm%i_water = i_spec
+!       end if
+    end do
+    aero_data_e3sm%wavelengths = 550.0d0
+
+    call aero_data_set_water_index(aero_data_e3sm)
+    call aero_data_set_mosaic_map(aero_data_e3sm)
+
+    call fractal_set_spherical(aero_data_e3sm%fractal)
+
+    print*, 'writing e3sm aero_data'
+    do i_spec = 1,n_aero_spec
+      print*, 'density:', aero_data_e3sm%density
+      print*, 'molecular weight:', aero_data_e3sm%molec_weight
+      print*, 'kappas:', aero_data_e3sm%kappa
+    end do
+
+  end subroutine
 
 end module mo_partmc_interface
