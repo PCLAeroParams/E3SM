@@ -38,7 +38,7 @@ module mo_partmc_interface
     logical :: do_init_equilibrate, aero_mode_type_exp_present
     character(len=PMC_MAX_FILENAME_LEN) :: restart_filename
     integer :: dummy_index, dummy_i_repeat
-    integer :: h2o_ndx
+    integer :: h2o_ndx,nmodes,nspec_max_modes
     real(kind=dp) :: n_part
 contains
 !-----------------------------------------------------------------------
@@ -64,6 +64,128 @@ contains
   endif
 
   end subroutine emissions_in_partmc
+
+  subroutine compute_nspec_max(nspec_max)
+
+  use rad_constituents, only: rad_cnst_get_info
+
+  ! Arguments
+  integer, intent(out) :: nspec_max  ! Maximum number of species across all modes
+
+  ! Local variables
+  integer :: n           ! Loop index for modes
+  integer :: nspec       ! Number of species in the current mode
+
+  ! Initialize nspec_max
+  nspec_max = 0
+  ! Loop over modes to find the maximum number of species
+  do n = 1, nmodes
+    call rad_cnst_get_info(0, n, nspec=nspec)
+    nspec_max = max(nspec_max, nspec)
+  end do
+
+end subroutine compute_nspec_max
+
+subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diameter, std_mam, num_fluxes, vmr_fraction)
+
+  ! Compute emission inputs for PartMC based on modal aerosol properties.
+  use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_props, rad_cnst_get_mode_num_idx, &
+                              rad_cnst_get_mam_mmr_idx, rad_cnst_get_aer_props
+  use chem_mods, only : adv_mass
+  use physconst,        only: pi
+  use mo_gas_phase_chemdr, only : map2chm
+  ! Arguments
+  real(kind=dp), intent(in)  :: surface_emmisions_mmr(:,:)      ! Mass mixing ratio values (kg/kg-air)
+  integer, intent(in)        :: ncol                 ! Number of columns
+  real(kind=dp), intent(out) :: mean_diameter(:,:)   ! Mean diameter for each mode (m)
+  real(kind=dp), intent(out) :: std_mam(:)           ! Standard deviation for each mode
+  real(kind=dp), intent(out) :: num_fluxes(:,:)      ! Number fluxes for each mode
+  real(kind=dp), intent(out) :: vmr_fraction(:,:,:)  ! Volume mixing ratio fraction for each species
+
+  ! Local variables
+  integer :: list_idx                          ! Index for climate or diagnostic list
+  integer :: nspec                             ! Number of species in a mode
+  integer :: n, ispec, icol                    ! Loop indices
+  integer :: num_idx, spec_idx, idx_chm        ! Indices for number flux, species, and chemistry mapping
+  real(kind=dp) :: sigmag                           ! Geometric standard deviation of mode
+  real(kind=dp) :: alnsg                            ! Logarithm of sigmag
+  real(kind=dp) :: dumfac                           ! Dummy factor for diameter calculation
+  real(kind=dp) :: dummwdens                        ! Dummy density factor
+  real(kind=dp) :: dryvol(ncol)                        ! Dry volume for each column
+  real(kind=dp) :: specdens
+  real(kind=dp) :: sum_mmr_per_mode(ncol,nmodes)            ! Sum of mass mixing ratios per mode
+  real(kind=dp), parameter :: third = 1.0 / 3.0  ! Constant for cube root calculation
+
+  ! Initialize variables
+  list_idx = 0  ! Climate list by default
+
+  ! Loop over modes to compute properties
+  do n = 1, nmodes
+    ! Initialize dry volume
+    dryvol(:) = 0.0
+
+    ! Get mode properties
+    call rad_cnst_get_mode_props(list_idx, n, sigmag=sigmag)
+    std_mam(n) = sigmag
+    alnsg = log(sigmag)
+    dumfac = exp(4.5 * alnsg**2) * pi / 6.0
+
+    ! Get number flux index
+    call rad_cnst_get_mode_num_idx(n, num_idx)
+
+    ! Get the number of species in the mode
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
+
+    ! Compute number fluxes
+    do icol = 1, ncol
+      num_fluxes(icol, n) = surface_emmisions_mmr(icol, num_idx)
+    end do
+
+    ! Compute dry volume
+    do ispec = 1, nspec
+      call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
+      call rad_cnst_get_aer_props(list_idx, n, ispec, density_aer=specdens)
+      dummwdens = 1.0 / specdens
+      do icol = 1, ncol
+        dryvol(icol) = dryvol(icol) + max(0.0, surface_emmisions_mmr(icol, spec_idx)) * dummwdens
+      end do
+    end do
+
+    ! Compute mean diameter
+    do icol = 1, ncol
+      mean_diameter(icol, n) = (dryvol(icol) / (dumfac * num_fluxes(icol, n)))**third
+    end do
+  end do
+
+  ! Compute volume mixing ratio fractions
+  do n = 1, nmodes
+    sum_mmr_per_mode(:,:) = 0.0
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
+    do ispec = 1, nspec
+      call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
+      idx_chm = map2chm(spec_idx)
+      if (idx_chm > 0) then
+        if (adv_mass(idx_chm) /= 0.0) then
+          do icol = 1, ncol
+            vmr_fraction(icol, n, ispec) = surface_emmisions_mmr(icol, spec_idx) / adv_mass(idx_chm)
+            sum_mmr_per_mode(icol, n) = sum_mmr_per_mode(icol, n) + vmr_fraction(icol, n, ispec)
+          end do
+        end if
+      end if
+    end do
+  end do
+
+  ! Normalize volume mixing ratio fractions
+  do n = 1, nmodes
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
+    do ispec = 1, nspec
+      do icol = 1, ncol
+        vmr_fraction(icol, n, ispec) = vmr_fraction(icol, n, ispec) / sum_mmr_per_mode(icol, n)
+      end do
+    end do
+  end do
+
+end subroutine compute_partmc_emission_inputs
 
   subroutine spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
@@ -205,6 +327,7 @@ contains
    use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
    use mo_chem_utls,        only : get_spc_ndx
+   use rad_constituents, only: rad_cnst_get_info
 
    implicit none
    integer :: i, n_species, n_aero_species, n_times, i_spec
@@ -257,14 +380,20 @@ contains
   call addfld( 'aero_num_conc', (/'lev     ', 'npartmax' /), 'I', 'm^{-3}', &
        'number concentration for each particle' )
 
+  ! Get the number of modes
+  call rad_cnst_get_info(0, nmodes=nmodes)
+  call compute_nspec_max(nspec_max_modes)
+
   end subroutine partmc_mam_inti
 
-  subroutine partmc_mam_invoke(state, dt)
+  subroutine partmc_mam_invoke(state, cflx, dt)
     use physics_types,    only : physics_state
     use cam_history,       only : outfld
+    use constituents,     only: pcnst
 
     implicit none
     type(physics_state), intent(inout):: state
+    real(kind=dp),       intent(in) :: cflx(pcols,pcnst)              ! constituent surface flux (kg/m^2/s)
     real(kind=dp),            intent(in)    :: dt              ! time step
 
     integer :: i, n_species, icol, kk, lchnk, ncol, n_aero_species
@@ -272,8 +401,12 @@ contains
     real(kind=dp) ::  aero_component_len_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  aero_num_conc_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  number_conc_out(pcols, pver)
+    real(kind=dp) ::  mean_diameter(pcols, nmodes)
+    real(kind=dp) ::  sigma_mam(nmodes)
+    real(kind=dp) ::  num_fluxes(pcols, nmodes)
+    real(kind=dp) ::  vmr_fraction(pcols, nmodes, nspec_max_modes)
 
-    integer ::  n_samp, n_coag, i_time, n_time, n_emit
+    integer ::  n_samp, n_coag, i_time, n_time, n_emit,nmodes
     real(kind=dp) :: emission_rate_scale, p
     real(kind=dp) :: characteristic_factor
     type(aero_dist_t) :: emissions
@@ -302,10 +435,17 @@ contains
          write(102,*) '-----------------------------------------'
     endif
 
+    ! emissions
+
     ! FIXME: What time information does PartMC need here?
     env_state%start_time=0
     env_state%start_day=0
     env_state%elapsed_time=0d0
+
+    ! emission inputs
+    mean_diameter(:,:)=0
+    num_fluxes(:,:)=0
+    call compute_partmc_emission_inputs(cflx, ncol,mean_diameter, sigma_mam, num_fluxes, vmr_fraction)
 
     ! FIXME: Move inside the loop over cells.
     call partmc_interface_e3sm_emissions(state, emissions)
