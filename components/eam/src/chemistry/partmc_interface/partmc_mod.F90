@@ -40,6 +40,9 @@ module mo_partmc_interface
     integer :: dummy_index, dummy_i_repeat
     integer :: h2o_ndx,nmodes,nspec_max_modes
     real(kind=dp) :: n_part
+    ! mam information
+    character(len=256), allocatable :: mam_num_names(:)
+    character(len=256), allocatable :: mam_species_names(:,:)
 contains
 !-----------------------------------------------------------------------
   subroutine emissions_in_partmc(cflx )
@@ -86,6 +89,54 @@ contains
 
 end subroutine compute_nspec_max
 
+subroutine save_num_and_species_names(num_names, species_names)
+
+  use rad_constituents, only: rad_cnst_get_mode_num_idx, rad_cnst_get_mam_mmr_idx,rad_cnst_get_info
+  use mo_tracname, only : solsym
+  use mo_gas_phase_chemdr, only : map2chm
+
+  ! Arguments
+  character(len=*), intent(out) :: num_names(:)       ! Names of number fluxes per mode
+  character(len=*), intent(out) :: species_names(:,:) ! Names of species per mode
+
+  ! Local variables
+  integer :: n, ispec , nspec    ! Loop indices for modes and species
+  integer :: num_idx, spec_idx, idx_chm  ! Indices for number flux and species
+  character(len=256) :: species_name     ! Temporary variable for species name
+  character(len=256) :: num_name         ! Temporary variable for number flux name
+
+  ! Loop over modes to retrieve names
+  do n = 1, nmodes
+    ! Get the number flux index for the mode
+    call rad_cnst_get_mode_num_idx(n, num_idx)
+
+    ! Convert num_idx to chemistry index and retrieve the name
+    idx_chm = map2chm(num_idx)
+    if (idx_chm > 0) then
+      num_names(n) = solsym(idx_chm)
+    else
+      num_names(n) = "UNKNOWN"  ! Handle invalid index
+    end if
+
+    ! Loop over species in the mode to retrieve names
+    ! Get the number of species in the mode
+    call rad_cnst_get_info(0, n, nspec=nspec)
+    do ispec = 1, nspec
+      ! Get the species index for the mode and species
+      call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
+
+      ! Convert spec_idx to chemistry index and retrieve the name
+      idx_chm = map2chm(spec_idx)
+      if (idx_chm > 0) then
+        species_names(n, ispec) = solsym(idx_chm)
+      else
+        species_names(n, ispec) = "UNKNOWN"  ! Handle invalid index
+      end if
+    end do
+  end do
+
+end subroutine save_num_and_species_names
+
 subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diameter, std_mam, num_fluxes, vmr_fraction)
 
   ! Compute emission inputs for PartMC based on modal aerosol properties.
@@ -94,6 +145,8 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
   use chem_mods, only : adv_mass
   use physconst,        only: pi
   use mo_gas_phase_chemdr, only : map2chm
+  use constituents,     only: pcnst, sflxnam
+  use mo_tracname, only : solsym
   ! Arguments
   real(kind=dp), intent(in)  :: surface_emmisions_mmr(:,:)      ! Mass mixing ratio values (kg/kg-air)
   integer, intent(in)        :: ncol                 ! Number of columns
@@ -120,6 +173,7 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
   list_idx = 0  ! Climate list by default
 
   ! Loop over modes to compute properties
+  mean_diameter(:,:)=0.0
   do n = 1, nmodes
     ! Initialize dry volume
     dryvol(:) = 0.0
@@ -135,6 +189,10 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
 
     ! Get the number of species in the mode
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
+    if (masterproc) then
+      idx_chm = map2chm(num_idx)
+      write(102,*) "sflxnam(", num_idx, "):", sflxnam(num_idx), "solsym : ", solsym(idx_chm)
+    end if
 
     ! Compute number fluxes
     do icol = 1, ncol
@@ -153,13 +211,19 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
 
     ! Compute mean diameter
     do icol = 1, ncol
-      mean_diameter(icol, n) = (dryvol(icol) / (dumfac * num_fluxes(icol, n)))**third
+      if (num_fluxes(icol, n) /= 0) then
+        mean_diameter(icol, n) = (dryvol(icol) / (dumfac * num_fluxes(icol, n)))**third
+      end if
     end do
+    if (masterproc) then
+            write(102,*)  trim(adjustl(mam_num_names(n))) //": mean_diameter(", 1, ",", n, "):", mean_diameter(1, n)
+    end if
   end do
 
   ! Compute volume mixing ratio fractions
+  sum_mmr_per_mode(:,:) = 0.0
+  vmr_fraction(:, :, :)=0.0
   do n = 1, nmodes
-    sum_mmr_per_mode(:,:) = 0.0
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
       call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
@@ -170,6 +234,12 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
             vmr_fraction(icol, n, ispec) = surface_emmisions_mmr(icol, spec_idx) / adv_mass(idx_chm)
             sum_mmr_per_mode(icol, n) = sum_mmr_per_mode(icol, n) + vmr_fraction(icol, n, ispec)
           end do
+          if (masterproc) then
+            write(102,*) "sflxnam(", spec_idx, "):", sflxnam(spec_idx), "solsym : ", solsym(idx_chm)
+            write(102,*) "surface_emmisions_mmr(", 1, ",", spec_idx, "):", surface_emmisions_mmr(1, spec_idx)
+            write(102,*) "adv_mass(", idx_chm, "):", adv_mass(idx_chm)
+            write(102,*) "sum_mmr_per_mode(", 1, ",", n, "):", sum_mmr_per_mode(1, n)
+          end if
         end if
       end if
     end do
@@ -179,9 +249,19 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
   do n = 1, nmodes
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
-      do icol = 1, ncol
-        vmr_fraction(icol, n, ispec) = vmr_fraction(icol, n, ispec) / sum_mmr_per_mode(icol, n)
-      end do
+      idx_chm = map2chm(spec_idx)
+        if (idx_chm > 0) then
+          if (adv_mass(idx_chm) /= 0.0) then
+            do icol = 1, ncol
+              if (sum_mmr_per_mode(icol, n) /= 0.0) then
+                vmr_fraction(icol, n, ispec) = vmr_fraction(icol, n, ispec) / sum_mmr_per_mode(icol, n)
+              end if
+            end do
+          if (masterproc) then
+            write(102,*)  trim(adjustl(mam_species_names( n, ispec))) //" : vmr_fraction(", 1, ",", n, ",", ispec, "):", vmr_fraction(1, n, ispec)
+          end if
+          end if
+        end if
     end do
   end do
 
@@ -330,12 +410,13 @@ end subroutine compute_partmc_emission_inputs
    use rad_constituents, only: rad_cnst_get_info
 
    implicit none
-   integer :: i, n_species, n_aero_species, n_times, i_spec
+   integer :: i, n_species, n_aero_species, n_times, i_spec,i_mode, nspec
 
    character(len=100) :: file_name
    type(spec_file_t) :: file
    type(spec_file_t) :: sub_file
    type(aero_dist_t) :: aero_dist_init
+
 
    print*, 'in partmc initialization (new)'
 
@@ -383,6 +464,23 @@ end subroutine compute_partmc_emission_inputs
   ! Get the number of modes
   call rad_cnst_get_info(0, nmodes=nmodes)
   call compute_nspec_max(nspec_max_modes)
+  allocate(mam_num_names(nmodes))
+  allocate(mam_species_names(nmodes, nspec_max_modes))
+  call save_num_and_species_names(mam_num_names,mam_species_names)
+  if (masterproc) then
+    write(102,*) '-----------------------------------------'
+    write(102,*) 'save_num_and_species_names'
+    do i_mode = 1, nmodes
+      write(102, "(A)", advance="no") "Mode " // trim(adjustl(mam_num_names(i_mode))) // ": "
+      call rad_cnst_get_info(0, i_mode, nspec=nspec)
+      do i_spec = 1, nspec
+        write(102, "(A)", advance="no") trim(adjustl(mam_species_names(i_mode, i_spec))) // " "
+      end do
+      write(102,*)
+    end do
+    write(102,*) '-----------------------------------------'
+  endif
+
 
   end subroutine partmc_mam_inti
 
