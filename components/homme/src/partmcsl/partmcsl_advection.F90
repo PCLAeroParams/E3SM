@@ -16,7 +16,7 @@ module partmcsl_advection_mod
   use parallel_mod, only       : parallel_t, abortmp
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
-  use partmcsl_mod, only       : tri_area, calc_src_partition
+  use partmcsl_mod, only       : tri_area, calc_src_partition, ref_coords_ab
 
   implicit none
   private
@@ -238,6 +238,10 @@ subroutine partmcsl_init(par, elem)
       endif
     enddo
     
+    call partmcsl_init_local(nelemd)
+    call init_local_meshes(nelemd, fv_mesh%nneighbors, fv_mesh%my_elem_local_idx, &
+      fv_mesh%points, fv_mesh%subcell_area)
+    
     if (par%masterproc) then
       write(iulog,*) 'partmcsl: exiting partmcsl_init'
     endif
@@ -270,16 +274,16 @@ subroutine ij_idx_from_corner_idx(iloc, jloc, corner_idx)
 end subroutine 
 
 subroutine partmcsl_test(par, elem)
-    type(parallel_t), intent(in) :: par
-    type(element_t), intent(in) :: elem(:)
-    
-    if (do_checks) then
-        call check_ij_corners(par, elem)
-        call partmcsl_check_elem_area(par, elem)
-    endif
-    if (par%masterproc) then
-        write(iulog,*) "partmcsl_test: all tests passed."
-    endif
+  type(parallel_t), intent(in) :: par
+  type(element_t), intent(in) :: elem(:)
+  
+  if (do_checks) then
+      call check_ij_corners(par, elem)
+      call partmcsl_check_elem_area(par, elem)
+  endif
+  if (par%masterproc) then
+      write(iulog,*) "partmcsl_test: all tests passed."
+  endif
 end subroutine   
   
 subroutine check_ij_corners(par, elem)
@@ -378,7 +382,7 @@ end subroutine
           call abortmp("partmcsl element area mismatch.")
         endif
     enddo
-    write(iulog,*) "partmcsl_test: check_elem_area passed."
+!     write(iulog,*) "partmcsl_test: check_elem_area passed."
   end subroutine
   
   subroutine partmcsl_finalize()
@@ -399,80 +403,7 @@ end subroutine
     endif
   end subroutine partmcsl_finalize
 
-  subroutine ref_coords_ab(a, b, subcell_idx, vert_idx) 
-    !   heads up: subcell_idx and vert_idx are 0-based indices.
-    ! 
-    !       Given a subcell index return the (a,b) 
-    !       reference coordinates of the vertex at vert_idx,
-    !       in ccw order starting at SW corner.
-    ! 
-    !                 (0,1)
-    !      (-1,1) o----x----o (1,1)
-    !             | 3  |  2 |
-    !             |    |    |
-    !      (-1,0) x----x----x (1,0)
-    !             |    |    |
-    !             | 0  |  1 |
-    !     (-1,-1) o----x----o (1,-1)
-    !                 (0,-1)
-    !       
-    !TODO: replace this function with an interface to its c++ counterpart.
-    !
-    real(real_kind), intent(out) :: a, b ! output: (a,b) coordinates in ref. quad.
-    integer, intent(in) :: subcell_idx, vert_idx ! input: *0-based* subcell and vertex indices
-    ! local
-    logical :: left, south
-    
-    left = ( vert_idx == 0 .or. vert_idx == 3)
-    south = ( vert_idx < 2 )
-    
-    select case (subcell_idx)
-      case (0)
-        if (left) then
-          a = -one
-        else 
-          a = zero
-        endif
-        if (south) then
-          b = -one
-        else 
-          b = zero
-        endif
-      case (1)
-        if (left) then
-          a = zero
-        else 
-          a = one
-        endif
-        if (south) then
-          b = -one
-        else 
-          b = zero
-        endif
-      case (2)
-        if (left) then
-          a = zero
-        else 
-          a = one
-        endif
-        if (south) then
-          b = zero
-        else 
-          b = one
-        endif
-      case (3)
-        if (left) then
-          a = -one 
-        else 
-          a = zero
-        endif
-        if (south) then
-          b = zero
-        else 
-          b = one
-        endif
-    end select
-  end subroutine
+  
   
   subroutine partmcsl_step_forward(elem, dt, nets, nete, tl)
     type (element_t)     , intent(inout) :: elem(:)
@@ -499,8 +430,9 @@ end subroutine
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         !------------------------
         ! step 2: compute overlap portions (c++)
-        call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
-            k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, src_partition%dest_cell_idxs, src_partition%dest_portions)
+!         call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
+!              k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, & 
+!              src_partition%dest_cell_idxs, src_partition%dest_portions)
         !------------------------
         ! step 3: move partmc particles
         do ci=1,4 ! loop over subcells owned by this element

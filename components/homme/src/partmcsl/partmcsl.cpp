@@ -1,10 +1,13 @@
 #include "partmcsl.hpp"
+#include <iostream>
+#include <sstream>
+#include <typeinfo>
 
 namespace partmcsl {
 
 static partmcsl::SlSourcePartition::Ptr src_partition;
 
-void SlSourcePartition::ref_coords_ab(Real& a, Real& b, const Int& subcell_idx, const Int& vert_idx) const {
+void ref_coords_ab(Real& a, Real& b, const Int& subcell_idx, const Int& vert_idx) {
     slmm_assert( (subcell_idx >= 0 and subcell_idx < 4) );
     slmm_assert( (vert_idx >= 0 and vert_idx < 4 ) );
 
@@ -35,26 +38,16 @@ void SlSourcePartition::ref_coords_ab(Real& a, Real& b, const Int& subcell_idx, 
   } // ref_coords_ab
 
 void src_partition_init(const Int nelem) {
-  src_partition = std::make_shared<partmcsl::SlSourcePartition>(nelem);
+  std::ostringstream ss;
+  if (!src_partition) {
+    src_partition = std::make_shared<partmcsl::SlSourcePartition>(nelem);
+  }
+  else {
+    ss << "partmcsl.cpp : ERROR src_partition is already initialized.\n";
+  }
+  std::cout << ss.str();
 }
 
-/*
-
-*/
-// void calc_partmcsl_source_partition(
-//   const Int ie, // index, in [0, nelemd-1] of active owned element on this rank
-//   const Int nelemd, // number of owned elements on this rank
-//   const Int elem_self_idx, // index of "self" element in neighbors list in [0, nneighbors_i[ie]-1]
-//   const Int lev_idx, // index of active level in [0, nlev-1]
-//   const Int nlev, // number of vertical levels
-//   const Cartesian3D* adv_points_r, // adv_points(1:4,1:4) coordinates of 16 advected corners of subcells of elem[ie]
-//   const Cartesian3D* cell_points_r, // cell_points(1:nneighbors(ie), ie) coordinates of static corners of local elem[ie] fv mesh
-//   const Int* cells_i, // cells(:,1:nneighbors(ie), ie) give the quad vertices of fv mesh
-//   const Int* nneighbors_i, // number of neighbors for each owned element
-//   Int* ndest_i, // number of destination cells each source sends to
-//   Int* dest_i, // indices of cells that receive sent source
-//   Real* frac_r // fraction of source cells to send
-//   )
 void calc_partmcsl_source_partition(const int ie,
             const int nelemd,
             const int n_elem_neighbors,
@@ -98,7 +91,6 @@ void calc_partmcsl_source_partition(const int ie,
   }
 
   // get local fv cell mesh
-  src_partition->init_local_mesh_if_needed(ie, n_elem_neighbors, elem_self_idx, corners, area);
   const auto& mesh = src_partition->mesh(ie);
   const auto& mesh_area = src_partition->area(ie);
 
@@ -170,11 +162,70 @@ void calc_partmcsl_source_partition(const int ie,
   } // loop over subcells that elem(ie) owns
 } // calc_partmcsl_source_partition
 
+void init_local_meshes(const homme::Int nelemd, const homme::Int* nneighbors, const homme::Int* elem_self_idx,
+  const homme::Cartesian3D* points, const homme::Real* subcell_area) {
+
+  slmm_assert(src_partition);
+
+  homme::FA1<const homme::Int> nneighbors_view(nneighbors, nelemd);
+  homme::FA1<const homme::Int> elem_self_view(elem_self_idx, nelemd);
+  homme::FA5<const homme::Real> points_view(reinterpret_cast<const Real*>(points),
+    ndim, nverts, n_subcells_per_elem, max_num_elem_neighbors, nelemd);
+  homme::FA3<const homme::Real> area_view(subcell_area, n_subcells_per_elem, max_num_elem_neighbors, nelemd);
+
+  for (int ie=0; ie<nelemd; ++ie) {
+    auto m = src_partition->mesh(ie);
+    auto a = src_partition->area(ie);
+
+    const Int nn = nneighbors_view(ie);
+    const Int ncells = n_subcells_per_elem * nn;
+    const Int npts = nverts * ncells;
+
+    m.p = R3Array("p", npts, ndim);
+    m.e = I2Array("e", ncells, nverts);
+    a = R1Array("a", ncells);
+
+    Int pt_idx = 0;
+    Int cell_idx = 0;
+    for (int nbr_idx = 0; nbr_idx < nn; ++nbr_idx) {
+      for (int subcell_idx = 0; subcell_idx < n_subcells_per_elem; ++subcell_idx) {
+        for (int vert_idx = 0; vert_idx < nverts; ++vert_idx) {
+          for (int j=0; j<ndim; ++j) {
+            m.p(pt_idx, j) = points_view(j, vert_idx, subcell_idx, nbr_idx, ie);
+          }
+          m.e(cell_idx, vert_idx) = pt_idx++;
+        }
+        const Real area_check = tri_area(Kokkos::subview(m.p, m.e(cell_idx, 0), Kokkos::ALL),
+                                        Kokkos::subview(m.p, m.e(cell_idx, 1), Kokkos::ALL),
+                                        Kokkos::subview(m.p, m.e(cell_idx, 2), Kokkos::ALL)) +
+                                tri_area(Kokkos::subview(m.p, m.e(cell_idx, 0), Kokkos::ALL),
+                                        Kokkos::subview(m.p, m.e(cell_idx, 2), Kokkos::ALL),
+                                        Kokkos::subview(m.p, m.e(cell_idx, 3), Kokkos::ALL));
+        const bool area_pass = ( std::abs(area_check - area_view(subcell_idx, nbr_idx, ie)) < fp_tol) ;
+
+        slmm_assert(area_pass);
+
+        a(cell_idx++) = area_view(subcell_idx, nbr_idx, ie);
+      }
+    }
+    //
+    // an updated version of fill_normals shows up in compose_slmm_departure_point.hpp
+    // but it has some extra stuff that we don't need.
+    // this is an older version that comes from siqk_intersect.hpp.
+    //
+    siqk::test::fill_normals<siqk::SphereGeometry>(m);
+
+
+  }
+
+}
+
+
 } // namespace partmcsl
 
 
-extern "C" void calc_source_partition_(
-  homme::Int* ie,
+extern "C" void calc_source_partition(
+  homme::Int* ie ,
   homme::Int* nelemd,
   homme::Int* n_elem_neighbors,
   homme::Int* self_idx,
@@ -187,7 +238,7 @@ extern "C" void calc_source_partition_(
   homme::Int* dest,
   homme::Real* frac
 ) {
-  return partmcsl::calc_partmcsl_source_partition(*ie -1,
+  return partmcsl::calc_partmcsl_source_partition(*ie -1 ,
     *nelemd,
     *self_idx -1,
     *n_elem_neighbors -1,
@@ -201,6 +252,23 @@ extern "C" void calc_source_partition_(
     frac);
 }
 
+extern "C" void ref_coords_ab(homme::Real* a,
+                    homme::Real* b,
+                    const homme::Int* subcell_idx,
+                    const homme::Int* vert_idx) {
+    return partmcsl::ref_coords_ab(*a, *b, *subcell_idx, *vert_idx);
+}
 
+extern "C" void init_local_meshes_(const homme::Int* nelemd,
+                        const homme::Int* nneighbors,
+                        const homme::Int* elem_self_idx,
+                        const homme::Cartesian3D* points,
+                        const homme::Real* areas) {
+  return partmcsl::init_local_meshes(*nelemd, nneighbors, elem_self_idx, points, areas);
+}
+
+extern "C" void partmcsl_init_local_(const homme::Int* nelemd) {
+  partmcsl::src_partition_init(*nelemd);
+}
 
 
