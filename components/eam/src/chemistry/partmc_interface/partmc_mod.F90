@@ -150,7 +150,7 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
   ! Arguments
   real(kind=dp), intent(in)  :: surface_emmisions_mmr(:,:)      ! Mass mixing ratio values (kg/kg-air)
   integer, intent(in)        :: ncol                 ! Number of columns
-  real(kind=dp), intent(out) :: mean_diameter(:,:)   ! Mean diameter for each mode (m)
+  real(kind=dp), intent(out) :: mean_diameter(:,:)   ! Geometric dry mean diameter of the number distribution for each mode
   real(kind=dp), intent(out) :: std_mam(:)           ! Standard deviation for each mode
   real(kind=dp), intent(out) :: num_fluxes(:,:)      ! Number fluxes for each mode
   real(kind=dp), intent(out) :: vmr_fraction(:,:,:)  ! Volume mixing ratio fraction for each species
