@@ -209,7 +209,7 @@ subroutine compute_partmc_emission_inputs(surface_emmisions_mmr, ncol, mean_diam
       end do
     end do
 
-    ! Compute mean diameter
+    ! Compute geometric mean diameter
     do icol = 1, ncol
       if (num_fluxes(icol, n) /= 0) then
         mean_diameter(icol, n) = (dryvol(icol) / (dumfac * num_fluxes(icol, n)))**third
