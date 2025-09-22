@@ -1411,7 +1411,7 @@ end function chem_is_active
     use mo_chem_utls,        only : get_spc_ndx
     use cam_abortutils,      only: endrun
 
-    use mo_partmc_interface, only: partmc_mam_invoke, emissions_in_partmc
+    use mo_partmc_interface, only: partmc_mam_invoke
 
     implicit none
 
