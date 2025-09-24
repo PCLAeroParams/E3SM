@@ -10,6 +10,9 @@
 
 #include "partmcsl_sphere_geometry.hpp" // spherical triangle area
 
+#include <iostream>
+#include <sstream>
+
 namespace partmcsl {
   using siqk::Real;
   using siqk::Int;
@@ -48,7 +51,7 @@ namespace partmcsl {
     {
       mesh_.resize(nelem);
       area_.resize(nelem);
-      elem_self_idx_.resize(nelem);
+      elem_self_idx_.resize(nelem, -1);
     }
 
     const LocalMesh& mesh(const Int ie) const {
@@ -59,6 +62,68 @@ namespace partmcsl {
         return area_[ie];
     }
 
+    Int elem_self_idx(const Int ie) const {
+      return elem_self_idx_[ie];
+    }
+
+    template <typename PointsArray, typename AreaArray>
+    void init_local_mesh_if_needed(const homme::Int ie,
+                         const homme::Int nneighbors,
+                         const homme::Int elem_self_idx,
+                         const PointsArray& points,
+                         const AreaArray& areas) {
+      if (elem_self_idx_[ie] >= 0) return;
+
+      auto m = mesh_[ie];
+      auto a = area_[ie];
+      elem_self_idx_[ie] = elem_self_idx;
+
+      const Int ncells = n_subcells_per_elem * nneighbors;
+      const Int npts = nverts * ncells;
+      m.p = R3Array("p", npts);
+      m.e = I2Array("e", ncells, nverts);
+      a = R1Array("a", ncells);
+
+      std::stringstream ss;
+      ss << "partmcsl::SlSourcePartition::init_local_mesh_if_needed: initializing new mesh for ie "
+         << ie << " with " << npts << " points and " << ncells << " cells.\n";
+      std::cout << ss.str();
+
+      Int pt_idx = 0;
+      Int cell_idx = 0;
+      for (int nbr_idx = 0; nbr_idx < nneighbors; ++nbr_idx) {
+        for (int subcell_idx=0; subcell_idx<n_subcells_per_elem; ++subcell_idx) {
+          for (int vert_idx=0; vert_idx < nverts; ++vert_idx) {
+            for (int j=0; j<ndim; ++j) {
+              m.p(pt_idx, j) = points(j, vert_idx, subcell_idx, nbr_idx, ie);
+            }
+            m.e(cell_idx, vert_idx) = pt_idx++;
+          }
+          std::cout << ss.str();
+          const Real area_check = tri_area(Kokkos::subview(m.p, m.e(cell_idx, 0), Kokkos::ALL),
+                                    Kokkos::subview(m.p, m.e(cell_idx, 1), Kokkos::ALL),
+                                    Kokkos::subview(m.p, m.e(cell_idx, 2), Kokkos::ALL)) +
+                                  tri_area(Kokkos::subview(m.p, m.e(cell_idx, 0), Kokkos::ALL),
+                                    Kokkos::subview(m.p, m.e(cell_idx, 2), Kokkos::ALL),
+                                    Kokkos::subview(m.p, m.e(cell_idx, 3), Kokkos::ALL));
+          const bool area_pass = ( std::abs(area_check - areas(subcell_idx, nbr_idx, ie)) < fp_tol) ;
+
+          slmm_assert(area_pass);
+
+          if (!area_pass) {
+            ss.str("");
+            ss << "partmcsl.hpp : init_local_mesh_if_needed area mismatch error.  area = "
+               << areas(subcell_idx, nbr_idx, ie) << " area_check = " << area_check
+               << " at ie " << ie << " nbr " << nbr_idx << " subcell_idx " << subcell_idx
+               << "\n";
+            slmm_throw_if(!area_pass, ss.str());
+          }
+
+          a(cell_idx++) = areas(subcell_idx, nbr_idx, ie);
+        }
+      }
+
+    }
 
     private:
       std::vector<LocalMesh> mesh_;
@@ -88,27 +153,31 @@ namespace partmcsl {
 
   void src_partition_init(const Int nelem);
 
-  void init_local_meshes(const homme::Int nelemd,
-                         const homme::Int* nneighbors,
-                         const homme::Int* elem_self_idx,
-                         const homme::Cartesian3D* points,
-                         const homme::Real** areas);
-
-  void calc_partmcsl_source_partition(const int ie,
-            const int nelemd,
-            const int n_elem_neighbors,
-            const int elem_self_idx,
-            const int level_idx,
-            const int nlev,
+  void calc_source_partition(
+            const Int ie,
+            const Int nelemd,
+            const Int n_elem_neighbors,
+            const Int elem_self_idx,
+            const Int level_idx,
+            const Int nlev,
             const homme::Cartesian3D* cell_corners_p,
             const Real* cell_area,
             const homme::Cartesian3D* adv_points_p,
-            Int* ndest,
-            Int* dest_idx,
+            Int* ndest_p,
+            Int* dest_idx_p,
             Real* frac_p
             );
 
-  void test_interface(const homme::Int i) {}
+  template <typename ArrayType>
+  void test_int_array(const ArrayType& arr, const homme::Int n) {
+    std::stringstream ss;
+    ss << "partmcsl: c++ received (" << n << ") = (";
+    for (int i=0; i<n; ++i) {
+      ss << arr[i] << " ";
+    }
+    ss << ")\n";
+    std::cout << ss.str();
+  }
 
   bool areas_match();
 } // namespace partmcsl

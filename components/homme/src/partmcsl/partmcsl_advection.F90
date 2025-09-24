@@ -16,7 +16,7 @@ module partmcsl_advection_mod
   use parallel_mod, only       : parallel_t, abortmp
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
-  use partmcsl_mod, only       : tri_area, calc_src_partition, ref_coords_ab
+  use partmcsl_mod
 
   implicit none
   private
@@ -24,16 +24,7 @@ module partmcsl_advection_mod
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
   public :: partmcsl_step_forward
   
-  ! we assume pg2 grid 
-  integer, parameter :: nphys = 2, & ! the "2" in pg2, 2 physics cell edges per spectral element edge
-                        nverts = 4, & ! always quads
-                        nphys_cell_per_elem = 4 ! 2 x 2 subcells per element
-                        
-  ! the maximum number elements than any 1 element can overlap after an advection time step
-  ! (assumes timestep guarantees "halo-1" constraint)
-  integer, parameter :: max_ndest_elem = 9
-  ! the maximum number of fv cells that any 1 fv cell can overlap after an advection time step
-  integer, parameter :: max_ndest = nphys_cell_per_elem * max_ndest_elem
+  
                         
 
   !=====================================
@@ -142,10 +133,8 @@ subroutine partmcsl_init(par, elem)
     ! allocate memory for fv meshes
     !--------------------------------------------
     allocate(fv_mesh%nneighbors(nelemd))
-!     allocate(fv_mesh%elem_ij_corners(2,4,nelemd))
     allocate(fv_mesh%my_elem_local_idx(nelemd))
     fv_mesh%my_elem_local_idx = -1
-!     fv_mesh%elem_ij_corners = -1
     max_num_neighbors = 0
     do ie = 1, nelemd
       num_neighbors = elem(ie)%desc%actual_neigh_edges + 1
@@ -153,17 +142,23 @@ subroutine partmcsl_init(par, elem)
       if (num_neighbors > max_num_neighbors) max_num_neighbors = num_neighbors
     enddo
     
+    if (minval(fv_mesh%nneighbors) < 9) then
+      if (minval(fv_mesh%nneighbors) /= 8) then
+        call abortmp("partmcsl expects 8 or 9 neighbors for each element.")
+      endif
+    else 
+      if (max_num_neighbors /= 9) then
+        call abortmp("partmcsl does assumes regular cubed sphere meshes (no RRM).")
+      endif
+    endif
     if (par%masterproc) then
-      write(iulog,*) 'partmcsl init: max_num_neighbors = ', max_num_neighbors
+      write(iulog,*) 'partmcsl init: ie = ', ie, ' max_num_neighbors = ', max_num_neighbors, ' nneighbors = ', fv_mesh%nneighbors
     endif
     
     fv_mesh%max_nneighbors = max_num_neighbors
     allocate(fv_mesh%points(nverts, nphys_cell_per_elem, max_num_neighbors, nelemd))
-    !     allocate(fv_mesh%elem_local_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
     allocate(fv_mesh%elem_global_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
-    !     allocate(fv_mesh%subcell_idx(nphys_cell_per_elem, max_num_neighbors, nelemd))
     allocate(fv_mesh%subcell_area(nphys_cell_per_elem, max_num_neighbors, nelemd))
-    !     fv_mesh%elem_local_id = -1
     fv_mesh%elem_global_id = -1
     fv_mesh%subcell_area = zero
     
@@ -366,6 +361,10 @@ end subroutine
         elem_area_sum = zero
         do ci = 1, nphys_cell_per_elem
           elem_area_sum = elem_area_sum + fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
+          if (fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie) < fp_tol) then
+            write(iulog,*) 'partmcsl init: zero area subcell found.'
+            call abortmp('partmcsl init: zero area subcell found.')
+          endif
         enddo
         ! we compute element area here, from the corners, since we can't use elem(ie)%area
         ! (it's not yet set; it's not defined until prim_init2)
@@ -374,7 +373,7 @@ end subroutine
                            elem(ie)%corners3D(3)) + &
                   tri_area(elem(ie)%corners3D(1), &
                            elem(ie)%corners3D(3), &
-                           elem(ie)%corners3D(4))                           
+                           elem(ie)%corners3D(4))          
         if (abs(elem_area - elem_area_sum) > fp_tol) then
           write(iulog,*) 'partmcsl init: elem_area_sum = ', elem_area_sum, &
                         ' elem_area = ', elem_area, &
@@ -406,6 +405,7 @@ end subroutine
   
   
   subroutine partmcsl_step_forward(elem, dt, nets, nete, tl)
+    use iso_c_binding, only: c_int
     type (element_t)     , intent(inout) :: elem(:)
     real(kind=real_kind) , intent(in   ) :: dt  ! time step size
     integer              , intent(in   ) :: nets ! thread starting element idx in [1,nelemd]
@@ -417,6 +417,10 @@ end subroutine
     integer :: t1 ! time point 1 (end of advection timestep)
     integer :: di, ci, dest_idx, src_idx
     real(kind=real_kind) :: dest_frac
+!     integer(kind=c_int) :: test_array(5)
+!     
+!     test_array = 5
+!     call test_const_int_array1(test_array, 5)
     
     ! TODO: barrier (if necessary)
     ! TODO: timer start
@@ -428,11 +432,12 @@ end subroutine
         ! step 1: advect fv cells forward
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
+        write(iulog,*) "partmcsl_step_forward: advection done at elem ", ie, " lev ", k
         !------------------------
         ! step 2: compute overlap portions (c++)
-!         call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
-!              k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, & 
-!              src_partition%dest_cell_idxs, src_partition%dest_portions)
+        call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
+             k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, & 
+             src_partition%dest_cell_idxs, src_partition%dest_portions)
         !------------------------
         ! step 3: move partmc particles
         do ci=1,4 ! loop over subcells owned by this element

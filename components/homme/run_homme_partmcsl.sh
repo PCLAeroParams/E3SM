@@ -2,9 +2,12 @@
 
 e3sm=$HOME/e3sm-pclap
 homme=$e3sm/components/homme
-mach=$homme/cmake/machineFiles/flight.cmake
-wdir=/pscratch/pabosle/e3sm-pclap
-source $e3sm/pclap-e3sm-test.F2010.ne4pg2_oQU480.partmcsl/.env_mach_specific.sh
+# mach=$homme/cmake/machineFiles/flight.cmake
+mach=$homme/cmake/machineFiles/cee-compute.cmake
+# wdir=/pscratch/pabosle/e3sm-pclap
+wdir=/scratch/pabosle/e3sm-pclap
+# source $e3sm/pclap-e3sm-test.F2010.ne4pg2_oQU480.partmcsl/.env_mach_specific.sh
+source $HOME/cee-homme-env.sh
 
 
 execName=theta-l-nlev20-native
@@ -18,10 +21,10 @@ submitFlag=
 jobFile=batch_run.cmd
 nnodes=1
 nranksPerNode=2
-wtime="00:35:00"
+wtime="00:15:00"
 res=flight-cldera
 acct=fy210162
-ntasks=112
+ntasks=56
 
 while getopts 'cbrs' OPTION
 do
@@ -44,9 +47,9 @@ shift $(($OPTIND -1))
 if [ "$configFlag" ]
 then
   printf "Configuring standalone Homme\n"
-  # configure Homme with CMake
+# configure Homme with CMake
   cd $wdir
-  cmake -Wno-dev -C $mach -DQSIZE_D=9 -DHOMME_USE_MKL=FALSE $homme
+  cmake -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=DEBUG -DHOMME_USE_MKL=FALSE $homme
 fi
 
 if [ "$buildFlag" ]
@@ -57,7 +60,7 @@ then
   make -j 24 $execName
 fi
 
-if [ "$runFlag" ]
+if [ "$submitFlag" ]
 then
 printf "creating job command to run.\n"
 cat <<EOF > $jobFile
@@ -73,7 +76,7 @@ chmod +x $jobFile
 cat $jobFile
 fi
 
-if [ "$submitFlag" ]
+if [ "$runFlag" ]
 then
-sbatch $jobFile
+mpirun --map-by ppr:56:socket:PE=1 --bind-to hwthread --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
 fi
