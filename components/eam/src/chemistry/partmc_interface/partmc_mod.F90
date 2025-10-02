@@ -143,6 +143,7 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
   real(kind=dp) :: dummwdens                        ! Dummy density factor
   real(kind=dp) :: dryvol(ncol)                        ! Dry volume for each column
   real(kind=dp) :: specdens
+  real(kind=dp) :: sum_vf_per_mode(ncol,nmodes)            ! Sum of mass mixing ratios per mode
   real(kind=dp), parameter :: third = 1.0 / 3.0  ! Constant for cube root calculation
 
   ! Initialize variables
@@ -198,6 +199,7 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
 
   ! Compute volume fractions
   volume_fractions(:, :, :)=0.0
+  sum_vf_per_mode(:,:) = 0.0
   do n = 1, nmodes
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
@@ -206,12 +208,34 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
       dummwdens = 1.0 / specdens
       do icol = 1, ncol
         volume_fractions(icol, n, ispec) =  cflx(icol, spec_idx) * dummwdens
+        sum_vf_per_mode(icol, n) = sum_vf_per_mode(icol, n) + volume_fractions(icol, n, ispec)
       end do
       if (masterproc) then
             write(102,*) "volume_fractions(", 1, n, ",", spec_idx, "):", volume_fractions(1,n, spec_idx)
       end if
     end do
   end do
+
+  ! Normalize volume mixing ratio fractions
+  do n = 1, nmodes
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
+    do ispec = 1, nspec
+      idx_chm = map2chm(spec_idx)
+        if (idx_chm > 0) then
+          if (adv_mass(idx_chm) /= 0.0) then
+            do icol = 1, ncol
+              if (sum_vf_per_mode(icol, n) /= 0.0) then
+                volume_fractions(icol, n, ispec) = volume_fractions(icol, n, ispec) / sum_vf_per_mode(icol, n)
+              end if
+            end do
+          if (masterproc) then
+            write(102,*)  trim(adjustl(mam_species_names( n, ispec))) //" : normalized volume_fractions(", 1, ",", n, ",", ispec, "):", volume_fractions(1, n, ispec)
+          end if
+          end if
+        end if
+    end do
+  end do
+
 end subroutine compute_partmc_emission_inputs
 
   subroutine spec_file_read_run_part_eam(run_part_opt, aero_data, &
