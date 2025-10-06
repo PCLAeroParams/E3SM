@@ -125,8 +125,7 @@ subroutine partmcsl_init(par, elem)
     endif
     
     if (par%masterproc) then
-      write(iulog,*) 'partmcsl: entering partmcsl_init'
-      write(iulog,*) 'partmcsl init: nelemd = ', nelemd
+      write(iulog,*) 'partmcsl: entering partmcsl_init, nelemd ', nelemd
     endif
     
     !--------------------------------------------
@@ -151,9 +150,9 @@ subroutine partmcsl_init(par, elem)
         call abortmp("partmcsl does assumes regular cubed sphere meshes (no RRM).")
       endif
     endif
-    if (par%masterproc) then
-      write(iulog,*) 'partmcsl init: ie = ', ie, ' max_num_neighbors = ', max_num_neighbors, ' nneighbors = ', fv_mesh%nneighbors
-    endif
+!     if (par%masterproc) then
+!       write(iulog,*) 'partmcsl init: ie = ', ie, ' max_num_neighbors = ', max_num_neighbors, ' nneighbors = ', fv_mesh%nneighbors
+!     endif
     
     fv_mesh%max_nneighbors = max_num_neighbors
     allocate(fv_mesh%points(nverts, nphys_cell_per_elem, max_num_neighbors, nelemd))
@@ -366,8 +365,6 @@ end subroutine
             call abortmp('partmcsl init: zero area subcell found.')
           endif
         enddo
-        ! we compute element area here, from the corners, since we can't use elem(ie)%area
-        ! (it's not yet set; it's not defined until prim_init2)
         elem_area = tri_area(elem(ie)%corners3D(1), &
                            elem(ie)%corners3D(2), &
                            elem(ie)%corners3D(3)) + &

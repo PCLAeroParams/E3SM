@@ -74,20 +74,20 @@ namespace partmcsl {
                          const AreaArray& areas) {
       if (elem_self_idx_[ie] >= 0) return;
 
-      auto m = mesh_[ie];
-      auto a = area_[ie];
+      auto& m = mesh_[ie];
+      auto& a = area_[ie];
       elem_self_idx_[ie] = elem_self_idx;
 
       const Int ncells = n_subcells_per_elem * nneighbors;
       const Int npts = nverts * ncells;
-      m.p = R3Array("p", npts);
+      mesh_[ie].p = R3Array("p", npts);
       m.e = I2Array("e", ncells, nverts);
       a = R1Array("a", ncells);
 
       std::stringstream ss;
-      ss << "partmcsl::SlSourcePartition::init_local_mesh_if_needed: initializing new mesh for ie "
-         << ie << " with " << npts << " points and " << ncells << " cells.\n";
-      std::cout << ss.str();
+//       ss << "partmcsl::SlSourcePartition::init_local_mesh_if_needed: initializing new mesh for ie "
+//          << ie << " with " << npts << " points and " << ncells << " cells.\n";
+//       std::cout << ss.str();
 
       Int pt_idx = 0;
       Int cell_idx = 0;
@@ -99,7 +99,6 @@ namespace partmcsl {
             }
             m.e(cell_idx, vert_idx) = pt_idx++;
           }
-          std::cout << ss.str();
           const Real area_check = tri_area(Kokkos::subview(m.p, m.e(cell_idx, 0), Kokkos::ALL),
                                     Kokkos::subview(m.p, m.e(cell_idx, 1), Kokkos::ALL),
                                     Kokkos::subview(m.p, m.e(cell_idx, 2), Kokkos::ALL)) +
@@ -123,6 +122,11 @@ namespace partmcsl {
         }
       }
 
+      // an updated version of fill_normals shows up in compose_slmm_departure_point.hpp
+      // but it has some extra stuff that we don't need.
+      // this is an older version that comes from siqk_intersect.hpp.
+      //
+      siqk::test::fill_normals<siqk::SphereGeometry>(m);
     }
 
     private:

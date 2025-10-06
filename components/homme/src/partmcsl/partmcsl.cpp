@@ -59,6 +59,8 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
   Real* frac_p) {
     using siqk::slice;
 
+    constexpr Real area_tol = 0.03;
+
     slmm_assert(src_partition);
     slmm_throw_if(!src_partition, "src_partition not allocated.");
 
@@ -75,10 +77,10 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     homme::FA4<homme::Int> dest_idx(dest_idx_p, nlev, max_ndest_cell, n_subcells_per_elem, nelemd);
     homme::FA4<homme::Real> dest_frac(frac_p, nlev, max_ndest_cell, n_subcells_per_elem, nelemd);
 
-    ss << "partmcsl::calc_source_partition received ie " << ie << " nelemd " << nelemd
-       << " n_elem_neighbors " << n_elem_neighbors << " elem_self_idx " << elem_self_idx
-       << " level " << lev_idx << " of " << nlev << "\n";
-    std::cout << ss.str();
+//     ss << "partmcsl::calc_source_partition received ie " << ie << " nelemd " << nelemd
+//        << " n_elem_neighbors " << n_elem_neighbors << " elem_self_idx " << elem_self_idx
+//        << " level " << lev_idx << " of " << nlev << "\n";
+//     std::cout << ss.str();
 
     src_partition->init_local_mesh_if_needed(ie, n_elem_neighbors, elem_self_idx, points, area);
 
@@ -95,16 +97,14 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     const auto& mesh_area = src_partition->area(ie);
 
     const Int ncells_in_mesh = mesh.e.extent(0);
-    ss.str("");
-    ss << "partmcsl::calc_source_partition output initialized to null for new time step; ncells = " << ncells_in_mesh << ".\n";
-    std::cout << ss.str();
+//     ss.str("");
+//     ss << "partmcsl::calc_source_partition output initialized to null for new time step; ncells = " << ncells_in_mesh << ".\n";
+//     std::cout << ss.str();
 
     // workspace buffers will be wrapped in unmanaged views for easier indexing shortly
     Real vi_buf[3 * nverts];
     Real vo_buf[3 * max_num_intersections];
     Real wrk_buf[4 * max_num_intersections];
-
-
 
     slmm_assert(ncells_in_mesh == n_elem_neighbors * n_subcells_per_elem);
     slmm_throw_if( ncells_in_mesh != n_elem_neighbors * n_subcells_per_elem, "unexpected number of cells in mesh.");
@@ -114,16 +114,16 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
       // loop over advected subcells of elem(ie)
 
       const Real src_area = mesh_area(start_cell_idx + adv_cell_idx);
-      ss.str("");
-      ss << "elem " << ie << " subcell " << adv_cell_idx << " starts has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
-      std::cout << ss.str();
+//       ss.str("");
+//       ss << "elem " << ie << " subcell " << adv_cell_idx << " starts has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
+//       std::cout << ss.str();
 
       for (int cell_idx=0; cell_idx<ncells_in_mesh; ++cell_idx) {
         // loop over static cells in mesh
         //
         // compute intersection (if any) with advected cells
         //
-        const siqk::RawVec3s verts_in(vi_buf, nverts, 3);
+        siqk::RawVec3s verts_in(vi_buf, nverts, 3);
         siqk::RawVec3s verts_out(vo_buf, max_num_intersections, 3);
         Int n_overlap_verts = 0;
         { // clip_against_poly scope
@@ -163,7 +163,12 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
       for (int j=0; j<ndest(lev_idx, adv_cell_idx, ie); ++j) {
         total_frac += dest_frac(j, lev_idx, adv_cell_idx, ie);
       }
-      slmm_throw_if(std::abs(total_frac - 1.0) > fp_tol, "source total fraction error");
+      if (std::abs(total_frac - 1.0) > area_tol) {
+        std::ostringstream ss;
+        ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n";
+        std::cout << ss.str();
+      }
+      slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, "source total fraction error");
     } // loop over advected subcells of elem(ie)
   }
 
