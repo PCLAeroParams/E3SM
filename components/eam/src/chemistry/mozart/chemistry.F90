@@ -1695,6 +1695,11 @@ end function chem_is_active
             ncldwtr(:ncol,k) = state%q(:ncol,k,ixndrop)
     end do
 
+    call t_startf( 'partmc' )
+    ! FIXME: It will not compile if PartMC is off.
+    call partmc_mam_invoke(state, cam_in%cflx, dt)
+    call t_stopf( 'partmc' )
+
     call t_startf( 'chemdr' )
     call gas_phase_chemdr(lchnk, ncol, imozart, state%q, &
                           state%phis, state%zm, state%zi, calday, &
@@ -1710,11 +1715,7 @@ end function chem_is_active
 
     call t_stopf( 'chemdr' )
 
-    call t_startf( 'partmc' )
-    ! FIXME: It will not compile if PartMC is off.
-    !call invoke_partmc(ncol)
-    call partmc_mam_invoke(state, dt)
-    call t_stopf( 'partmc' )
+
 
 !-----------------------------------------------------------------------
 ! set flags for tracer tendencies (water and gas phase constituents)
