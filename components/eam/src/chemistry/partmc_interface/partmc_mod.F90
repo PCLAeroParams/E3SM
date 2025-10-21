@@ -244,7 +244,6 @@ end subroutine compute_partmc_emission_inputs
 
   subroutine spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
-       aero_dist_init, &
        n_part, rand_init)
 
     !> Monte Carlo options.
@@ -253,8 +252,6 @@ end subroutine compute_partmc_emission_inputs
     type(aero_data_t), intent(inout) :: aero_data
     !> Initial environmental state.
     type(env_state_t), intent(inout) :: env_state_init
-    !> Initial aerosol distribution.
-    type(aero_dist_t), intent(inout) :: aero_dist_init
     !> Ideal number of computational particles.
     real(kind=dp), intent(inout) :: n_part
     !> Random number generator seed.
@@ -284,7 +281,7 @@ end subroutine compute_partmc_emission_inputs
          "BC    ", "H2O   "]
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
-    n_part = 10
+    n_part = 50
 
     env_state_init%elapsed_time = 0d0
 
@@ -314,27 +311,6 @@ end subroutine compute_partmc_emission_inputs
     call aero_data_set_mosaic_map(aero_data)
 
     call fractal_set_spherical(aero_data%fractal)
-
-    ! Create a single mode to sample
-    ! TODO: Replace with something informed by initial conditions
-!    allocate(aero_dist_init%mode(1))
-!    aero_dist_init%mode(1)%name = "TEST"
-!    aero_dist_init%mode(1)%type = AERO_MODE_TYPE_LOG_NORMAL
-!    aero_dist_init%mode(1)%source = aero_data_source_by_name(aero_data, &
-!         aero_dist_init%mode(1)%name)
-!    weight_class_name = aero_dist_init%mode(1)%name
-!    aero_dist_init%mode(1)%weight_class = aero_data_weight_class_by_name(aero_data, &
-!            weight_class_name)
-!    aero_dist_init%mode(1)%char_radius = 1.0d-8
-!    aero_dist_init%mode(1)%log10_std_dev_radius = log10(1.6d0)
-!    aero_dist_init%mode(1)%num_conc = 1.0d9
-!    allocate(aero_dist_init%mode(1)%vol_frac(aero_data_n_spec(aero_data)))
-!    allocate(aero_dist_init%mode(1)%vol_frac_std(aero_data_n_spec(aero_data)))
-!    aero_dist_init%mode(1)%vol_frac = 1.0d0 / 20
-!    aero_dist_init%mode(1)%vol_frac_std = 0.0d0
-!
-!    aero_dist_init%mode(1)%sample_radius = [ real(kind=dp) :: ]
-!    aero_dist_init%mode(1)%sample_num_conc = [ real(kind=dp) :: ]
 
     ! run_part_opt general settings
     run_part_opt%output_prefix = "./partmc_output/urban_plume"
@@ -448,15 +424,7 @@ end subroutine compute_partmc_emission_inputs
 
   call spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
-       aero_dist_init, &
        n_part, rand_init)
-!  call aero_state_zero(aero_state)
-!  call aero_state_set_weight(aero_state, aero_data, &
-!       AERO_STATE_WEIGHT_FLAT_SOURCE)
-!  call aero_state_set_n_part_ideal(aero_state, n_part)
-!  call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-!       aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-!       run_part_opt%allow_halving)
 
     allocate(aero_dist_init%mode(ntot_amode))
     do i_mode = 1,ntot_amode
@@ -484,7 +452,7 @@ end subroutine compute_partmc_emission_inputs
           call rad_cnst_get_mode_num_idx(i_mode, num_idx)
           aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
           aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
-          aero_dist_init%mode(i_mode)%num_conc = 1e6 + 1e6*phys_state(ichunk)%lon(icol) ** 2
+          aero_dist_init%mode(i_mode)%num_conc = 1e6 !+ 1e6*phys_state(ichunk)%lon(icol) ** 2
 !          aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
        end do
        call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
@@ -533,8 +501,6 @@ end subroutine compute_partmc_emission_inputs
     write(102,*) '-----------------------------------------'
   endif
 
-  print*, 'done with PartMC initialization'
-
   end subroutine partmc_mam_inti
 
   subroutine partmc_mam_invoke(state, cflx, dt)
@@ -558,6 +524,7 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp) ::  volume_fractions(pcols, nmodes, nspec_max_modes)
 
     integer ::  n_samp, n_coag, i_time, n_time, n_emit,nmodes
+    integer :: i_mode
     real(kind=dp) :: emission_rate_scale, p
     real(kind=dp) :: characteristic_factor
     type(aero_dist_t) :: emissions
@@ -638,11 +605,22 @@ end subroutine compute_partmc_emission_inputs
         n_emit = 0
         call partmc_interface_e3sm_emissions(state, emissions, &
            geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol, : , :))
-
-
         if (masterproc) then
            if (icol == 1) then
-           print*, kk, env_state%temp, env_state%pressure,env_state%height,  env_state%altitude
+           write(102,*) '-----------------------------------------'
+           write(102,*) 'grid cell | temperature | pressure | box height | altitude'
+           write(102,*) kk, env_state%temp, env_state%pressure,env_state%height,  env_state%altitude
+           write(102,*) '-----------------------------------------'
+           end if
+           if (kk == pver) then
+              write(102,*) '-----------------------------------------'
+              write(102,*) 'i_mode | radius | log10sigma | number flux'
+              do i_mode = 1,n_emit_mode
+                 write(102,*) i_mode, emissions%mode(i_mode)%char_radius, &
+                         emissions%mode(i_mode)%log10_std_dev_radius, &
+                         emissions%mode(i_mode)%num_conc
+              end do
+              write(102,*) '-----------------------------------------'
            end if
         end if 
 
@@ -772,9 +750,9 @@ end subroutine compute_partmc_emission_inputs
        weight_class_name = emissions%mode(i_mode)%name
        emissions%mode(i_mode)%weight_class = aero_data_weight_class_by_name(aero_data, &
                weight_class_name)
-       emissions%mode(i_mode)%char_radius = 1.0d-8
-       emissions%mode(i_mode)%log10_std_dev_radius = log10(1.6d0)
-       emissions%mode(i_mode)%num_conc = 1.0d6
+       emissions%mode(i_mode)%char_radius = geom_mean_diam(i_mode) / 2.0d0
+       emissions%mode(i_mode)%log10_std_dev_radius = log10(sigma(i_mode))
+       emissions%mode(i_mode)%num_conc = num_fluxes(i_mode)
        allocate(emissions%mode(i_mode)%vol_frac(aero_data_n_spec(aero_data)))
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
        emissions%mode(i_mode)%vol_frac = 1.0d0 / 20
