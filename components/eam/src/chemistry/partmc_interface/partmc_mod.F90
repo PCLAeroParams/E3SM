@@ -34,7 +34,8 @@ module mo_partmc_interface
     integer :: rand_init
     integer, parameter, public :: n_part_max = 100
     integer, parameter, public :: n_aero_sp_max = 25
-    integer, parameter, public :: n_emit_mode = 1
+    ! FIXME: Temporary set to fixed value 
+    integer, parameter, public :: n_emit_mode = 5 
     character, allocatable :: buffer(:)
     integer :: buffer_size, max_buffer_size
     integer :: position
@@ -585,8 +586,6 @@ end subroutine compute_partmc_emission_inputs
          write(102,*) '-----------------------------------------'
     endif
 
-    ! emissions
-
     ! FIXME: What time information does PartMC need here?
     env_state%start_time=0
     env_state%start_day=0
@@ -655,7 +654,7 @@ end subroutine compute_partmc_emission_inputs
               characteristic_factor = 3600.0d0 / run_part_opt%del_t
               p = emission_rate_scale * run_part_opt%del_t / env_state%height
               call aero_state_add_aero_dist_sample(aero_state_array(lchnk)%aero_state(icol,kk), &
-                   aero_data,  emissions, p, characteristic_factor, env_state%elapsed_time, & 
+                   aero_data,  emissions, p, characteristic_factor, env_state%elapsed_time, &
                    run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
            end if
 
