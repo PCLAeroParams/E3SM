@@ -22,7 +22,10 @@ module mo_partmc_interface
     type(gas_data_t) :: gas_data
     type(gas_state_t) :: gas_state
     type(aero_data_t) :: aero_data
-    type(aero_state_t) :: aero_state
+    type aero_state_array_t
+       type(aero_state_t), allocatable, dimension(:,:) :: aero_state
+    end type aero_state_array_t
+    type(aero_state_array_t), allocatable, dimension(:) :: aero_state_array
     type(scenario_t) :: scenario
     type(env_state_t) :: env_state
     type(env_state_t) :: env_state_init
@@ -313,24 +316,24 @@ end subroutine compute_partmc_emission_inputs
 
     ! Create a single mode to sample
     ! TODO: Replace with something informed by initial conditions
-    allocate(aero_dist_init%mode(1))
-    aero_dist_init%mode(1)%name = "TEST"
-    aero_dist_init%mode(1)%type = AERO_MODE_TYPE_LOG_NORMAL
-    aero_dist_init%mode(1)%source = aero_data_source_by_name(aero_data, &
-         aero_dist_init%mode(1)%name)
-    weight_class_name = aero_dist_init%mode(1)%name
-    aero_dist_init%mode(1)%weight_class = aero_data_weight_class_by_name(aero_data, &
-            weight_class_name)
-    aero_dist_init%mode(1)%char_radius = 1.0d-8
-    aero_dist_init%mode(1)%log10_std_dev_radius = log10(1.6d0)
-    aero_dist_init%mode(1)%num_conc = 1.0d9
-    allocate(aero_dist_init%mode(1)%vol_frac(aero_data_n_spec(aero_data)))
-    allocate(aero_dist_init%mode(1)%vol_frac_std(aero_data_n_spec(aero_data)))
-    aero_dist_init%mode(1)%vol_frac = 1.0d0 / 20
-    aero_dist_init%mode(1)%vol_frac_std = 0.0d0
-
-    aero_dist_init%mode(1)%sample_radius = [ real(kind=dp) :: ]
-    aero_dist_init%mode(1)%sample_num_conc = [ real(kind=dp) :: ]
+!    allocate(aero_dist_init%mode(1))
+!    aero_dist_init%mode(1)%name = "TEST"
+!    aero_dist_init%mode(1)%type = AERO_MODE_TYPE_LOG_NORMAL
+!    aero_dist_init%mode(1)%source = aero_data_source_by_name(aero_data, &
+!         aero_dist_init%mode(1)%name)
+!    weight_class_name = aero_dist_init%mode(1)%name
+!    aero_dist_init%mode(1)%weight_class = aero_data_weight_class_by_name(aero_data, &
+!            weight_class_name)
+!    aero_dist_init%mode(1)%char_radius = 1.0d-8
+!    aero_dist_init%mode(1)%log10_std_dev_radius = log10(1.6d0)
+!    aero_dist_init%mode(1)%num_conc = 1.0d9
+!    allocate(aero_dist_init%mode(1)%vol_frac(aero_data_n_spec(aero_data)))
+!    allocate(aero_dist_init%mode(1)%vol_frac_std(aero_data_n_spec(aero_data)))
+!    aero_dist_init%mode(1)%vol_frac = 1.0d0 / 20
+!    aero_dist_init%mode(1)%vol_frac_std = 0.0d0
+!
+!    aero_dist_init%mode(1)%sample_radius = [ real(kind=dp) :: ]
+!    aero_dist_init%mode(1)%sample_num_conc = [ real(kind=dp) :: ]
 
     ! run_part_opt general settings
     run_part_opt%output_prefix = "./partmc_output/urban_plume"
@@ -373,46 +376,126 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine spec_file_read_run_part_eam
 
-  subroutine partmc_mam_inti()
+  subroutine partmc_mam_inti(phys_state, species_class)
    use mo_tracname, only : solsym
    use cam_history,  only : addfld
    use cam_history_support, only: add_hist_coord
    use mo_chem_utls,        only : get_spc_ndx
-   use rad_constituents, only: rad_cnst_get_info
+   use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_num_idx
+   use constituents,     only: pcnst
+   use physconst,    only: spec_class_aerosol, spec_class_gas
+   use physics_types,    only : physics_state
+   use mo_gas_phase_chemdr, only : map2chm
+   use modal_aero_data, only: ntot_amode, modename_amode, sigmag_amode, &
+       nspec_amode, numptr_amode, lmassptr_amode
+   use mpi
 
    implicit none
-   integer :: i, n_species, n_aero_species, n_times, i_spec,i_mode, nspec
 
+   type(physics_state), intent(in) :: phys_state(begchunk:endchunk)
+   integer, dimension(:), intent(in) :: species_class
+
+   integer :: i, n_species, n_aero_species, i_spec,i_mode, nspec
+   integer :: ncol, kk, icol, ichunk, idx_chm, num_idx, rank
+   integer :: n_gas_species, nfs
+   integer :: ierr
    character(len=100) :: file_name
    type(spec_file_t) :: file
    type(spec_file_t) :: sub_file
    type(aero_dist_t) :: aero_dist_init
+   character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
+   call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
 
-   print*, 'in partmc initialization (new)'
+   print*, 'MPI rank: ', rank, 'chunk start: ', begchunk, 'chunk end:', endchunk
 
-  n_species=46 ! get from eam
+   ! Allocate aero_state for each column of each chunk
+   allocate(aero_state_array(begchunk:endchunk))
+   do i = begchunk, endchunk
+      ncol = phys_state(i)%ncol
+      allocate(aero_state_array(i)%aero_state(ncol,pver))
+   end do
+
   ! n_aero_species=7 ! get from eam
-  n_times=1
-  call ensure_string_array_size(gas_data%name, n_species)
-  call gas_state_set_size(gas_state, n_species)
-
-  do i = 1,n_species
-    gas_data%name(i) = solsym(i)
+  ! Get number of actual (active) gas species.
+  ! gas_pncst is "gas" species which apparently is not just gases.
+  n_gas_species = 0
+  do i =1,pcnst
+     if (species_class(i) == spec_class_gas) then
+        n_gas_species = n_gas_species + 1
+     end if
   end do
+
+  if (masterproc) then
+     print*, 'number of active (?) gas species', n_gas_species
+!     print*, 'number of fixed gas species if we need it', nfs
+  end if
+
+  call ensure_string_array_size(gas_data%name, n_gas_species)
+  call gas_state_set_size(gas_state, n_gas_species)
+
+  do i = 1,n_gas_species
+     gas_data%name(i) = solsym(i)
+  end do
+
+  if (masterproc) then
+     write(*,*) 'PartMC gas_data names'
+     do i =1, gas_data_n_spec(gas_data)
+        write(*,*) trim(gas_data%name(i))
+     end do
+  end if
 
   call spec_file_read_run_part_eam(run_part_opt, aero_data, &
        env_state_init, &
        aero_dist_init, &
        n_part, rand_init)
+!  call aero_state_zero(aero_state)
+!  call aero_state_set_weight(aero_state, aero_data, &
+!       AERO_STATE_WEIGHT_FLAT_SOURCE)
+!  call aero_state_set_n_part_ideal(aero_state, n_part)
+!  call aero_state_add_aero_dist_sample(aero_state, aero_data, &
+!       aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
+!       run_part_opt%allow_halving)
 
-  call aero_state_zero(aero_state)
-  call aero_state_set_weight(aero_state, aero_data, &
-       AERO_STATE_WEIGHT_FLAT_SOURCE)
-  call aero_state_set_n_part_ideal(aero_state, n_part)
-  call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-       aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-       run_part_opt%allow_halving)
+    allocate(aero_dist_init%mode(ntot_amode))
+    do i_mode = 1,ntot_amode
+       aero_dist_init%mode(i_mode)%name =  modename_amode(i_mode)
+       aero_dist_init%mode(i_mode)%type = AERO_MODE_TYPE_LOG_NORMAL
+       aero_dist_init%mode(i_mode)%source = aero_data_source_by_name(aero_data, &
+            aero_dist_init%mode(i_mode)%name)
+       weight_class_name = aero_dist_init%mode(i_mode)%name
+       aero_dist_init%mode(i_mode)%weight_class = aero_data_weight_class_by_name(aero_data, &
+            weight_class_name)
+       aero_dist_init%mode(i_mode)%log10_std_dev_radius = log10(sigmag_amode(i_mode))
+       allocate(aero_dist_init%mode(i_mode)%vol_frac(aero_data_n_spec(aero_data)))
+       allocate(aero_dist_init%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
+       aero_dist_init%mode(i_mode)%vol_frac_std = 0.0d0
+       aero_dist_init%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
+       aero_dist_init%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
+    end do
+
+    do ichunk = begchunk,endchunk
+    do kk = 1,pver
+    do icol = 1, ncol
+       do i_mode = 1,ntot_amode
+          num_idx =  numptr_amode(i_mode)
+          idx_chm = map2chm(num_idx)
+          call rad_cnst_get_mode_num_idx(i_mode, num_idx)
+          aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
+          aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
+          aero_dist_init%mode(i_mode)%num_conc = 1e6 + 1e6*phys_state(ichunk)%lon(icol) ** 2
+!          aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
+       end do
+       call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
+       call aero_state_set_weight(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
+            AERO_STATE_WEIGHT_FLAT_SOURCE)
+       call aero_state_set_n_part_ideal(aero_state_array(ichunk)%aero_state(icol,kk), n_part)
+       call aero_state_add_aero_dist_sample(aero_state_array(ichunk)%aero_state(icol,kk), &
+            aero_data, aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
+            run_part_opt%allow_halving)
+    end do
+    end do
+    end do
 
   env_state = env_state_init
 
@@ -449,6 +532,7 @@ end subroutine compute_partmc_emission_inputs
     write(102,*) '-----------------------------------------'
   endif
 
+  print*, 'done with PartMC initialization'
 
   end subroutine partmc_mam_inti
 
@@ -511,10 +595,8 @@ end subroutine compute_partmc_emission_inputs
     ! emission inputs
     geom_mean_diameter(:,:)=0
     num_fluxes(:,:)=0
-    call compute_partmc_emission_inputs(cflx, ncol,geom_mean_diameter, sigma_mam, num_fluxes, volume_fractions)
-
-    ! FIXME: Move inside the loop over cells.
-    call partmc_interface_e3sm_emissions(state, emissions)
+    call compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, &
+         sigma_mam, num_fluxes, volume_fractions)
 
     do kk = 1,pver
       do icol = 1, ncol
@@ -555,27 +637,41 @@ end subroutine compute_partmc_emission_inputs
         n_coag = 0
         n_samp = 0
         n_emit = 0
+        call partmc_interface_e3sm_emissions(state, emissions, &
+           geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol, : , :))
+
+
+        if (masterproc) then
+           if (icol == 1) then
+           print*, kk, env_state%temp, env_state%pressure,env_state%height,  env_state%altitude
+           end if
+        end if 
+
         do i_time = 1,n_time
 
            ! Aerosol emissions
-           emission_rate_scale = 1.0d0
-           characteristic_factor = 3600.0d0 / run_part_opt%del_t
-           p = emission_rate_scale * run_part_opt%del_t / env_state%height
-           call aero_state_add_aero_dist_sample(aero_state, aero_data, &
-               emissions, p, characteristic_factor, env_state%elapsed_time, &
-               run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
+           if (kk == pver) then
+              emission_rate_scale = 1.0d0
+              characteristic_factor = 3600.0d0 / run_part_opt%del_t
+              p = emission_rate_scale * run_part_opt%del_t / env_state%height
+              call aero_state_add_aero_dist_sample(aero_state_array(lchnk)%aero_state(icol,kk), &
+                   aero_data,  emissions, p, characteristic_factor, env_state%elapsed_time, & 
+                   run_part_opt%allow_doubling, run_part_opt%allow_halving, n_emit)
+           end if
 
            ! Coagulation
-           call mc_coag(run_part_opt%coag_kernel_type, env_state, &
-                  aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
+           ! DISABLED
+           ! call mc_coag(run_part_opt%coag_kernel_type, env_state, &
+           !      aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
 
            ! Rebalance
-           call aero_state_rebalance(aero_state, aero_data, &
+           call aero_state_rebalance(aero_state_array(lchnk)%aero_state(icol,kk), aero_data, &
                 run_part_opt%allow_doubling, &
                 run_part_opt%allow_halving, initial_state_warning=.false.)
 
         end do
-        call write_nc_aero_state(aero_state,aero_particle_mass_out, &
+        call write_nc_aero_state(aero_state_array(lchnk)%aero_state(icol,kk), &
+             aero_particle_mass_out, &
                             aero_num_conc_out, &
                             number_conc_out, &
                             icol, kk)
@@ -648,12 +744,18 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine write_nc_aero_state
 
-  subroutine partmc_interface_e3sm_emissions(state, emissions)
+  subroutine partmc_interface_e3sm_emissions(state, emissions, geom_mean_diam, &
+      sigma, num_fluxes, vol_frac)
     use physics_types,    only : physics_state
 
     implicit none
     type(physics_state), intent(in):: state
     type(aero_dist_t), intent(inout) :: emissions
+
+    real(kind=dp), intent(in) ::  geom_mean_diam(nmodes)
+    real(kind=dp), intent(in) ::  sigma(nmodes)
+    real(kind=dp), intent(in) ::  num_fluxes(nmodes)
+    real(kind=dp), intent(in) ::  vol_frac(nmodes, nspec_max_modes)
 
     integer :: i_mode
     character(len=AERO_MODE_NAME_LEN) :: mode_name
