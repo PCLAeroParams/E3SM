@@ -429,7 +429,7 @@ end subroutine
         ! step 1: advect fv cells forward
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
-        write(iulog,*) "partmcsl_step_forward: advection done at elem ", ie, " lev ", k
+!         write(iulog,*) "partmcsl_step_forward: advection done at elem ", ie, " lev ", k
         !------------------------
         ! step 2: compute overlap portions (c++)
         call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &

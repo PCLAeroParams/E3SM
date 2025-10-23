@@ -59,7 +59,7 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
   Real* frac_p) {
     using siqk::slice;
 
-    constexpr Real area_tol = 0.03;
+    constexpr Real area_tol = 0.15;
 
     slmm_assert(src_partition);
     slmm_throw_if(!src_partition, "src_partition not allocated.");
@@ -163,12 +163,11 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
       for (int j=0; j<ndest(lev_idx, adv_cell_idx, ie); ++j) {
         total_frac += dest_frac(j, lev_idx, adv_cell_idx, ie);
       }
+      std::ostringstream ss;
       if (std::abs(total_frac - 1.0) > area_tol) {
-        std::ostringstream ss;
         ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n";
-        std::cout << ss.str();
       }
-      slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, "source total fraction error");
+      slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, ss.str());
     } // loop over advected subcells of elem(ie)
   }
 

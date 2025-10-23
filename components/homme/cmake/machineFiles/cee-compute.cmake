@@ -1,0 +1,31 @@
+# CMake initial cache file for Linux 64bit RHEL6/CENTOS6
+# tested with stock gcc/gfortran & openmpi
+#
+SET (CMAKE_Fortran_COMPILER mpif90 CACHE FILEPATH "")
+SET (CMAKE_C_COMPILER mpicc CACHE FILEPATH "")
+SET (CMAKE_CXX_COMPILER mpicxx CACHE FILEPATH "")
+
+SET (WITH_PNETCDF FALSE CACHE FILEPATH "")
+message(STATUS "  setting NETCDF_DIR=$ENV{NETCDF_ROOT}")
+SET (NetCDF_DIR $ENV{NETCDF_ROOT} CACHE FILEPATH "")
+SET (NETCDF_DIR $ENV{NETCDF_ROOT} CACHE FILEPATH "")
+SET (NetCDF_Fortran_PATH $ENV{NETCDF_ROOT} CACHE FILEPATH "")
+SET (NetCDF_C_PAHT $ENV{NETCDF_ROOT} CACHE FILEPATH "")
+#SET (PNETCDF_DIR $ENV{PNETCDF_ROOT} CACHE FILEPATH "")
+SET (HDF5_DIR $ENV{HDF5_ROOT} CACHE FILEPATH "")
+#SET (ZLIB_DIR $ENV{SEMS_ZLIB_ROOT} CACHE FILEPATH "")
+
+#SET (CPRNC_DIR /sems-data-store/ACME/cprnc/build CACHE FILEPATH "")
+
+SET (USE_QUEUING FALSE CACHE BOOL "")
+SET (HOMME_FIND_BLASLAPACK TRUE CACHE BOOL "")
+
+#SET (USE_MPI_OPTIONS "--bind-to core:overload-allowed " CACHE FILEPATH "")
+
+#if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+# for intel compilers
+message(STATUS " adding intel debug flags")
+SET (ADD_Fortran_FLAGS "-debug -traceback" CACHE STRING "")
+SET (ADD_C_FLAGS       "-debug -diag-disable=10441 -traceback" CACHE STRING "")
+SET (ADD_CXX_FLAGS     "-debug -diag-disable=10441 -traceback" CACHE STRING "")
+#endif()
