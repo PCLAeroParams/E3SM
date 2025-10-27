@@ -2,11 +2,11 @@
 #define SCREAM_SCORPIO_OUTPUT_HPP
 
 #include "share/atm_process/atmosphere_diagnostic.hpp"
-#include "share/field/field_manager.hpp"
+#include "share/data_managers/field_manager.hpp"
+#include "share/data_managers/grids_manager.hpp"
 #include "share/grid/abstract_grid.hpp"
-#include "share/grid/grids_manager.hpp"
 #include "share/io/eamxx_io_utils.hpp"
-#include "share/io/eamxx_scorpio_interface.hpp"
+#include "share/scorpio_interface/eamxx_scorpio_interface.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
 #include "share/util/eamxx_utils.hpp"
 
@@ -123,7 +123,7 @@ public:
   using remapper_type = AbstractRemapper;
   using diag_ptr_type = std::shared_ptr<AtmosphereDiagnostic>;
 
-  virtual ~AtmosphereOutput() = default;
+  ~AtmosphereOutput();
 
   // Constructor
   AtmosphereOutput(const ekat::Comm &comm, const ekat::ParameterList &params,
@@ -164,7 +164,7 @@ protected:
                           const scorpio::FileMode mode);
   void set_decompositions(const std::string &filename);
   void compute_diagnostics(const bool allow_invalid_fields);
-  void init_diagnostics();
+  void process_requested_fields();
   strvec_t get_var_dimnames(const FieldLayout &layout) const;
 
   // Tracking the averaging of any filled values:
@@ -221,9 +221,10 @@ protected:
   strmap_t<int> m_dims_len;
   std::list<diag_ptr_type> m_diagnostics;
 
+  static strmap_t<diag_ptr_type> m_diag_repo;
+
   // Field aliasing support
-  strmap_t<std::string> m_alias_to_field_map; // Map from alias names to internal field names
-  strvec_t m_alias_names;                     // List of alias names (for netcdf variables)
+  strmap_t<std::string> m_alias_to_orig; // Map from alias names to original names (used to set io attribute)
 
   DefaultMetadata m_default_metadata;
 
@@ -233,6 +234,8 @@ protected:
 
   std::shared_ptr<ekat::logger::LoggerBase> m_atm_logger =
       console_logger(ekat::logger::LogLevel::warn);
+
+  std::string m_stream_name; // used in error msgs to help distinguish which stream this is
 };
 
 } // namespace scream
