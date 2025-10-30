@@ -242,14 +242,16 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
 
 end subroutine compute_partmc_emission_inputs
 
-  subroutine spec_file_read_run_part_eam(run_part_opt, aero_data, &
+  subroutine spec_file_read_run_part_eam(run_part_opt, &
        env_state_init, &
        n_part, rand_init)
 
+    use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
+    use modal_aero_data, only: &
+        lspectype_amode
+
     !> Monte Carlo options.
     type(run_part_opt_t), intent(inout) :: run_part_opt
-    !> Aerosol data.
-    type(aero_data_t), intent(inout) :: aero_data
     !> Initial environmental state.
     type(env_state_t), intent(inout) :: env_state_init
     !> Ideal number of computational particles.
@@ -272,7 +274,9 @@ end subroutine compute_partmc_emission_inputs
     integer, parameter :: n_gas_spec = 77
     integer :: n_swbands
     integer :: i_spec, i_mode
-
+    integer :: m, l
+    integer :: n_spec
+    real(kind=dp) :: density, hygro
     character(AERO_NAME_LEN), parameter, dimension(n_aero_spec) :: &
          mosaic_spec_name = [ &
          "SO4   ", "NO3   ", "Cl    ", "NH4   ", "MSA   ", "ARO1  ", &
@@ -280,38 +284,12 @@ end subroutine compute_partmc_emission_inputs
          "LIM2  ", "CO3   ", "Na    ", "Ca    ", "OIN   ", "OC    ", &
          "BC    ", "H2O   "]
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
+    character(len=20):: aername
 
     n_part = 50
 
     env_state_init%elapsed_time = 0d0
-
-    ! aero_data
-    n_swbands = 1
-    call ensure_string_array_size(aero_data%name, n_aero_spec)
-    call ensure_integer_array_size(aero_data%mosaic_index, n_aero_spec)
-    call ensure_real_array_size(aero_data%wavelengths, n_swbands)
-    call ensure_real_array_size(aero_data%density, n_aero_spec)
-    call ensure_integer_array_size(aero_data%num_ions, n_aero_spec)
-    call ensure_real_array_size(aero_data%molec_weight, n_aero_spec)
-    call ensure_real_array_size(aero_data%kappa, n_aero_spec)
-
-    do i_spec = 1,n_aero_spec
-       aero_data%name(i_spec) = mosaic_spec_name(i_spec)
-       aero_data%density(i_spec) = 1800.0d0
-       aero_data%kappa(i_spec) = 0.1d0
-       aero_data%molec_weight(i_spec) = 18.0d0
-       aero_data%num_ions(i_spec) = 0
-       if (mosaic_spec_name(i_spec) == "H2O") then
-          aero_data%i_water = i_spec
-       end if
-    end do
-    aero_data%wavelengths = 550.0d0
-
-    call aero_data_set_water_index(aero_data)
-    call aero_data_set_mosaic_map(aero_data)
-
-    call fractal_set_spherical(aero_data%fractal)
-
+    
     ! run_part_opt general settings
     run_part_opt%output_prefix = "./partmc_output/urban_plume"
     run_part_opt%n_repeat = 1
@@ -422,7 +400,10 @@ end subroutine compute_partmc_emission_inputs
      end do
   end if
 
-  call spec_file_read_run_part_eam(run_part_opt, aero_data, &
+  ! Initialization of aerosol data
+  call aero_data_init(aero_data)
+
+  call spec_file_read_run_part_eam(run_part_opt, &
        env_state_init, &
        n_part, rand_init)
 
@@ -763,5 +744,72 @@ end subroutine compute_partmc_emission_inputs
     end do
 
   end subroutine partmc_interface_e3sm_emissions
+
+  subroutine aero_data_init(aero_data)
+
+    use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
+    use modal_aero_data, only: &
+        lspectype_amode
+
+    !> Aerosol data.
+    type(aero_data_t), intent(inout) :: aero_data
+
+    integer, parameter :: n_aero_spec = 20
+    integer :: n_swbands
+    integer :: i_spec, i_mode
+    integer :: m, l
+    integer :: n_spec
+    real(kind=dp) :: density, hygro
+    character(AERO_NAME_LEN), parameter, dimension(n_aero_spec) :: &
+         mosaic_spec_name = [ &
+         "SO4   ", "NO3   ", "Cl    ", "NH4   ", "MSA   ", "ARO1  ", &
+         "ARO2  ", "ALK1  ", "OLE1  ", "API1  ", "API2  ", "LIM1  ", &
+         "LIM2  ", "CO3   ", "Na    ", "Ca    ", "OIN   ", "OC    ", &
+         "BC    ", "H2O   "]
+    character(len=20):: aername
+
+    if (masterproc) then
+      do m = 1,5 ! nmodes
+         ! Properties of modal species
+         call rad_cnst_get_info(0, m, nspec=n_spec)
+         do l = 1, n_spec
+            call rad_cnst_get_aer_props(0, m, l, &
+               aername = aername, &
+               density_aer = density, &
+               hygro_aer   = hygro)
+           write(102,*) m,l, trim(aername),density, hygro, lspectype_amode(l,m)
+         end do
+      end do
+    end if
+
+    ! aero_data
+    n_swbands = 1
+    call ensure_string_array_size(aero_data%name, n_aero_spec)
+    call ensure_integer_array_size(aero_data%mosaic_index, n_aero_spec)
+    call ensure_real_array_size(aero_data%wavelengths, n_swbands)
+    call ensure_real_array_size(aero_data%density, n_aero_spec)
+    call ensure_integer_array_size(aero_data%num_ions, n_aero_spec)
+    call ensure_real_array_size(aero_data%molec_weight, n_aero_spec)
+    call ensure_real_array_size(aero_data%kappa, n_aero_spec)
+
+    do i_spec = 1,n_aero_spec
+       aero_data%name(i_spec) = mosaic_spec_name(i_spec)
+       aero_data%density(i_spec) = 1800.0d0
+       aero_data%kappa(i_spec) = 0.1d0
+       aero_data%molec_weight(i_spec) = 18.0d0
+       aero_data%num_ions(i_spec) = 0
+       if (mosaic_spec_name(i_spec) == "H2O") then
+          aero_data%i_water = i_spec
+       end if
+    end do
+
+    aero_data%wavelengths = 550.0d0
+
+    call aero_data_set_water_index(aero_data)
+    call aero_data_set_mosaic_map(aero_data)
+
+    call fractal_set_spherical(aero_data%fractal)
+
+  end subroutine aero_data_init
 
 end module mo_partmc_interface
