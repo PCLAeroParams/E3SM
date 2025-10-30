@@ -59,7 +59,7 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
   Real* frac_p) {
     using siqk::slice;
 
-    constexpr Real area_tol = 0.15;
+    constexpr Real area_tol = 1e-3;
 
     slmm_assert(src_partition);
     slmm_throw_if(!src_partition, "src_partition not allocated.");
@@ -109,15 +109,17 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     slmm_assert(ncells_in_mesh == n_elem_neighbors * n_subcells_per_elem);
     slmm_throw_if( ncells_in_mesh != n_elem_neighbors * n_subcells_per_elem, "unexpected number of cells in mesh.");
 
-    const Int start_cell_idx = src_partition->elem_self_idx(ie) * n_subcells_per_elem;
+    const Int start_cell_idx = (src_partition->elem_self_idx(ie) - 1) * n_subcells_per_elem;
+    slmm_assert( (start_cell_idx >=0 and start_cell_idx < mesh_area.extent(0) - n_subcells_per_elem ) );
     for (int adv_cell_idx = 0; adv_cell_idx<n_subcells_per_elem; ++adv_cell_idx) {
       // loop over advected subcells of elem(ie)
 
       const Real src_area = mesh_area(start_cell_idx + adv_cell_idx);
+      slmm_assert(src_area > 0);
 //       ss.str("");
 //       ss << "elem " << ie << " subcell " << adv_cell_idx << " starts has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
 //       std::cout << ss.str();
-
+      int n_elem_overlap = 0;
       for (int cell_idx=0; cell_idx<ncells_in_mesh; ++cell_idx) {
         // loop over static cells in mesh
         //
@@ -142,7 +144,7 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
            verts_out, n_overlap_verts, wrk);
         } // clip_against_poly scope
         slmm_assert(n_overlap_verts <= max_num_intersections);
-
+        n_elem_overlap += n_overlap_verts;
         if (n_overlap_verts > 0) {
           // advected subcell aci has an intersection with static cell ci
           // compute area of overlap region
@@ -166,6 +168,8 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
       std::ostringstream ss;
       if (std::abs(total_frac - 1.0) > area_tol) {
         ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n";
+        ss << "   at ie = " << ie << " of " << nelemd << " src_area = " << src_area <<
+        " found " << n_elem_overlap << " overlap vertices in this elem" << "\n";
       }
       slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, ss.str());
     } // loop over advected subcells of elem(ie)

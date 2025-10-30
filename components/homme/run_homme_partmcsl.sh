@@ -49,7 +49,7 @@ then
   printf "Configuring standalone Homme\n"
 # configure Homme with CMake
   cd $wdir
-  cmake -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=DEBUG -DHOMME_USE_MKL=FALSE $homme
+  cmake -B $wdir -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=DEBUG -DHOMME_USE_MKL=FALSE $homme
 fi
 
 if [ "$buildFlag" ]
