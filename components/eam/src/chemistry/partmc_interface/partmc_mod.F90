@@ -745,6 +745,7 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine partmc_interface_e3sm_emissions
 
+  ! Initializes aero_data from E3SM aerosol scheme.
   subroutine aero_data_init(aero_data)
 
     use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
@@ -782,7 +783,6 @@ end subroutine compute_partmc_emission_inputs
       end do
     end if
 
-    ! aero_data
     n_swbands = 1
     call ensure_string_array_size(aero_data%name, n_aero_spec)
     call ensure_integer_array_size(aero_data%mosaic_index, n_aero_spec)
@@ -792,23 +792,35 @@ end subroutine compute_partmc_emission_inputs
     call ensure_real_array_size(aero_data%molec_weight, n_aero_spec)
     call ensure_real_array_size(aero_data%kappa, n_aero_spec)
 
+    ! Set aerosol properties
     do i_spec = 1,n_aero_spec
        aero_data%name(i_spec) = mosaic_spec_name(i_spec)
        aero_data%density(i_spec) = 1800.0d0
        aero_data%kappa(i_spec) = 0.1d0
        aero_data%molec_weight(i_spec) = 18.0d0
        aero_data%num_ions(i_spec) = 0
-       if (mosaic_spec_name(i_spec) == "H2O") then
-          aero_data%i_water = i_spec
-       end if
     end do
 
+    ! Set the optical wavelength.
     aero_data%wavelengths = 550.0d0
 
+    ! Set the index of water
     call aero_data_set_water_index(aero_data)
+    ! Set MOSAIC map (not used)
     call aero_data_set_mosaic_map(aero_data)
 
     call fractal_set_spherical(aero_data%fractal)
+
+
+    ! Print results
+    if (masterproc) then
+       write(102,*) 'Contents of aero_data'
+       write(102,*) 'Name | Density | MW | kappa'
+       do i_spec = 1,n_aero_spec
+          write(102,*) trim(aero_data%name(i_spec)), aero_data%density(i_spec), &
+             aero_data%molec_weight(i_spec), aero_data%kappa(i_spec)
+       end do
+    end if
 
   end subroutine aero_data_init
 
