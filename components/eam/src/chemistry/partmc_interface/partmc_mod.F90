@@ -47,6 +47,7 @@ module mo_partmc_interface
     ! mam information
     character(len=256), allocatable :: mam_num_names(:)
     character(len=256), allocatable :: mam_species_names(:,:)
+    integer, allocatable :: mam_spec_to_partmc_spec(:,:)
 contains
 !-----------------------------------------------------------------------
   subroutine compute_nspec_max(nspec_max)
@@ -87,7 +88,7 @@ subroutine save_num_and_species_names(num_names, species_names)
   character(len=256) :: num_name         ! Temporary variable for number flux name
 
   ! Loop over modes to retrieve names
-  do n = 1, nmodes
+  do n = 1,nmodes
     ! Get the number flux index for the mode
     call rad_cnst_get_mode_num_idx(n, num_idx)
 
@@ -401,6 +402,8 @@ end subroutine compute_partmc_emission_inputs
   end if
 
   ! Initialization of aerosol data
+  call rad_cnst_get_info(0, nmodes=nmodes)
+  call compute_nspec_max(nspec_max_modes)
   call aero_data_init(aero_data)
 
   call spec_file_read_run_part_eam(run_part_opt, &
@@ -463,11 +466,12 @@ end subroutine compute_partmc_emission_inputs
        'number concentration for each particle' )
 
   ! Get the number of modes
-  call rad_cnst_get_info(0, nmodes=nmodes)
-  call compute_nspec_max(nspec_max_modes)
+!  call rad_cnst_get_info(0, nmodes=nmodes)
+!  call compute_nspec_max(nspec_max_modes)
   allocate(mam_num_names(nmodes))
   allocate(mam_species_names(nmodes, nspec_max_modes))
   call save_num_and_species_names(mam_num_names,mam_species_names)
+
   if (masterproc) then
     write(102,*) '-----------------------------------------'
     write(102,*) 'save_num_and_species_names'
@@ -559,6 +563,9 @@ end subroutine compute_partmc_emission_inputs
         ! scenario%height(:) = state%zm(icol,kk)
         ! FIXME: we need to compute rel_humid
         !   See relhum array calculation in mo_gas_phase_chemdr.F90
+        !!      call qsat(tfld(:ncol,:), pmid(:ncol,:), satv, satq)
+        !!      relhum(:,k) = .622_r8 * h2ovmr(:,k) / satq(:,k)
+        !!      relhum(:,k) = max( 0._r8,min( 1._r8,relhum(:,k) ) )
         env_state%rel_humid = 0.95
 
         env_state%latitude = state%lat(icol)
@@ -715,7 +722,7 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp), intent(in) ::  num_fluxes(nmodes)
     real(kind=dp), intent(in) ::  vol_frac(nmodes, nspec_max_modes)
 
-    integer :: i_mode
+    integer :: i_mode, i_spec, n_spec_emit
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
@@ -736,7 +743,12 @@ end subroutine compute_partmc_emission_inputs
        emissions%mode(i_mode)%num_conc = num_fluxes(i_mode)
        allocate(emissions%mode(i_mode)%vol_frac(aero_data_n_spec(aero_data)))
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
-       emissions%mode(i_mode)%vol_frac = 1.0d0 / 20
+       emissions%mode(i_mode)%vol_frac = 0.0d0
+       ! number of species in this mode
+       n_spec_emit = 1
+       do i_spec =1,n_spec_emit
+          emissions%mode(i_mode)%vol_frac(i_spec) = 1.0d0
+       end do
        emissions%mode(i_mode)%vol_frac_std = 0.0d0
 
        emissions%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
@@ -750,18 +762,18 @@ end subroutine compute_partmc_emission_inputs
 
     use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
     use modal_aero_data, only: &
-        lspectype_amode
+        lspectype_amode, ntot_aspectype, specname_amode, specdens_amode, specmw_amode, spechygro
 
     !> Aerosol data.
     type(aero_data_t), intent(inout) :: aero_data
 
-    integer, parameter :: n_aero_spec = 20
+    integer :: n_aero_spec
     integer :: n_swbands
     integer :: i_spec, i_mode
     integer :: m, l
-    integer :: n_spec
+    integer :: n_spec, n_modes
     real(kind=dp) :: density, hygro
-    character(AERO_NAME_LEN), parameter, dimension(n_aero_spec) :: &
+    character(AERO_NAME_LEN), parameter, dimension(20) :: &
          mosaic_spec_name = [ &
          "SO4   ", "NO3   ", "Cl    ", "NH4   ", "MSA   ", "ARO1  ", &
          "ARO2  ", "ALK1  ", "OLE1  ", "API1  ", "API2  ", "LIM1  ", &
@@ -769,11 +781,26 @@ end subroutine compute_partmc_emission_inputs
          "BC    ", "H2O   "]
     character(len=20):: aername
 
+    integer :: i, j, n, unique_count, total_mam_vars, i_name
+    logical :: is_unique
+    character(len=20), dimension(:), allocatable :: input_array, unique_array
+    real(kind=dp), dimension(:), allocatable :: density_array, kappa_array, mw_array
+    real(kind=dp), dimension(:), allocatable :: unique_density_array, unique_kappa_array, unique_mw_array
+    ! Notes:
+    !   ntot_aspectype = overall number of aerosol chemical species defined (over all modes)
+    !   specdens_amode(l) = dry density (kg/m^3) of aerosol chemical species type l
+    !   specmw_amode(l) = molecular weight (kg/kmol) of aerosol chemical species type l
+    !   specname_amode(l) = name of aerosol chemical species type l
+    !   spechygro(l) = hygroscopicity of aerosol chemical species type l
+    !   lspectype_amode(l,m) = index of species type l in mode m
     if (masterproc) then
-      do m = 1,5 ! nmodes
+      ! Number of aerosol chemical species defined (over all modes)
+      print*, 'number of total aerosol species', ntot_aspectype
+      call rad_cnst_get_info(0, nmodes=n_modes)
+      do m = 1,n_modes
          ! Properties of modal species
          call rad_cnst_get_info(0, m, nspec=n_spec)
-         do l = 1, n_spec
+         do l = 1,n_spec
             call rad_cnst_get_aer_props(0, m, l, &
                aername = aername, &
                density_aer = density, &
@@ -781,7 +808,72 @@ end subroutine compute_partmc_emission_inputs
            write(102,*) m,l, trim(aername),density, hygro, lspectype_amode(l,m)
          end do
       end do
+      do l=1,ntot_aspectype
+         write(102,*) trim(specname_amode(l)), specdens_amode(l), specmw_amode(l), spechygro(l)
+      end do 
+
     end if
+
+    ! Unique strings of the aername in the modes
+    call rad_cnst_get_info(0, nmodes=n_modes)
+    total_mam_vars = 0
+    do m =1,n_modes
+       call rad_cnst_get_info(0, m, nspec=n_spec)
+       total_mam_vars = total_mam_vars + n_spec
+    end do
+    allocate(input_array(total_mam_vars))
+    allocate(unique_array(total_mam_vars))
+    allocate(density_array(total_mam_vars))
+    allocate(kappa_array(total_mam_vars))
+    allocate(mw_array(total_mam_vars))
+    allocate(unique_density_array(total_mam_vars))
+    allocate(unique_kappa_array(total_mam_vars))
+    allocate(unique_mw_array(total_mam_vars))
+
+    i_name = 0 
+    do m = 1,n_modes
+       call rad_cnst_get_info(0, m, nspec=n_spec)
+       do l = 1,n_spec
+          call rad_cnst_get_aer_props(0, m, l, &
+               aername = aername, &
+               density_aer = density, &
+               hygro_aer = hygro)
+          i_name = i_name + 1
+          input_array(i_name) = aername
+          density_array(i_name) = density 
+          kappa_array(i_name) =  hygro
+          mw_array(i_name) = specmw_amode(l)
+      end do
+    end do
+
+   unique_count = 0
+   do i = 1,total_mam_vars
+    is_unique = .true.
+    do j = 1, unique_count
+      if (trim(input_array(i)) == trim(unique_array(j))) then
+        is_unique = .false.
+        exit
+      end if
+    end do
+    if (is_unique) then
+      unique_count = unique_count + 1
+      unique_array(unique_count) = input_array(i)
+      unique_density_array(unique_count) = density_array(i)
+      unique_kappa_array(unique_count) = kappa_array(i)
+      unique_mw_array(unique_count) = mw_array(i)     
+    end if
+  end do
+
+!    if(masterproc) then
+!       do i=1,unique_count
+!          write(102,*) unique_array(i)
+!       end do
+!    end if
+
+    ! Option 1
+    n_aero_spec = unique_count
+    ! Option 2
+    !n_aero_spec = ntot_aspectype
 
     n_swbands = 1
     call ensure_string_array_size(aero_data%name, n_aero_spec)
@@ -792,12 +884,19 @@ end subroutine compute_partmc_emission_inputs
     call ensure_real_array_size(aero_data%molec_weight, n_aero_spec)
     call ensure_real_array_size(aero_data%kappa, n_aero_spec)
 
-    ! Set aerosol properties
     do i_spec = 1,n_aero_spec
-       aero_data%name(i_spec) = mosaic_spec_name(i_spec)
-       aero_data%density(i_spec) = 1800.0d0
-       aero_data%kappa(i_spec) = 0.1d0
-       aero_data%molec_weight(i_spec) = 18.0d0
+       ! Option 1 with minor issue of molecular weight
+       aero_data%name(i_spec) = trim(unique_array(i_spec))
+       aero_data%density(i_spec) = unique_density_array(i_spec)
+       aero_data%kappa(i_spec) = unique_kappa_array(i_spec)
+       aero_data%molec_weight(i_spec) = unique_mw_array(i_spec) 
+
+       ! Option 2
+!       aero_data%name(i_spec) = specname_amode(i_spec)
+!       aero_data%density(i_spec) = specdens_amode(i_spec)
+!       aero_data%kappa(i_spec) = spechygro(i_spec)
+!       aero_data%molec_weight(i_spec) = specmw_amode(i_spec)
+
        aero_data%num_ions(i_spec) = 0
     end do
 
@@ -811,7 +910,22 @@ end subroutine compute_partmc_emission_inputs
 
     call fractal_set_spherical(aero_data%fractal)
 
-
+    ! Map MAM "species" to PartMC species
+    allocate(mam_spec_to_partmc_spec(n_modes, nspec_max_modes))
+    mam_spec_to_partmc_spec = 0
+    do m = 1,n_modes
+       call rad_cnst_get_info(0, m, nspec=n_spec)
+       do l = 1,n_spec
+          call rad_cnst_get_aer_props(0, m, l, &
+               aername = aername)
+          ! Find the index
+          mam_spec_to_partmc_spec(m,l) = aero_data_spec_by_name(aero_data, aername) 
+      end do
+      if (masterproc) then
+         write(102,*) mam_spec_to_partmc_spec(m,:n_spec)
+      end if
+    end do
+    
     ! Print results
     if (masterproc) then
        write(102,*) 'Contents of aero_data'
