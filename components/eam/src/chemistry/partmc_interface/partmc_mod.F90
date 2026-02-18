@@ -355,6 +355,7 @@ end subroutine compute_partmc_emission_inputs
    integer :: i, n_species, n_aero_species, i_spec,i_mode, nspec
    integer :: ncol, kk, icol, ichunk, idx_chm, num_idx
    integer :: n_gas_species, nfs
+   integer :: gas_species_idx(pcnst)
    integer :: rank, ierr ! Remove when debugging of processor removed
    character(len=100) :: file_name
    type(spec_file_t) :: file
@@ -377,9 +378,10 @@ end subroutine compute_partmc_emission_inputs
   ! Get number of actual (active) gas species.
   ! gas_pncst is "gas" species which apparently is not just gases.
   n_gas_species = 0
-  do i =1,pcnst
+  do i = 1, pcnst
      if (species_class(i) == spec_class_gas) then
         n_gas_species = n_gas_species + 1
+        gas_species_idx(n_gas_species) = i
      end if
   end do
 
@@ -391,8 +393,8 @@ end subroutine compute_partmc_emission_inputs
   call ensure_string_array_size(gas_data%name, n_gas_species)
   call gas_state_set_size(gas_state, n_gas_species)
 
-  do i = 1,n_gas_species
-     gas_data%name(i) = solsym(i)
+  do i = 1, n_gas_species
+     gas_data%name(i) = solsym(gas_species_idx(i))
   end do
 
   if (masterproc) then
