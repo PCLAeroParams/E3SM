@@ -43,7 +43,7 @@ module mo_partmc_interface
     character(len=PMC_MAX_FILENAME_LEN) :: restart_filename
     integer :: dummy_index, dummy_i_repeat
     integer :: nmodes,nspec_max_modes
-    real(kind=dp) :: n_part
+    real(kind=dp) :: n_part_ideal
     ! mam information
     character(len=256), allocatable :: mam_num_names(:)
     character(len=256), allocatable :: mam_species_names(:,:)
@@ -216,7 +216,7 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
         sum_vf_per_mode(icol, n) = sum_vf_per_mode(icol, n) + volume_fractions(icol, n, ispec)
       end do
       if (masterproc) then
-            write(102,*) "volume_fractions(", 1, n, ",", spec_idx, "):", volume_fractions(1,n, spec_idx)
+            write(102,*) "volume_fractions(", 1, n, ",", ispec, "):", volume_fractions(1,n, ispec)
       end if
     end do
   end do
@@ -225,6 +225,7 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
   do n = 1, nmodes
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
+      call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
       idx_chm = map2chm(spec_idx)
         if (idx_chm > 0) then
           if (adv_mass(idx_chm) /= 0.0) then
@@ -245,7 +246,7 @@ end subroutine compute_partmc_emission_inputs
 
   subroutine spec_file_read_run_part_eam(run_part_opt, &
        env_state_init, &
-       n_part, rand_init)
+       n_part_ideal, rand_init)
 
     use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
     use modal_aero_data, only: &
@@ -256,7 +257,7 @@ end subroutine compute_partmc_emission_inputs
     !> Initial environmental state.
     type(env_state_t), intent(inout) :: env_state_init
     !> Ideal number of computational particles.
-    real(kind=dp), intent(inout) :: n_part
+    real(kind=dp), intent(inout) :: n_part_ideal
     !> Random number generator seed.
     integer, intent(out) :: rand_init
 
@@ -287,7 +288,7 @@ end subroutine compute_partmc_emission_inputs
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
     character(len=20):: aername
 
-    n_part = 50
+    n_part_ideal = 50
 
     env_state_init%elapsed_time = 0d0
     
@@ -352,18 +353,18 @@ end subroutine compute_partmc_emission_inputs
    integer, dimension(:), intent(in) :: species_class
 
    integer :: i, n_species, n_aero_species, i_spec,i_mode, nspec
-   integer :: ncol, kk, icol, ichunk, idx_chm, num_idx, rank
+   integer :: ncol, kk, icol, ichunk, idx_chm, num_idx
    integer :: n_gas_species, nfs
-   integer :: ierr
+   integer :: rank, ierr ! Remove when debugging of processor removed
    character(len=100) :: file_name
    type(spec_file_t) :: file
    type(spec_file_t) :: sub_file
    type(aero_dist_t) :: aero_dist_init
    character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
-   call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
-
-   print*, 'MPI rank: ', rank, 'chunk start: ', begchunk, 'chunk end:', endchunk
+   ! Uncomment for processor information for debugging
+   !call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
+   !print*, 'MPI rank: ', rank, 'chunk start: ', begchunk, 'chunk end:', endchunk
 
    ! Allocate aero_state for each column of each chunk
    allocate(aero_state_array(begchunk:endchunk))
@@ -408,7 +409,7 @@ end subroutine compute_partmc_emission_inputs
 
   call spec_file_read_run_part_eam(run_part_opt, &
        env_state_init, &
-       n_part, rand_init)
+       n_part_ideal, rand_init)
 
     allocate(aero_dist_init%mode(ntot_amode))
     do i_mode = 1,ntot_amode
@@ -428,6 +429,7 @@ end subroutine compute_partmc_emission_inputs
     end do
 
     do ichunk = begchunk,endchunk
+    ncol = phys_state(ichunk)%ncol
     do kk = 1,pver
     do icol = 1, ncol
        do i_mode = 1,ntot_amode
@@ -436,13 +438,15 @@ end subroutine compute_partmc_emission_inputs
           call rad_cnst_get_mode_num_idx(i_mode, num_idx)
           aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
           aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
-          aero_dist_init%mode(i_mode)%num_conc = 1e6 !+ 1e6*phys_state(ichunk)%lon(icol) ** 2
+          aero_dist_init%mode(i_mode)%num_conc = 1e6
+          write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
+               phys_state(ichunk)%q(icol,kk,num_idx)
 !          aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
        end do
        call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
        call aero_state_set_weight(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
             AERO_STATE_WEIGHT_FLAT_SOURCE)
-       call aero_state_set_n_part_ideal(aero_state_array(ichunk)%aero_state(icol,kk), n_part)
+       call aero_state_set_n_part_ideal(aero_state_array(ichunk)%aero_state(icol,kk), n_part_ideal)
        call aero_state_add_aero_dist_sample(aero_state_array(ichunk)%aero_state(icol,kk), &
             aero_data, aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
             run_part_opt%allow_halving)
@@ -486,6 +490,10 @@ end subroutine compute_partmc_emission_inputs
     write(102,*) '-----------------------------------------'
   endif
 
+  if (masterproc) then
+           write(102,*) phys_state(begchunk)%q(1,pver,:)
+  end if
+
   end subroutine partmc_mam_inti
 
   subroutine partmc_mam_invoke(state, cflx, dt)
@@ -508,7 +516,7 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp) ::  num_fluxes(pcols, nmodes)
     real(kind=dp) ::  volume_fractions(pcols, nmodes, nspec_max_modes)
 
-    integer ::  n_samp, n_coag, i_time, n_time, n_emit,nmodes
+    integer ::  n_samp, n_coag, i_time, n_time, n_emit
     integer :: i_mode
     real(kind=dp) :: emission_rate_scale, p
     real(kind=dp) :: characteristic_factor
@@ -557,6 +565,9 @@ end subroutine compute_partmc_emission_inputs
           gas_state%mix_rat(i) = state%q(icol,kk,i) * 1d9
         end do ! species
 
+        if (masterproc) then
+           write(102,*) state%q(icol,kk,:)
+        end if
         ! FIXME: Think about how to best do this scenario/env_state.
         ! scenario%temp(:)  = state%t(icol,kk)
         ! scenario%pressure = state%pmid(icol,kk)
@@ -712,6 +723,7 @@ end subroutine compute_partmc_emission_inputs
   subroutine partmc_interface_e3sm_emissions(state, emissions, geom_mean_diam, &
       sigma, num_fluxes, vol_frac)
     use physics_types,    only : physics_state
+    use rad_constituents, only: rad_cnst_get_info
 
     implicit none
     type(physics_state), intent(in):: state
@@ -722,7 +734,7 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp), intent(in) ::  num_fluxes(nmodes)
     real(kind=dp), intent(in) ::  vol_frac(nmodes, nspec_max_modes)
 
-    integer :: i_mode, i_spec, n_spec_emit
+    integer :: i_mode, i_spec, n_spec_emit, ll
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
@@ -745,9 +757,10 @@ end subroutine compute_partmc_emission_inputs
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
        emissions%mode(i_mode)%vol_frac = 0.0d0
        ! number of species in this mode
-       n_spec_emit = 1
+       call rad_cnst_get_info(0, i_mode, nspec=n_spec_emit)
        do i_spec =1,n_spec_emit
-          emissions%mode(i_mode)%vol_frac(i_spec) = 1.0d0
+          ll = mam_spec_to_partmc_spec(i_mode,i_spec)
+          emissions%mode(i_mode)%vol_frac(ll) = vol_frac(i_mode,i_spec) 
        end do
        emissions%mode(i_mode)%vol_frac_std = 0.0d0
 
