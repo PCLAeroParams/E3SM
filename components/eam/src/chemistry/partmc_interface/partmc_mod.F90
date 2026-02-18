@@ -248,10 +248,6 @@ end subroutine compute_partmc_emission_inputs
        env_state_init, &
        n_part_ideal, rand_init)
 
-    use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
-    use modal_aero_data, only: &
-        lspectype_amode
-
     !> Monte Carlo options.
     type(run_part_opt_t), intent(inout) :: run_part_opt
     !> Initial environmental state.
@@ -261,32 +257,10 @@ end subroutine compute_partmc_emission_inputs
     !> Random number generator seed.
     integer, intent(out) :: rand_init
 
-    integer :: i_repeat, i_group
-    logical :: read_aero_weight_classes
-    character(len=PMC_MAX_FILENAME_LEN) :: restart_filename
-    integer :: dummy_index, dummy_i_repeat
     integer :: dummy
-    real(kind=dp) :: dummy_time, dummy_del_t
-    character(len=PMC_MAX_FILENAME_LEN) :: sub_filename
-    type(spec_file_t) :: sub_file
-    character(len=PMC_MAX_FILENAME_LEN) :: camp_config_filename
+    integer :: i_mode
     character(len=AERO_MODE_NAME_LEN) :: mode_name
-
-    integer, parameter :: n_aero_spec = 20
-    integer, parameter :: n_gas_spec = 77
-    integer :: n_swbands
-    integer :: i_spec, i_mode
-    integer :: m, l
-    integer :: n_spec
-    real(kind=dp) :: density, hygro
-    character(AERO_NAME_LEN), parameter, dimension(n_aero_spec) :: &
-         mosaic_spec_name = [ &
-         "SO4   ", "NO3   ", "Cl    ", "NH4   ", "MSA   ", "ARO1  ", &
-         "ARO2  ", "ALK1  ", "OLE1  ", "API1  ", "API2  ", "LIM1  ", &
-         "LIM2  ", "CO3   ", "Na    ", "Ca    ", "OIN   ", "OC    ", &
-         "BC    ", "H2O   "]
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
-    character(len=20):: aername
 
     n_part_ideal = 50
 
@@ -355,14 +329,11 @@ end subroutine compute_partmc_emission_inputs
    type(physics_state), intent(in) :: phys_state(begchunk:endchunk)
    integer, dimension(:), intent(in) :: species_class
 
-   integer :: i, n_species, n_aero_species, i_spec,i_mode, nspec
+   integer :: i, i_spec, i_mode, nspec
    integer :: ncol, kk, icol, ichunk, idx_chm, num_idx
-   integer :: n_gas_species, nfs
+   integer :: n_gas_species
    integer :: gas_species_idx(pcnst)
    integer :: rank, ierr ! Remove when debugging of processor removed
-   character(len=100) :: file_name
-   type(spec_file_t) :: file
-   type(spec_file_t) :: sub_file
    type(aero_dist_t) :: aero_dist_init
    character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
@@ -511,9 +482,8 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp),       intent(in) :: cflx(pcols,pcnst)              ! constituent surface flux (kg/m^2/s)
     real(kind=dp),            intent(in)    :: dt              ! time step
 
-    integer :: i, n_species, icol, kk, lchnk, ncol, n_aero_species
+    integer :: i, icol, kk, lchnk, ncol
     real(kind=dp) ::  aero_particle_mass_out(pcols, pver,  n_part_max,n_aero_sp_max)
-    real(kind=dp) ::  aero_component_len_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  aero_num_conc_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  number_conc_out(pcols, pver)
     real(kind=dp) ::  geom_mean_diameter(pcols, nmodes)
@@ -527,8 +497,6 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp) :: characteristic_factor
     type(aero_dist_t) :: emissions
 
-    !FIXME: get n_species this values from eam
-    n_species= gas_data_n_spec(gas_data)
     !FIXME: we must pass a delta time factor
     n_time = 30
     run_part_opt%del_t = dt / n_time
@@ -642,8 +610,9 @@ end subroutine compute_partmc_emission_inputs
 
            ! Coagulation
            if (run_part_opt%do_coagulation) then
-              call mc_coag(run_part_opt%coag_kernel_type, env_state, &
-                   aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
+              call mc_coag(run_part_opt%coag_kernel_type, env_state, aero_data, &
+                   aero_state_array(lchnk)%aero_state(icol,kk), run_part_opt%del_t, &
+                   n_samp, n_coag)
            end if
 
            ! Rebalance
@@ -689,15 +658,6 @@ end subroutine compute_partmc_emission_inputs
 
   real(kind=dp) :: aero_particle_mass(aero_state_n_part(aero_state), &
          aero_data_n_spec(aero_data))
-  integer :: aero_component_len(aero_state_n_part(aero_state))
-  integer :: array_position, i_comp, next_start_component_ind
-  integer :: aero_component_particle_num(aero_state_total_n_components( &
-         aero_state))
-  integer :: aero_component_source_num(aero_state_total_n_components( &
-         aero_state))
-  real(kind=dp) :: aero_component_create_time( &
-         aero_state_total_n_components(aero_state))
-  integer :: aero_component_start_ind(aero_state_n_part(aero_state))
   real(kind=dp) :: aero_num_conc(aero_state_n_part(aero_state))
 
   n_part=aero_state_n_part(aero_state)
