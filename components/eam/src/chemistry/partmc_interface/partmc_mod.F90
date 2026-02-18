@@ -415,9 +415,11 @@ end subroutine compute_partmc_emission_inputs
           aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
           aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
           aero_dist_init%mode(i_mode)%num_conc = 1e6
-          write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
-               phys_state(ichunk)%q(icol,kk,num_idx)
-!          aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
+          !if (masterproc)
+             !write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
+                  !phys_state(ichunk)%q(icol,kk,num_idx)
+          !endif
+          !aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
        end do
        call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
        call aero_state_set_weight(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
@@ -446,8 +448,6 @@ end subroutine compute_partmc_emission_inputs
        'number concentration for each particle' )
 
   ! Get the number of modes
-!  call rad_cnst_get_info(0, nmodes=nmodes)
-!  call compute_nspec_max(nspec_max_modes)
   allocate(mam_num_names(nmodes))
   allocate(mam_species_names(nmodes, nspec_max_modes))
   call save_num_and_species_names(mam_num_names,mam_species_names)
@@ -466,9 +466,10 @@ end subroutine compute_partmc_emission_inputs
     write(102,*) '-----------------------------------------'
   endif
 
-  if (masterproc) then
-           write(102,*) phys_state(begchunk)%q(1,pver,:)
-  end if
+  ! Debugging
+  !if (masterproc) then
+  !   write(102,*) phys_state(begchunk)%q(1,pver,:)
+  !end if
 
   end subroutine partmc_mam_inti
 
