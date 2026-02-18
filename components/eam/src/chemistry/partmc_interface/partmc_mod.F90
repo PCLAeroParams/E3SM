@@ -855,7 +855,7 @@ end subroutine compute_partmc_emission_inputs
           input_array(i_name) = aername
           density_array(i_name) = density 
           kappa_array(i_name) =  hygro
-          mw_array(i_name) = specmw_amode(l)
+          mw_array(i_name) = specmw_amode(lspectype_amode(l,m))
       end do
     end do
 
