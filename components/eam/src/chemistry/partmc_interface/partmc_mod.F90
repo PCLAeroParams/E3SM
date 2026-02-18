@@ -299,7 +299,10 @@ end subroutine compute_partmc_emission_inputs
     run_part_opt%t_progress = 0
 
     ! run_part_opt process settings
-    run_part_opt%do_coagulation = .true.
+    ! Coagulation disabled for now since it is slow and we want to
+    ! focus on emissions and getting the interface working.
+    ! Add it back later by changing to true.
+    run_part_opt%do_coagulation = .false.
     run_part_opt%coag_kernel_type = COAG_KERNEL_TYPE_BROWN
     run_part_opt%do_condensation = .false.
     run_part_opt%do_mosaic = .false.
@@ -638,9 +641,10 @@ end subroutine compute_partmc_emission_inputs
            end if
 
            ! Coagulation
-           ! DISABLED
-           ! call mc_coag(run_part_opt%coag_kernel_type, env_state, &
-           !      aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
+           if (run_part_opt%do_coagulation) then
+              call mc_coag(run_part_opt%coag_kernel_type, env_state, &
+                   aero_data, aero_state, run_part_opt%del_t, n_samp, n_coag)
+           end if
 
            ! Rebalance
            call aero_state_rebalance(aero_state_array(lchnk)%aero_state(icol,kk), aero_data, &
