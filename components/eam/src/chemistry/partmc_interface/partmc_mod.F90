@@ -539,9 +539,11 @@ end subroutine compute_partmc_emission_inputs
           gas_state%mix_rat(i) = state%q(icol,kk,i) * 1d9
         end do ! species
 
-        if (masterproc) then
-           write(102,*) state%q(icol,kk,:)
-        end if
+        ! Debugging
+        !if (masterproc) then
+        !   write(102,*) state%q(icol,kk,:)
+        !end if
+
         ! FIXME: Think about how to best do this scenario/env_state.
         ! scenario%temp(:)  = state%t(icol,kk)
         ! scenario%pressure = state%pmid(icol,kk)
@@ -580,10 +582,10 @@ end subroutine compute_partmc_emission_inputs
            geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol, : , :))
         if (masterproc) then
            if (icol == 1) then
-           write(102,*) '-----------------------------------------'
-           write(102,*) 'grid cell | temperature | pressure | box height | altitude'
-           write(102,*) kk, env_state%temp, env_state%pressure,env_state%height,  env_state%altitude
-           write(102,*) '-----------------------------------------'
+              write(102,*) '-----------------------------------------'
+              write(102,*) 'grid cell | temperature | pressure | box height | altitude'
+              write(102,*) kk, env_state%temp, env_state%pressure,env_state%height,  env_state%altitude
+              write(102,*) '-----------------------------------------'
            end if
            if (kk == pver) then
               write(102,*) '-----------------------------------------'
