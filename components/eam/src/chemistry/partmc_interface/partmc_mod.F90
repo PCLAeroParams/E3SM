@@ -248,6 +248,7 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
 
 end subroutine compute_partmc_emission_inputs
 
+  ! Sets properties of the PartMC run. For now, hardcoded.
   subroutine spec_file_read_run_part_eam(run_part_opt, &
        env_state_init, &
        n_part_ideal, rand_init)
@@ -314,6 +315,7 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine spec_file_read_run_part_eam
 
+  ! Initializes the data structures of PartMC.
   subroutine partmc_mam_inti(phys_state, species_class)
    use mo_tracname, only : solsym
    use cam_history,  only : addfld
@@ -415,30 +417,15 @@ end subroutine compute_partmc_emission_inputs
        aero_dist_init%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
     end do
 
+    ! Set the weighting schemes and number of ideal particles for each aero_state
     do ichunk = begchunk,endchunk
     ncol = phys_state(ichunk)%ncol
     do kk = 1,pver
     do icol = 1, ncol
-!       do i_mode = 1,ntot_amode
-!          num_idx =  numptr_amode(i_mode)
-!          idx_chm = map2chm(num_idx)
-!          call rad_cnst_get_mode_num_idx(i_mode, num_idx)
-!          aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
-!          aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
-!          aero_dist_init%mode(i_mode)%num_conc = 1e6
-!          !if (masterproc)
-!             !write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
-!                  !phys_state(ichunk)%q(icol,kk,num_idx)
-!          !endif
-!          !aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
-!       end do
        call aero_state_zero(aero_state_array(ichunk)%aero_state(icol,kk))
        call aero_state_set_weight(aero_state_array(ichunk)%aero_state(icol,kk), aero_data, &
             AERO_STATE_WEIGHT_FLAT_SOURCE)
        call aero_state_set_n_part_ideal(aero_state_array(ichunk)%aero_state(icol,kk), n_part_ideal)
-!       call aero_state_add_aero_dist_sample(aero_state_array(ichunk)%aero_state(icol,kk), &
-!            aero_data, aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
-!            run_part_opt%allow_halving)
     end do
     end do
     end do
@@ -484,6 +471,7 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine partmc_mam_inti
 
+  ! Solves a time step dt of PartMC.
   subroutine partmc_mam_invoke(state, cflx, dt)
     use physics_types,    only : physics_state
     use cam_history,       only : outfld
