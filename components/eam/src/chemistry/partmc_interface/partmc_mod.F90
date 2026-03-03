@@ -466,9 +466,8 @@ end subroutine compute_partmc_emission_inputs
     use physics_types,    only : physics_state
     use cam_history,       only : outfld
     use constituents,     only: pcnst
-
     use mo_chem_utls,        only : get_spc_ndx
-    use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_num_idx
+    use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_num_idx, rad_cnst_get_mam_mmr_idx
     use physconst,    only: spec_class_aerosol, spec_class_gas
     use mo_gas_phase_chemdr, only : map2chm
     use modal_aero_data, only: ntot_amode, modename_amode, sigmag_amode, &
@@ -494,7 +493,10 @@ end subroutine compute_partmc_emission_inputs
     type(aero_dist_t) :: emissions
     type(aero_dist_t) :: aero_dist_init
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
-    integer :: num_idx, idx_chm
+    integer :: num_idx, idx_chm, spec_idx
+    integer :: nspec, i_spec, n
+    real(kind=dp), parameter :: third = 1.0 / 3.0
+    real(kind=dp) :: dryvol, dumfac, dummwdens, dgncur_a, num_a
 
     !FIXME: we must pass a delta time factor
     n_time = 30
@@ -505,7 +507,7 @@ end subroutine compute_partmc_emission_inputs
     lchnk = state%lchnk
     ncol  = state%ncol
 
-    ! Capture initial q on first invocation for this chunk.
+    ! Capture initial condition on first invocation for this chunk.
     ! (phys_state%q is not populated until d_p_coupling runs before the first
     ! timestep, which is after partmc_mam_inti is called during phys_init.)
     if (.not. q_init_saved(lchnk)) then
@@ -528,23 +530,41 @@ end subroutine compute_partmc_emission_inputs
        do kk = 1,pver
           do icol = 1,ncol
              do i_mode = 1,ntot_amode
+                ! Set number concentration of the mode
                 num_idx = numptr_amode(i_mode)
                 idx_chm = map2chm(num_idx)
                 call rad_cnst_get_mode_num_idx(i_mode, num_idx)
-                aero_dist_init%mode(i_mode)%char_radius = 1.0d-8
-                aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / 20
-                aero_dist_init%mode(i_mode)%num_conc = 1e6
+                aero_dist_init%mode(i_mode)%num_conc = state%q(icol,kk,num_idx)
+                aero_dist_init%mode(i_mode)%vol_frac = 0.0d0
+                ! Set volume fraction of the mode
+                call rad_cnst_get_info(0, i_mode, nspec=nspec)
+                dryvol = 0.d0
+                do i_spec = 1, nspec
+                    call rad_cnst_get_mam_mmr_idx(i_mode, i_spec, spec_idx)
+                    idx_chm = map2chm(spec_idx)
+                    ! Convert from mass mixing ratio to volume fraction using density
+                    aero_dist_init%mode(i_mode)%vol_frac(spec_idx) = &
+                        state%q(icol,kk,idx_chm) / aero_data%density(spec_idx)
+                    ! Compute dry volume of mode for diameter calculation
+                    dummwdens = 1.0d0 / aero_data%density(spec_idx)
+                    dryvol = dryvol + max(0.0d0, state%q(icol,kk,idx_chm))*dummwdens
+                end do
+                
+                ! Calculate geometric median diameter
+                dumfac = exp(4.5d0*log(sigmag_amode(i_mode))**2)*const%pi/6.0d0
+                dgncur_a = (dryvol/(dumfac*num_a))**third
+                aero_dist_init%mode(i_mode)%char_radius = dgncur_a / 2.0d0
                 !if (masterproc)
                    !write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
                         !phys_state(ichunk)%q(icol,kk,num_idx)
                 !endif
-                !aero_dist_init%mode(i_mode)%num_conc = phys_state(ichunk)%q(icol,kk,idx_chm)
              end do
              call aero_state_add_aero_dist_sample(aero_state_array(lchnk)%aero_state(icol,kk), &
                   aero_data, aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
                   run_part_opt%allow_halving)
           end do
        end do
+       ! Set the flag to indicate that initial values have been set for this chunk
        q_init_saved(lchnk) = .true.
     end if
 
@@ -566,7 +586,7 @@ end subroutine compute_partmc_emission_inputs
     env_state%start_day = 0d0
     env_state%elapsed_time = 0d0
 
-    ! emission inputs
+    ! Emission inputs from E3SM
     geom_mean_diameter(:,:) = 0d0
     num_fluxes(:,:) = 0d0
     call compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, &
@@ -619,8 +639,10 @@ end subroutine compute_partmc_emission_inputs
           n_coag = 0
           n_samp = 0
           n_emit = 0
+          ! Set the PartMC data structure for aerosol emissions
           call partmc_interface_e3sm_emissions(state, emissions, &
                geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol,:,:))
+
           if (masterproc) then
              if (icol == 1) then
                 write(102,*) '-----------------------------------------'
@@ -640,6 +662,7 @@ end subroutine compute_partmc_emission_inputs
              end if
           end if
 
+          ! Time stepping for PartMC processes
           do i_time = 1,n_time
 
              ! Aerosol emissions
