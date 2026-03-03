@@ -49,7 +49,6 @@ module mo_partmc_interface
     character(len=256), allocatable :: mam_species_names(:,:)
     integer, allocatable :: mam_spec_to_partmc_spec(:,:)
     ! Initial q values captured on first invoke (phys_state%q not valid at inti time)
-    real(kind=dp), allocatable :: q_init(:,:,:,:)  ! (begchunk:endchunk, pcols, pver, pcnst)
     logical, allocatable :: q_init_saved(:)  ! (begchunk:endchunk)
 
 contains
@@ -354,7 +353,6 @@ end subroutine compute_partmc_emission_inputs
 
     ! Allocate storage for initial q (captured on first invoke, not here,
     ! because phys_state%q is not yet populated at inti time)
-    allocate(q_init(begchunk:endchunk, pcols, pver, pcnst))
     allocate(q_init_saved(begchunk:endchunk))
     q_init_saved(:) = .false.
 
