@@ -43,6 +43,8 @@ module mo_partmc_interface
     character(len=PMC_MAX_FILENAME_LEN) :: restart_filename
     integer :: dummy_index, dummy_i_repeat
     integer :: nmodes,nspec_max_modes
+    integer, parameter :: list_idx = 0  ! Climate list (0) vs. diagnostic list
+    real(kind=dp), parameter :: third = 1.0d0 / 3.0d0
     real(kind=dp) :: n_part_ideal
     ! mam information
     character(len=256), allocatable :: mam_num_names(:)
@@ -141,7 +143,6 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
   real(kind=dp), intent(out) :: volume_fractions(:,:,:)  ! Volume fractions for each species
 
   ! Local variables
-  integer :: list_idx                          ! Index for climate or diagnostic list
   integer :: nspec                             ! Number of species in a mode
   integer :: n, ispec, icol                    ! Loop indices
   integer :: num_idx, spec_idx, idx_chm        ! Indices for number flux, species, and chemistry mapping
@@ -152,10 +153,8 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
   real(kind=dp) :: dryvol(ncol)                        ! Dry volume for each column
   real(kind=dp) :: specdens
   real(kind=dp) :: sum_vf_per_mode(ncol,nmodes)            ! Sum of mass mixing ratios per mode
-  real(kind=dp), parameter :: third = 1.0 / 3.0  ! Constant for cube root calculation
 
-  ! Initialize variables
-  list_idx = 0  ! Climate list by default
+
 
   ! Loop over modes to compute properties
   geom_mean_diameter(:,:)=0.0
@@ -654,12 +653,6 @@ end subroutine compute_partmc_emission_inputs
     integer :: i_mode, i_spec, kk, icol, ll
     integer :: num_idx, idx_chm, spec_idx, nspec
     real(kind=dp) :: dryvol, dumfac, dummwdens, dgnum_dry, num_a
-    real(kind=dp), parameter :: third = 1.0d0 / 3.0d0
-    integer :: list_idx
-
-    ! Initialize variables
-    list_idx = 0  ! Climate list by default
-
     lchnk = state%lchnk
     ncol  = state%ncol
 
