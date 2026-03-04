@@ -70,7 +70,7 @@ contains
   nspec_max = 0
   ! Loop over modes to find the maximum number of species
   do n = 1, nmodes
-    call rad_cnst_get_info(0, n, nspec=nspec)
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
     nspec_max = max(nspec_max, nspec)
   end do
 
@@ -107,7 +107,7 @@ subroutine save_num_and_species_names(num_names, species_names)
 
     ! Loop over species in the mode to retrieve names
     ! Get the number of species in the mode
-    call rad_cnst_get_info(0, n, nspec=nspec)
+    call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
       ! Get the species index for the mode and species
       call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
@@ -384,7 +384,7 @@ end subroutine compute_partmc_emission_inputs
     end if
 
     ! Initialization of aerosol data
-    call rad_cnst_get_info(0, nmodes=nmodes)
+    call rad_cnst_get_info(list_idx, nmodes=nmodes)
     call compute_nspec_max(nspec_max_modes)
     call aero_data_init(aero_data)
 
@@ -447,7 +447,7 @@ end subroutine compute_partmc_emission_inputs
        write(102,*) 'save_num_and_species_names'
        do i_mode = 1,nmodes
           write(102, "(A)", advance="no") "Mode " // trim(adjustl(mam_num_names(i_mode))) // ": "
-          call rad_cnst_get_info(0, i_mode, nspec=nspec)
+          call rad_cnst_get_info(list_idx, i_mode, nspec=nspec)
           do i_spec = 1,nspec
              write(102, "(A)", advance="no") trim(adjustl(mam_species_names(i_mode, i_spec))) // " "
           end do
@@ -653,6 +653,7 @@ end subroutine compute_partmc_emission_inputs
     integer :: i_mode, i_spec, kk, icol, ll
     integer :: num_idx, idx_chm, spec_idx, nspec
     real(kind=dp) :: dryvol, dumfac, dummwdens, dgnum_dry, num_a
+
     lchnk = state%lchnk
     ncol  = state%ncol
 
@@ -814,7 +815,7 @@ end subroutine compute_partmc_emission_inputs
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
        emissions%mode(i_mode)%vol_frac = 0.0d0
        ! number of species in this mode
-       call rad_cnst_get_info(0, i_mode, nspec=n_spec_emit)
+       call rad_cnst_get_info(list_idx, i_mode, nspec=n_spec_emit)
        do i_spec =1,n_spec_emit
           ll = mam_spec_to_partmc_spec(i_mode,i_spec)
           emissions%mode(i_mode)%vol_frac(ll) = vol_frac(i_mode,i_spec) 
@@ -860,12 +861,12 @@ end subroutine compute_partmc_emission_inputs
     if (masterproc) then
       ! Number of aerosol chemical species defined (over all modes)
       print*, 'number of total aerosol species', ntot_aspectype
-      call rad_cnst_get_info(0, nmodes=n_modes)
+      call rad_cnst_get_info(list_idx, nmodes=n_modes)
       do m = 1,n_modes
          ! Properties of modal species
-         call rad_cnst_get_info(0, m, nspec=n_spec)
+         call rad_cnst_get_info(list_idx, m, nspec=n_spec)
          do l = 1,n_spec
-            call rad_cnst_get_aer_props(0, m, l, &
+            call rad_cnst_get_aer_props(list_idx, m, l, &
                aername = aername, &
                density_aer = density, &
                hygro_aer   = hygro)
@@ -879,10 +880,10 @@ end subroutine compute_partmc_emission_inputs
     end if
 
     ! Unique strings of the aername in the modes
-    call rad_cnst_get_info(0, nmodes=n_modes)
+    call rad_cnst_get_info(list_idx, nmodes=n_modes)
     total_mam_vars = 0
     do m =1,n_modes
-       call rad_cnst_get_info(0, m, nspec=n_spec)
+       call rad_cnst_get_info(list_idx, m, nspec=n_spec)
        total_mam_vars = total_mam_vars + n_spec
     end do
     allocate(input_array(total_mam_vars))
@@ -896,9 +897,9 @@ end subroutine compute_partmc_emission_inputs
 
     i_name = 0 
     do m = 1,n_modes
-       call rad_cnst_get_info(0, m, nspec=n_spec)
+       call rad_cnst_get_info(list_idx, m, nspec=n_spec)
        do l = 1,n_spec
-          call rad_cnst_get_aer_props(0, m, l, &
+          call rad_cnst_get_aer_props(list_idx, m, l, &
                aername = aername, &
                density_aer = density, &
                hygro_aer = hygro)
@@ -978,9 +979,9 @@ end subroutine compute_partmc_emission_inputs
     allocate(mam_spec_to_partmc_spec(n_modes, nspec_max_modes))
     mam_spec_to_partmc_spec = 0
     do m = 1,n_modes
-       call rad_cnst_get_info(0, m, nspec=n_spec)
+       call rad_cnst_get_info(list_idx, m, nspec=n_spec)
        do l = 1,n_spec
-          call rad_cnst_get_aer_props(0, m, l, &
+          call rad_cnst_get_aer_props(list_idx, m, l, &
                aername = aername)
           ! Find the index
           mam_spec_to_partmc_spec(m,l) = aero_data_spec_by_name(aero_data, aername) 
