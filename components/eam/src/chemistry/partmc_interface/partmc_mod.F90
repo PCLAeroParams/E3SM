@@ -650,7 +650,7 @@ end subroutine compute_partmc_emission_inputs
     integer :: lchnk, ncol
     type(aero_dist_t) :: aero_dist_init
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
-    integer :: i_mode, i_spec, kk, icol, ll
+    integer :: i_mode, i_spec, kk, icol, pmc_aero_idx
     integer :: num_idx, idx_chm, spec_idx, nspec
     real(kind=dp) :: dryvol, dumfac, dummwdens, dgnum_dry, num_a
 
@@ -687,12 +687,12 @@ end subroutine compute_partmc_emission_inputs
              do i_spec = 1,nspec
                 call rad_cnst_get_mam_mmr_idx(i_mode, i_spec, spec_idx)
                 idx_chm = map2chm(spec_idx)
-                ll = mam_spec_to_partmc_spec(i_mode, i_spec)
+                pmc_aero_idx = mam_spec_to_partmc_spec(i_mode, i_spec)
                 ! Convert from mass mixing ratio to volume fraction using density
-                aero_dist_init%mode(i_mode)%vol_frac(ll) = &
-                     state%q(icol,kk,idx_chm) / aero_data%density(ll)
+                aero_dist_init%mode(i_mode)%vol_frac(pmc_aero_idx) = &
+                     state%q(icol,kk,idx_chm) / aero_data%density(pmc_aero_idx)
                 ! Compute dry volume of mode for diameter calculation
-                dummwdens = 1.0d0 / aero_data%density(ll)
+                dummwdens = 1.0d0 / aero_data%density(pmc_aero_idx)
                 dryvol = dryvol + max(0.0d0, state%q(icol,kk,idx_chm))*dummwdens
              end do
              ! Normalize volume fractions
@@ -779,20 +779,21 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine write_nc_aero_state
 
+  ! Maps E3SM aerosol emissions to the PartMC emissions data structure.
   subroutine partmc_interface_e3sm_emissions(state, emissions, geom_mean_diam, &
       sigma, num_fluxes, vol_frac)
     use physics_types,    only : physics_state
     use rad_constituents, only: rad_cnst_get_info
 
     type(physics_state), intent(in):: state
+    ! Emissions data structure to pass to PartMC.
     type(aero_dist_t), intent(inout) :: emissions
 
     real(kind=dp), intent(in) ::  geom_mean_diam(nmodes)
     real(kind=dp), intent(in) ::  sigma(nmodes)
     real(kind=dp), intent(in) ::  num_fluxes(nmodes)
     real(kind=dp), intent(in) ::  vol_frac(nmodes, nspec_max_modes)
-
-    integer :: i_mode, i_spec, n_spec_emit, ll
+    integer :: i_mode, i_spec, n_spec_emit, pmc_spec_idx
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
@@ -814,14 +815,13 @@ end subroutine compute_partmc_emission_inputs
        allocate(emissions%mode(i_mode)%vol_frac(aero_data_n_spec(aero_data)))
        allocate(emissions%mode(i_mode)%vol_frac_std(aero_data_n_spec(aero_data)))
        emissions%mode(i_mode)%vol_frac = 0.0d0
-       ! number of species in this mode
+       ! Number of emitted species in this mode
        call rad_cnst_get_info(list_idx, i_mode, nspec=n_spec_emit)
-       do i_spec =1,n_spec_emit
-          ll = mam_spec_to_partmc_spec(i_mode,i_spec)
-          emissions%mode(i_mode)%vol_frac(ll) = vol_frac(i_mode,i_spec) 
+       do i_spec = 1,n_spec_emit
+          pmc_spec_idx = mam_spec_to_partmc_spec(i_mode, i_spec)
+          emissions%mode(i_mode)%vol_frac(pmc_spec_idx) = vol_frac(i_mode, i_spec)
        end do
        emissions%mode(i_mode)%vol_frac_std = 0.0d0
-
        emissions%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
        emissions%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
     end do
@@ -830,7 +830,6 @@ end subroutine compute_partmc_emission_inputs
 
   ! Initializes aero_data from E3SM aerosol scheme.
   subroutine aero_data_init(aero_data)
-
     use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_props
     use modal_aero_data, only: &
         lspectype_amode, ntot_aspectype, specname_amode, specdens_amode, specmw_amode, spechygro
@@ -840,17 +839,17 @@ end subroutine compute_partmc_emission_inputs
 
     integer :: n_aero_spec
     integer :: n_swbands
-    integer :: i_spec, i_mode
+    integer :: i_spec
     integer :: m, l
     integer :: n_spec, n_modes
     real(kind=dp) :: density, hygro
     character(len=20):: aername
-
     integer :: i, j, n, unique_count, total_mam_vars, i_name
     logical :: is_unique
     character(len=20), dimension(:), allocatable :: input_array, unique_array
     real(kind=dp), dimension(:), allocatable :: density_array, kappa_array, mw_array
     real(kind=dp), dimension(:), allocatable :: unique_density_array, unique_kappa_array, unique_mw_array
+
     ! Notes:
     !   ntot_aspectype = overall number of aerosol chemical species defined (over all modes)
     !   specdens_amode(l) = dry density (kg/m^3) of aerosol chemical species type l
