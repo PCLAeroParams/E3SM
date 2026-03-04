@@ -266,7 +266,7 @@ end subroutine compute_partmc_emission_inputs
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
-    n_part_ideal = 50
+    n_part_ideal = 50.0d0
 
     env_state_init%elapsed_time = 0d0
     
@@ -651,10 +651,14 @@ end subroutine compute_partmc_emission_inputs
     integer :: lchnk, ncol
     type(aero_dist_t) :: aero_dist_init
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
-    integer :: i_mode, i_spec, kk, icol
+    integer :: i_mode, i_spec, kk, icol, ll
     integer :: num_idx, idx_chm, spec_idx, nspec
-    real(kind=dp) :: dryvol, dumfac, dummwdens, dgncur_a, num_a
-    real(kind=dp), parameter :: third = 1.0 / 3.0
+    real(kind=dp) :: dryvol, dumfac, dummwdens, dgnum_dry, num_a
+    real(kind=dp), parameter :: third = 1.0d0 / 3.0d0
+    integer :: list_idx
+
+    ! Initialize variables
+    list_idx = 0  ! Climate list by default
 
     lchnk = state%lchnk
     ncol  = state%ncol
@@ -679,34 +683,54 @@ end subroutine compute_partmc_emission_inputs
        do icol = 1,ncol
           do i_mode = 1,ntot_amode
              ! Set number concentration of the mode
-             num_idx = numptr_amode(i_mode)
-             idx_chm = map2chm(num_idx)
              call rad_cnst_get_mode_num_idx(i_mode, num_idx)
-             aero_dist_init%mode(i_mode)%num_conc = state%q(icol,kk,num_idx)
+             idx_chm = map2chm(num_idx)
+             aero_dist_init%mode(i_mode)%num_conc = state%q(icol,kk,idx_chm)
              aero_dist_init%mode(i_mode)%vol_frac = 0.0d0
              ! Set volume fraction of the mode
-             call rad_cnst_get_info(0, i_mode, nspec=nspec)
+             call rad_cnst_get_info(list_idx, i_mode, nspec=nspec)
              dryvol = 0.d0
              do i_spec = 1,nspec
                 call rad_cnst_get_mam_mmr_idx(i_mode, i_spec, spec_idx)
                 idx_chm = map2chm(spec_idx)
+                ll = mam_spec_to_partmc_spec(i_mode, i_spec)
                 ! Convert from mass mixing ratio to volume fraction using density
-                aero_dist_init%mode(i_mode)%vol_frac(spec_idx) = &
-                     state%q(icol,kk,idx_chm) / aero_data%density(spec_idx)
+                aero_dist_init%mode(i_mode)%vol_frac(ll) = &
+                     state%q(icol,kk,idx_chm) / aero_data%density(ll)
                 ! Compute dry volume of mode for diameter calculation
-                dummwdens = 1.0d0 / aero_data%density(spec_idx)
+                dummwdens = 1.0d0 / aero_data%density(ll)
                 dryvol = dryvol + max(0.0d0, state%q(icol,kk,idx_chm))*dummwdens
              end do
-
+             ! Normalize volume fractions
+             if (sum(aero_dist_init%mode(i_mode)%vol_frac) > 0.0d0) then
+                aero_dist_init%mode(i_mode)%vol_frac = aero_dist_init%mode(i_mode)%vol_frac / sum(aero_dist_init%mode(i_mode)%vol_frac)
+             else
+                aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / aero_data_n_spec(aero_data)
+             end if
              ! Calculate geometric median diameter
-             dumfac = exp(4.5d0*log(sigmag_amode(i_mode))**2)*const%pi/6.0d0
-             dgncur_a = (dryvol/(dumfac*num_a))**third
-             aero_dist_init%mode(i_mode)%char_radius = dgncur_a / 2.0d0
-             !if (masterproc)
-                !write(102,*) i_mode, num_idx, idx_chm, phys_state(ichunk)%q(icol,kk,idx_chm), &
-                     !phys_state(ichunk)%q(icol,kk,num_idx)
-             !endif
+             dumfac = exp(4.5d0 * log(sigmag_amode(i_mode))**2) * const%pi / 6.0d0
+             if (aero_dist_init%mode(i_mode)%num_conc  > 0.0d0) then
+                dgnum_dry = (dryvol / (dumfac * aero_dist_init%mode(i_mode)%num_conc))**third
+             else
+                dgnum_dry = 0.0d0
+             end if
+             aero_dist_init%mode(i_mode)%char_radius = dgnum_dry / 2.0d0
           end do
+          if (masterproc) then
+             if (icol == 1 .and. kk == pver) then
+               do i_mode = 1,ntot_amode
+                write(102,*) '-----------------------------------------'
+                write(102,*) 'Initial condition for mode ', i_mode
+                write(102,*) 'radius:', aero_dist_init%mode(i_mode)%char_radius
+                write(102,*) 'number concentration:', aero_dist_init%mode(i_mode)%num_conc
+                do i_spec = 1,aero_data_n_spec(aero_data)
+                   write(102,*) 'volume fraction for ', trim(aero_data%name(i_spec)), ':', &
+                        aero_dist_init%mode(i_mode)%vol_frac(i_spec)
+                end do
+               end do
+             end if
+
+          end if
           call aero_state_add_aero_dist_sample(aero_state_array(lchnk)%aero_state(icol,kk), &
                aero_data, aero_dist_init, 1d0, 1d0, 0d0, run_part_opt%allow_doubling, &
                run_part_opt%allow_halving)
