@@ -644,7 +644,6 @@ end subroutine compute_partmc_emission_inputs
     use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_num_idx, rad_cnst_get_mam_mmr_idx
     use mo_gas_phase_chemdr, only : map2chm
     use modal_aero_data, only: ntot_amode, modename_amode, sigmag_amode, numptr_amode
-    use physconst,       only: rgas
 
     type(physics_state), intent(in) :: state
 
@@ -711,8 +710,8 @@ end subroutine compute_partmc_emission_inputs
              end if
              aero_dist_init%mode(i_mode)%char_radius = dgnum_dry / 2.0d0
              ! Convert number mixing ratio (#/kg_air) to number concentration (#/m^3)
-             aero_dist_init%mode(i_mode)%num_conc = num_a &
-                  * state%pmid(icol,kk) / (rgas * state%t(icol,kk))
+             aero_dist_init%mode(i_mode)%num_conc = num_a * state%pmid(icol,kk) &
+                  / (const%univ_gas_const / const%air_molec_weight * state%t(icol,kk))
           end do
           if (masterproc) then
              if (icol == 1 .and. kk == pver) then
