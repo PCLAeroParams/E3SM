@@ -339,6 +339,8 @@ end subroutine compute_partmc_emission_inputs
     type(aero_dist_t) :: aero_dist_init
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
+    integer :: naero, n_modes
+
     ! Uncomment for processor information for debugging
     !call mpi_comm_rank(MPI_COMM_WORLD, rank, ierr)
     !print*, 'MPI rank: ', rank, 'chunk start: ', begchunk, 'chunk end:', endchunk
@@ -373,13 +375,13 @@ end subroutine compute_partmc_emission_inputs
     call gas_state_set_size(gas_state, n_gas_species)
 
     do i = 1,n_gas_species
-       gas_data%name(i) = solsym(gas_species_idx(i))
+       gas_data%name(i) = solsym(map2chm(gas_species_idx(i)))
     end do
 
     if (masterproc) then
-       write(*,*) 'PartMC gas_data names'
+       write(102,*) 'PartMC gas_data names'
        do i = 1,gas_data_n_spec(gas_data)
-          write(*,*) trim(gas_data%name(i))
+          write(102,*) trim(gas_data%name(i))
        end do
     end if
 
@@ -679,14 +681,19 @@ end subroutine compute_partmc_emission_inputs
              ! Set number concentration of the mode
              call rad_cnst_get_mode_num_idx(i_mode, num_idx)
              idx_chm = map2chm(num_idx)
-             num_a = state%q(icol,kk,idx_chm)  ! number mixing ratio (#/kg_air)
+             if (masterproc) then
+                if (kk == pver .and. icol == 1) then
+                   write(102,*) "Initial number mixing ratio for mode ", i_mode, " is ", state%q(icol,kk,idx_chm), idx_chm, state%q(icol,kk,num_idx),num_idx
+                end if
+             end if
+             num_a = state%q(icol,kk,num_idx)  ! number mixing ratio (#/kg_air)
              aero_dist_init%mode(i_mode)%vol_frac = 0.0d0
              ! Set volume fraction of the mode
              call rad_cnst_get_info(list_idx, i_mode, nspec=nspec)
              dryvol = 0.d0
              do i_spec = 1,nspec
                 call rad_cnst_get_mam_mmr_idx(i_mode, i_spec, spec_idx)
-                idx_chm = map2chm(spec_idx)
+                idx_chm = spec_idx !map2chm(spec_idx)
                 pmc_aero_idx = mam_spec_to_partmc_spec(i_mode, i_spec)
                 ! Convert from mass mixing ratio to volume fraction using density
                 aero_dist_init%mode(i_mode)%vol_frac(pmc_aero_idx) = &
@@ -701,7 +708,7 @@ end subroutine compute_partmc_emission_inputs
              else
                 aero_dist_init%mode(i_mode)%vol_frac = 1.0d0 / aero_data_n_spec(aero_data)
              end if
-             ! Calculate geometric median diameter using mixing ratios - conversions cancel
+             ! Calculate geometric mean diameter using mixing ratios - conversions cancel
              dumfac = exp(4.5d0 * log(sigmag_amode(i_mode))**2) * const%pi / 6.0d0
              if (num_a > 0.0d0) then
                 dgnum_dry = (dryvol / (dumfac * num_a))**third
