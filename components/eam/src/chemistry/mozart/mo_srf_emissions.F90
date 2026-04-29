@@ -29,7 +29,9 @@ module mo_srf_emissions
 
   private
 
-  public  :: srf_emissions_inti, set_srf_emissions, set_srf_emissions_time 
+  public  :: srf_emissions_inti, set_srf_emissions, set_srf_emissions_time
+  public  :: has_srf_emis_species, get_srf_emis_n_sectors, get_srf_emis_sector_name
+  public  :: get_srf_emis_sector_flux
 
   save
 
@@ -398,5 +400,99 @@ contains
     end do
 
   end subroutine set_srf_emissions
+
+  !---------------------------------------------------------------------
+  ! Sector-resolved accessors for downstream consumers (e.g. PartMC) that
+  ! need the per-sector breakdown rather than the species-summed flux.
+  !---------------------------------------------------------------------
+
+  logical function has_srf_emis_species( species_name )
+    character(len=*), intent(in) :: species_name
+    integer :: m
+
+    has_srf_emis_species = .false.
+    do m = 1,n_emis_species
+       if ( trim(emissions(m)%species) == trim(species_name) ) then
+          has_srf_emis_species = .true.
+          return
+       end if
+    end do
+  end function has_srf_emis_species
+
+  integer function get_srf_emis_n_sectors( species_name )
+    character(len=*), intent(in) :: species_name
+    integer :: m
+
+    get_srf_emis_n_sectors = 0
+    do m = 1,n_emis_species
+       if ( trim(emissions(m)%species) == trim(species_name) ) then
+          get_srf_emis_n_sectors = emissions(m)%nsectors
+          return
+       end if
+    end do
+  end function get_srf_emis_n_sectors
+
+  subroutine get_srf_emis_sector_name( species_name, isec, sector_name )
+    character(len=*), intent(in)  :: species_name
+    integer,          intent(in)  :: isec
+    character(len=*), intent(out) :: sector_name
+
+    integer :: m
+
+    sector_name = ''
+    do m = 1,n_emis_species
+       if ( trim(emissions(m)%species) == trim(species_name) ) then
+          if ( isec >= 1 .and. isec <= emissions(m)%nsectors ) then
+             sector_name = trim(emissions(m)%sectors(isec))
+          end if
+          return
+       end if
+    end do
+  end subroutine get_srf_emis_sector_name
+
+  ! Returns flux(:ncol) in kg/m^2/s for one sector of one species. Applies
+  ! the same unit conversion path as set_srf_emissions. Flux is zero if
+  ! the species or sector is not present.
+  subroutine get_srf_emis_sector_flux( species_name, sector_name, lchnk, ncol, flux )
+    use string_utils, only : to_lower, GLC
+
+    character(len=*), intent(in)  :: species_name
+    character(len=*), intent(in)  :: sector_name
+    integer,          intent(in)  :: lchnk
+    integer,          intent(in)  :: ncol
+    real(r8),         intent(out) :: flux(:)
+
+    integer :: m, isec, found_isec
+    real(r8) :: mfactor
+    character(len=12) :: units
+    character(len=12), parameter :: mks_units(4) = (/ "kg/m2/s     ", &
+                                                      "kg/m2/sec   ", &
+                                                      "kg/m^2/s    ", &
+                                                      "kg/m^2/sec  " /)
+
+    flux(:ncol) = 0._r8
+
+    do m = 1,n_emis_species
+       if ( trim(emissions(m)%species) /= trim(species_name) ) cycle
+
+       found_isec = 0
+       do isec = 1,emissions(m)%nsectors
+          if ( trim(emissions(m)%sectors(isec)) == trim(sector_name) ) then
+             found_isec = isec
+             exit
+          end if
+       end do
+       if ( found_isec == 0 ) return
+
+       flux(:ncol) = emissions(m)%fields(found_isec)%data(:ncol,1,lchnk)
+
+       units = to_lower(trim(emissions(m)%fields(1)%units(:GLC(emissions(m)%fields(1)%units))))
+       if ( .not. any( mks_units(:) == units ) ) then
+          mfactor = amufac * emissions(m)%mw
+          flux(:ncol) = flux(:ncol) * mfactor
+       end if
+       return
+    end do
+  end subroutine get_srf_emis_sector_flux
 
 end module mo_srf_emissions

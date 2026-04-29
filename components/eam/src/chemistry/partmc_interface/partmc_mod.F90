@@ -22,20 +22,55 @@ module mo_partmc_interface
     type(gas_data_t) :: gas_data
     type(gas_state_t) :: gas_state
     type(aero_data_t) :: aero_data
+
+    ! Array of aero_state for each chunk. (columns, levels)
     type aero_state_array_t
        type(aero_state_t), allocatable, dimension(:,:) :: aero_state
     end type aero_state_array_t
+    ! Array of aero_state_arrays. (chunks)
     type(aero_state_array_t), allocatable, dimension(:) :: aero_state_array
+
     type(scenario_t) :: scenario
     type(env_state_t) :: env_state
     type(env_state_t) :: env_state_init
     type(run_part_opt_t) :: run_part_opt
     integer :: i_repeat, i_group
     integer :: rand_init
+    ! Maximum number of computational particles. Used for output.
     integer, parameter, public :: n_part_max = 100
+    ! Maximum number of aerosol species. Used for output.
     integer, parameter, public :: n_aero_sp_max = 25
-    ! FIXME: Temporary set to fixed value 
-    integer, parameter, public :: n_emit_mode = 5 
+
+    ! Toggle between two emission pathways:
+    !   .false. — original cflx pathway (5 generic emit modes per MAM mode)
+    !   .true.  — sector-resolved pathway (one PartMC mode per (MAM mode, CMIP6 sector))
+    logical, parameter, public :: use_sector_emissions = .true.
+    ! Number of active PartMC emission modes. For the cflx pathway this stays 5;
+    ! for the sector pathway it is overwritten at init from the discovered
+    ! catalog (typically 14 for MAM4 + CMIP6 anthropogenic inventory).
+    integer, public :: n_emit_mode = 5
+    ! Canonical anthropogenic sector list (CMIP6 / AeroCom). The sector
+    ! catalog only registers a (MAM-group, sector) pair if the inventory
+    ! actually carries that variable.
+    integer, parameter :: n_canon_sectors = 8
+    character(len=8), parameter :: canon_sectors(n_canon_sectors) = &
+         (/ 'AGR     ', 'ENE     ', 'IND     ', 'RCO     ', &
+            'SHP     ', 'SLV     ', 'TRA     ', 'WST     ' /)
+    ! Per-mode catalog populated when use_sector_emissions = .true.
+    type sector_mode_t
+       character(len=32) :: name             ! e.g. emit_BCPOM_AGR
+       character(len=8) :: sector           ! canonical sector
+       integer :: parent_mam_mode  ! 1, 2, or 4
+       real(kind=dp) :: sigma_g          ! geometric std dev
+       integer :: n_mass           ! Number of species in the mass flux.
+       character(len=16), allocatable :: mass_species(:)  ! e.g. bc_a4, pom_a4
+       character(len=32), allocatable :: mass_sec_var(:)  ! sector var in that file
+       integer, allocatable :: mass_pmc_idx(:)  ! PartMC aero_data species index
+       integer :: n_num            ! Number of species in the number flux.
+       character(len=16), allocatable :: num_species(:)   ! num_aN
+       character(len=32), allocatable :: num_sec_var(:)   ! sector var in num file
+    end type sector_mode_t
+    type(sector_mode_t), allocatable :: sector_modes(:)
     character, allocatable :: buffer(:)
     integer :: buffer_size, max_buffer_size
     integer :: position
@@ -304,7 +339,11 @@ end subroutine compute_partmc_emission_inputs
     run_part_opt%parallel_coag_type = PARALLEL_COAG_TYPE_LOCAL
 
     do i_mode = 1,n_emit_mode
-       write(mode_name,'(a,i2.2)') 'emit_mode_', i_mode
+       if (use_sector_emissions) then
+          mode_name = sector_modes(i_mode)%name
+       else
+          write(mode_name,'(a,i2.2)') 'emit_mode_', i_mode
+       end if
        dummy = aero_data_source_by_name(aero_data, mode_name)
        weight_class_name = mode_name
        dummy = aero_data_weight_class_by_name(aero_data, &
@@ -390,6 +429,13 @@ end subroutine compute_partmc_emission_inputs
     call compute_nspec_max(nspec_max_modes)
     call aero_data_init(aero_data)
 
+    ! Build the (MAM-group, sector) catalog and override n_emit_mode if the
+    ! sector-resolved pathway is active. Must run before spec_file_read_run_part_eam
+    ! because that routine registers one aero_data source/weight-class per emit mode.
+    if (use_sector_emissions) then
+       call partmc_build_sector_catalog()
+    end if
+
     call spec_file_read_run_part_eam(run_part_opt, &
          env_state_init, n_part_ideal, rand_init)
 
@@ -456,6 +502,20 @@ end subroutine compute_partmc_emission_inputs
           write(102,*)
        end do
        write(102,*) '-----------------------------------------'
+
+       write(102,*) '-----------------------------------------'
+       write(102,*) 'aero_data sources (', size(aero_data%source_name), ')'
+       do i = 1, size(aero_data%source_name)
+          write(102,*) i, trim(aero_data%source_name(i))
+       end do
+       write(102,*) '-----------------------------------------'
+       write(102,*) 'aero_data weight classes (', size(aero_data%weight_class_name), ')'
+       do i = 1, size(aero_data%weight_class_name)
+          write(102,*) i, trim(aero_data%weight_class_name(i))
+       end do
+       write(102,*) '-----------------------------------------'
+       write(102,*) 'aero_state n_part_ideal = ', n_part_ideal
+       write(102,*) '-----------------------------------------'
     end if
 
   end subroutine partmc_mam_inti
@@ -476,10 +536,17 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp) ::  aero_particle_mass_out(pcols, pver,  n_part_max,n_aero_sp_max)
     real(kind=dp) ::  aero_num_conc_out(pcols, pver,  n_part_max)
     real(kind=dp) ::  number_conc_out(pcols, pver)
+    ! cflx-pathway arrays (indexed by MAM mode)
     real(kind=dp) ::  geom_mean_diameter(pcols, nmodes)
     real(kind=dp) ::  sigma_mam(nmodes)
     real(kind=dp) ::  num_fluxes(pcols, nmodes)
     real(kind=dp) ::  volume_fractions(pcols, nmodes, nspec_max_modes)
+    ! sector-pathway arrays (indexed by sector mode); allocatable so we only
+    ! pay the storage when the sector pathway is active
+    real(kind=dp), allocatable :: geom_mean_diameter_sec(:,:)
+    real(kind=dp), allocatable :: sigma_emode(:)
+    real(kind=dp), allocatable :: num_fluxes_sec(:,:)
+    real(kind=dp), allocatable :: vol_frac_sec(:,:,:)
 
     integer ::  n_samp, n_coag, i_time, n_time, n_emit
     integer :: i_mode
@@ -522,10 +589,19 @@ end subroutine compute_partmc_emission_inputs
     env_state%elapsed_time = 0d0
 
     ! Emission inputs from E3SM
-    geom_mean_diameter(:,:) = 0d0
-    num_fluxes(:,:) = 0d0
-    call compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, &
-         sigma_mam, num_fluxes, volume_fractions)
+    if (use_sector_emissions) then
+       allocate(geom_mean_diameter_sec(pcols, n_emit_mode))
+       allocate(sigma_emode(n_emit_mode))
+       allocate(num_fluxes_sec(pcols, n_emit_mode))
+       allocate(vol_frac_sec(pcols, n_emit_mode, aero_data_n_spec(aero_data)))
+       call compute_partmc_emission_inputs_sector(lchnk, ncol, &
+            geom_mean_diameter_sec, sigma_emode, num_fluxes_sec, vol_frac_sec)
+    else
+       geom_mean_diameter(:,:) = 0d0
+       num_fluxes(:,:) = 0d0
+       call compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, &
+            sigma_mam, num_fluxes, volume_fractions)
+    end if
 
     do kk = 1,pver
        do icol = 1,ncol
@@ -575,8 +651,14 @@ end subroutine compute_partmc_emission_inputs
           n_samp = 0
           n_emit = 0
           ! Set the PartMC data structure for aerosol emissions
-          call partmc_interface_e3sm_emissions(state, emissions, &
-               geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol,:,:))
+          if (use_sector_emissions) then
+             call partmc_interface_e3sm_emissions_sector(emissions, &
+                  geom_mean_diameter_sec(icol,:), sigma_emode, &
+                  num_fluxes_sec(icol,:), vol_frac_sec(icol,:,:))
+          else
+             call partmc_interface_e3sm_emissions(state, emissions, &
+                  geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol,:,:))
+          end if
 
           if (masterproc) then
              if (icol == 1) then
@@ -587,11 +669,18 @@ end subroutine compute_partmc_emission_inputs
              end if
              if (kk == pver) then
                 write(102,*) '-----------------------------------------'
-                write(102,*) 'i_mode | radius | log10sigma | number flux'
+                write(102,*) 'i_mode | name | radius | log10sigma | number flux'
                 do i_mode = 1,n_emit_mode
-                   write(102,*) i_mode, emissions%mode(i_mode)%char_radius, &
+                   write(102,*) i_mode, trim(emissions%mode(i_mode)%name), &
+                        emissions%mode(i_mode)%char_radius, &
                         emissions%mode(i_mode)%log10_std_dev_radius, &
                         emissions%mode(i_mode)%num_conc
+                   do i = 1,aero_data_n_spec(aero_data)
+                      if (emissions%mode(i_mode)%vol_frac(i) > 0.0d0) then
+                         write(102,*) '   vol_frac ', trim(aero_data%name(i)), &
+                              emissions%mode(i_mode)%vol_frac(i)
+                      end if
+                   end do
                 end do
                 write(102,*) '-----------------------------------------'
              end if
@@ -637,6 +726,10 @@ end subroutine compute_partmc_emission_inputs
     call outfld( 'number_concentration', number_conc_out(:ncol, :), ncol, lchnk )
     call outfld( 'aero_num_conc', aero_num_conc_out(:ncol, :, :), ncol, lchnk )
 
+    if (use_sector_emissions) then
+       deallocate(geom_mean_diameter_sec, sigma_emode, num_fluxes_sec, vol_frac_sec)
+    end if
+
   end subroutine partmc_mam_invoke
 
   ! Populates aero_state_array with the initial aerosol distribution for chunk
@@ -675,6 +768,7 @@ end subroutine compute_partmc_emission_inputs
        aero_dist_init%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
        aero_dist_init%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
     end do
+
     do kk = 1,pver
        do icol = 1,ncol
           do i_mode = 1,ntot_amode
@@ -740,6 +834,8 @@ end subroutine compute_partmc_emission_inputs
                run_part_opt%allow_halving)
        end do
     end do
+
+    ! Flag to indicate the initial condition has been set for this chunk.
     q_init_saved(lchnk) = .true.
 
   end subroutine partmc_init_aero_dist
@@ -765,7 +861,7 @@ end subroutine compute_partmc_emission_inputs
 
   n_part=aero_state_n_part(aero_state)
   n_sp_aero=aero_data_n_spec(aero_data)
-  if ( n_part> 0) then
+  if (n_part > 0) then
     do i_part = 1,n_part
      aero_particle_mass(i_part, :) &
          = aero_state%apa%particle(i_part)%vol * aero_data%density
@@ -974,7 +1070,7 @@ end subroutine compute_partmc_emission_inputs
        aero_data%num_ions(i_spec) = 0
     end do
 
-    ! Set the optical wavelength.
+    ! Set the optical wavelength (not used)
     aero_data%wavelengths = 550.0d0
 
     ! Set the index of water
@@ -982,6 +1078,7 @@ end subroutine compute_partmc_emission_inputs
     ! Set MOSAIC map (not used)
     call aero_data_set_mosaic_map(aero_data)
 
+    ! Set fractal properties
     call fractal_set_spherical(aero_data%fractal)
 
     ! Map MAM "species" to PartMC species
@@ -990,8 +1087,7 @@ end subroutine compute_partmc_emission_inputs
     do m = 1,n_modes
        call rad_cnst_get_info(list_idx, m, nspec=n_spec)
        do l = 1,n_spec
-          call rad_cnst_get_aer_props(list_idx, m, l, &
-               aername = aername)
+          call rad_cnst_get_aer_props(list_idx, m, l, aername = aername)
           ! Find the index
           mam_spec_to_partmc_spec(m,l) = aero_data_spec_by_name(aero_data, aername) 
       end do
@@ -1003,7 +1099,7 @@ end subroutine compute_partmc_emission_inputs
     ! Print results
     if (masterproc) then
        write(102,*) 'Contents of aero_data'
-       write(102,*) 'Name | Density | MW | kappa'
+       write(102,*) 'Name | Density | Molecular weight | kappa'
        do i_spec = 1,n_aero_spec
           write(102,*) trim(aero_data%name(i_spec)), aero_data%density(i_spec), &
              aero_data%molec_weight(i_spec), aero_data%kappa(i_spec)
@@ -1011,5 +1107,338 @@ end subroutine compute_partmc_emission_inputs
     end if
 
   end subroutine aero_data_init
+
+  !---------------------------------------------------------------------
+  ! Sector-resolved emissions handling
+  !---------------------------------------------------------------------
+
+  ! Resolves a MAM constituent name (e.g. 'bc_a4', 'so4_a1') to the
+  ! corresponding PartMC aero_data species index by walking MAM modes.
+  ! Returns 0 if the constituent is not found in any mode.
+  integer function pmc_idx_for_constituent(constituent_name)
+    use rad_constituents, only : rad_cnst_get_info, rad_cnst_get_mam_mmr_idx, &
+                                    rad_cnst_get_aer_props
+    use mo_tracname, only : solsym
+    use mo_gas_phase_chemdr, only : map2chm
+
+    ! MAM species name to resolve (e.g. 'bc_a4', 'so4_a1')
+    character(len=*), intent(in) :: constituent_name
+
+    integer :: m, l, nspec, spec_idx, idx_chm
+    character(len=20) :: aername
+
+    pmc_idx_for_constituent = 0
+    do m = 1,nmodes
+       call rad_cnst_get_info(list_idx, m, nspec=nspec)
+       do l = 1,nspec
+          call rad_cnst_get_mam_mmr_idx(m, l, spec_idx)
+          idx_chm = map2chm(spec_idx)
+          if (idx_chm > 0) then
+             if (trim(solsym(idx_chm)) == trim(constituent_name)) then
+                call rad_cnst_get_aer_props(list_idx, m, l, aername=aername)
+                pmc_idx_for_constituent = aero_data_spec_by_name(aero_data, aername)
+                return
+             end if
+          end if
+       end do
+    end do
+
+  end function pmc_idx_for_constituent
+
+  ! Returns .true. if the given srf-emis species carries the named sector
+  ! variable. Sector names match the raw NetCDF variable names exactly
+  ! (e.g. 'AGR' for so4_a1, 'num_a1_BC_AGR' for num_a4). Note the possibility of
+  ! a1/a4 issue in the inputs.
+  logical function species_has_sector(species_name, sector_name)
+    use mo_srf_emissions, only : has_srf_emis_species, &
+                                 get_srf_emis_n_sectors, &
+                                 get_srf_emis_sector_name
+
+    ! Species name.
+    character(len=*), intent(in) :: species_name
+    ! Sector name.
+    character(len=*), intent(in) :: sector_name
+
+    integer :: nsec, isec
+    character(len=32) :: sname
+
+    species_has_sector = .false.
+    if ( .not. has_srf_emis_species(species_name)) return
+    nsec = get_srf_emis_n_sectors(species_name)
+    do isec = 1,nsec
+       call get_srf_emis_sector_name(species_name, isec, sname)
+       if (trim(sname) == trim(sector_name) ) then
+          species_has_sector = .true.
+          return
+       end if
+    end do
+
+  end function species_has_sector
+
+  ! Walks the canonical CMIP6 anthropogenic sector list and builds one
+  ! sector_modes entry per (MAM-group, sector) pair that is actually present
+  ! in the inventory. Sets module-level n_emit_mode to the discovered count.
+  !
+  ! MAM-groups handled (MAM4 + CMIP6):
+  !   * BCPOM  (parent mode 4) — bc_a4 + pom_a4 + num_a4
+  !   * SO4a1  (parent mode 1) — so4_a1 + num_a1
+  !   * SO4a2  (parent mode 2) — so4_a2 + num_a2
+  !
+  ! The MAM split between so4_a1/so4_a2 (and the corresponding number)
+  ! is inherited as-is.
+  subroutine partmc_build_sector_catalog()
+    use modal_aero_data, only : sigmag_amode
+
+    integer :: i_sec, i_out, i_pass
+    character(len=8) :: sector
+    logical :: have_bcpom, have_so4a1, have_so4a2
+
+    ! Pass 1: Count the number of emission modes based on sectors.
+    ! Pass 2: Populate sector information.
+    do i_pass = 1,2
+       i_out = 0
+       do i_sec = 1,n_canon_sectors
+          sector = canon_sectors(i_sec)
+
+          have_bcpom = species_has_sector('bc_a4',  trim(sector)) .and. &
+                       species_has_sector('pom_a4', trim(sector))
+          have_so4a1 = species_has_sector('so4_a1', trim(sector))
+          have_so4a2 = species_has_sector('so4_a2', trim(sector))
+
+          ! Handle Hydrophobic BCPOM sectors in a4 (Accumulation) mode.
+          if (have_bcpom) then
+             i_out = i_out + 1
+             if (i_pass == 2) then
+                sector_modes(i_out)%name = 'emit_BCPOM_'//trim(sector)
+                sector_modes(i_out)%sector = sector
+                sector_modes(i_out)%parent_mam_mode = 4
+                sector_modes(i_out)%sigma_g = sigmag_amode(4)
+                sector_modes(i_out)%n_mass = 2
+                allocate(sector_modes(i_out)%mass_species(2))
+                allocate(sector_modes(i_out)%mass_sec_var(2))
+                allocate(sector_modes(i_out)%mass_pmc_idx(2))
+                sector_modes(i_out)%mass_species(1) = 'bc_a4'
+                sector_modes(i_out)%mass_sec_var(1) = trim(sector)
+                sector_modes(i_out)%mass_pmc_idx(1) = pmc_idx_for_constituent('bc_a4')
+                sector_modes(i_out)%mass_species(2) = 'pom_a4'
+                sector_modes(i_out)%mass_sec_var(2) = trim(sector)
+                sector_modes(i_out)%mass_pmc_idx(2) = pmc_idx_for_constituent('pom_a4')
+                sector_modes(i_out)%n_num = 2
+                allocate(sector_modes(i_out)%num_species(2))
+                allocate(sector_modes(i_out)%num_sec_var(2))
+                ! WARNING: num_a4 file uses 'num_a1_BC_*' / 'num_a1_POM_*' variable names
+                ! (CMIP6 inventory artifact — naming follows the chemistry, not
+                ! the destination MAM mode).
+                sector_modes(i_out)%num_species(1) = 'num_a4'
+                sector_modes(i_out)%num_sec_var(1) = 'num_a1_BC_'//trim(sector)
+                sector_modes(i_out)%num_species(2) = 'num_a4'
+                sector_modes(i_out)%num_sec_var(2) = 'num_a1_POM_'//trim(sector)
+             end if
+          end if
+
+          ! Handle SO4 mode a1 (Accumulation) sectors.
+          if (have_so4a1) then
+             i_out = i_out + 1
+             if (i_pass == 2) then
+                sector_modes(i_out)%name = 'emit_SO4a1_'//trim(sector)
+                sector_modes(i_out)%sector = sector
+                sector_modes(i_out)%parent_mam_mode = 1
+                sector_modes(i_out)%sigma_g = sigmag_amode(1)
+                sector_modes(i_out)%n_mass = 1
+                allocate(sector_modes(i_out)%mass_species(1))
+                allocate(sector_modes(i_out)%mass_sec_var(1))
+                allocate(sector_modes(i_out)%mass_pmc_idx(1))
+                sector_modes(i_out)%mass_species(1) = 'so4_a1'
+                sector_modes(i_out)%mass_sec_var(1) = trim(sector)
+                sector_modes(i_out)%mass_pmc_idx(1) = pmc_idx_for_constituent('so4_a1')
+                sector_modes(i_out)%n_num = 1
+                allocate(sector_modes(i_out)%num_species(1))
+                allocate(sector_modes(i_out)%num_sec_var(1))
+                sector_modes(i_out)%num_species(1) = 'num_a1'
+                sector_modes(i_out)%num_sec_var(1) = 'num_a1_SO4_'//trim(sector)
+             end if
+          end if
+
+          ! Handle SO4 mode a2 (Aitken) sectors.
+          if (have_so4a2) then
+             i_out = i_out + 1
+             if (i_pass == 2) then
+                sector_modes(i_out)%name = 'emit_SO4a2_'//trim(sector)
+                sector_modes(i_out)%sector = sector
+                sector_modes(i_out)%parent_mam_mode = 2
+                sector_modes(i_out)%sigma_g = sigmag_amode(2)
+                sector_modes(i_out)%n_mass = 1
+                allocate(sector_modes(i_out)%mass_species(1))
+                allocate(sector_modes(i_out)%mass_sec_var(1))
+                allocate(sector_modes(i_out)%mass_pmc_idx(1))
+                sector_modes(i_out)%mass_species(1) = 'so4_a2'
+                sector_modes(i_out)%mass_sec_var(1) = trim(sector)
+                sector_modes(i_out)%mass_pmc_idx(1) = pmc_idx_for_constituent('so4_a2')
+                sector_modes(i_out)%n_num = 1
+                allocate(sector_modes(i_out)%num_species(1))
+                allocate(sector_modes(i_out)%num_sec_var(1))
+                sector_modes(i_out)%num_species(1) = 'num_a2'
+                sector_modes(i_out)%num_sec_var(1) = 'num_a2_SO4_'//trim(sector)
+             end if
+          end if
+       end do
+
+       if (i_pass == 1) then
+          n_emit_mode = i_out
+          allocate(sector_modes(n_emit_mode))
+       end if
+    end do
+
+    if (masterproc) then
+       write(102,*) '-----------------------------------------'
+       write(102,*) 'PartMC sector emission catalog'
+       write(102,*) 'n_emit_mode = ', n_emit_mode
+       do i_out = 1,n_emit_mode
+          write(102,*) i_out, ' ', trim(sector_modes(i_out)%name), &
+               ' parent_mam=', sector_modes(i_out)%parent_mam_mode, &
+               ' sigma_g=', sector_modes(i_out)%sigma_g
+       end do
+       write(102,*) '-----------------------------------------'
+    end if
+
+  end subroutine partmc_build_sector_catalog
+
+  ! Sector-resolved versions of compute_partmc_emission_inputs.
+  ! Produces per-(column, sector_mode) inputs for PartMC. vol_frac is indexed
+  ! directly by PartMC aero_data species index (not the per-mode species index)
+  ! because each sector_mode lists its constituents.
+  subroutine compute_partmc_emission_inputs_sector(lchnk, ncol, &
+       geom_mean_diameter, sigma_emode, num_fluxes, vol_frac)
+    use mo_srf_emissions, only : get_srf_emis_sector_flux
+    use physconst, only : pi
+
+    ! Chunk index.
+    integer, intent(in)  :: lchnk
+    ! Number of columns in chunk.
+    integer, intent(in)  :: ncol
+    ! Geometric mean diameter of each sector mode.
+    real(kind=dp), intent(out) :: geom_mean_diameter(:,:) ! (pcols, n_emit_mode)
+    ! Geometric standard deviation of each sector mode.
+    real(kind=dp), intent(out) :: sigma_emode(:) ! (n_emit_mode)
+    ! Number flux of each sector mode.
+    real(kind=dp), intent(out) :: num_fluxes(:,:) ! (pcols, n_emit_mode)
+    ! Volume fraction of each PartMC species in each sector mode.
+    real(kind=dp), intent(out) :: vol_frac(:,:,:) ! (pcols, n_emit_mode, n_aero_spec)
+
+    integer  :: i_mode, j, icol, pmc_idx
+    real(kind=dp) :: alnsg, dumfac, specdens, dummwdens
+    real(kind=dp) :: tmp(pcols)
+    real(kind=dp) :: dryvol(pcols), sum_vf(pcols)
+
+    geom_mean_diameter(:,:) = 0.0d0
+    num_fluxes(:,:) = 0.0d0
+    vol_frac(:,:,:) = 0.0d0
+
+    do i_mode = 1,n_emit_mode
+       sigma_emode(i_mode) = sector_modes(i_mode)%sigma_g
+       alnsg  = log(sector_modes(i_mode)%sigma_g)
+       dumfac = exp(4.5d0 * alnsg**2) * pi / 6.0d0
+
+       ! Sum number flux across all num sources for this sector mode
+       do j = 1,sector_modes(i_mode)%n_num
+          call get_srf_emis_sector_flux( &
+               sector_modes(i_mode)%num_species(j), &
+               sector_modes(i_mode)%num_sec_var(j), &
+               lchnk, ncol, tmp)
+          do icol = 1, ncol
+             num_fluxes(icol, i_mode) = num_fluxes(icol, i_mode) + tmp(icol)
+          end do
+       end do
+
+       ! Accumulate dry volume flux per species; unnormalized vol_frac stored in place
+       dryvol(:) = 0.0d0
+       sum_vf(:) = 0.0d0
+       do j = 1,sector_modes(i_mode)%n_mass
+          pmc_idx = sector_modes(i_mode)%mass_pmc_idx(j)
+          if (pmc_idx <= 0) cycle
+          specdens  = aero_data%density(pmc_idx)
+          dummwdens = 1.0d0 / specdens
+          call get_srf_emis_sector_flux( &
+               sector_modes(i_mode)%mass_species(j), &
+               sector_modes(i_mode)%mass_sec_var(j), &
+               lchnk, ncol, tmp)
+          do icol = 1,ncol
+             vol_frac(icol, i_mode, pmc_idx) = max(0.0d0, tmp(icol)) * dummwdens
+             dryvol(icol) = dryvol(icol) + vol_frac(icol, i_mode, pmc_idx)
+             sum_vf(icol) = sum_vf(icol) + vol_frac(icol, i_mode, pmc_idx)
+          end do
+       end do
+
+       do icol = 1,ncol
+          if (num_fluxes(icol, i_mode) > 0.0d0) then
+             geom_mean_diameter(icol, i_mode) = &
+                  (dryvol(icol) / (dumfac * num_fluxes(icol, i_mode)))**third
+          end if
+       end do
+
+       ! Normalize vol_frac.
+       do j = 1,sector_modes(i_mode)%n_mass
+          pmc_idx = sector_modes(i_mode)%mass_pmc_idx(j)
+          if (pmc_idx <= 0) cycle
+          do icol = 1,ncol
+             if (sum_vf(icol) > 0.0d0) then
+                vol_frac(icol, i_mode, pmc_idx) = vol_frac(icol, i_mode, pmc_idx) / sum_vf(icol)
+             end if
+          end do
+       end do
+    end do
+
+  end subroutine compute_partmc_emission_inputs_sector
+
+  ! Sector-resolved version of partmc_interface_e3sm_emissions.
+  subroutine partmc_interface_e3sm_emissions_sector(emissions, geom_mean_diam, &
+       sigma_emode, num_fluxes, vol_frac)
+
+    ! Emissions data structure to pass to PartMC.
+    type(aero_dist_t), intent(inout) :: emissions
+    ! Geometric mean diameter of each sector mode. Not necesarily the same
+    ! as the parent MAM mode diameter.
+    real(kind=dp), intent(in) :: geom_mean_diam(:)   ! (n_emit_mode)
+    ! Geometric standard deviation of each sector mode.
+    real(kind=dp), intent(in) :: sigma_emode(:)      ! (n_emit_mode)
+    ! Number flux of each sector mode.
+    real(kind=dp), intent(in) :: num_fluxes(:)       ! (n_emit_mode)
+    ! Volume fraction of each PartMC species in each sector mode. Indexed by
+    ! PartMC species index, not per-mode species index so no per-mode species
+    ! mapping needed.
+    real(kind=dp), intent(in) :: vol_frac(:,:)       ! (n_emit_mode, n_aero_spec)
+
+    integer :: i_mode, n_aero_spec
+    character(len=AERO_MODE_NAME_LEN) :: mode_name
+    character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
+
+    if (allocated(emissions%mode)) deallocate(emissions%mode)
+    allocate(emissions%mode(n_emit_mode))
+
+    n_aero_spec = aero_data_n_spec(aero_data)
+
+    do i_mode = 1, n_emit_mode
+       mode_name = sector_modes(i_mode)%name
+       emissions%mode(i_mode)%name = mode_name
+       emissions%mode(i_mode)%type = AERO_MODE_TYPE_LOG_NORMAL
+       emissions%mode(i_mode)%source = aero_data_source_by_name(aero_data, mode_name)
+       weight_class_name = mode_name
+       emissions%mode(i_mode)%weight_class = &
+            aero_data_weight_class_by_name(aero_data, weight_class_name)
+       emissions%mode(i_mode)%char_radius = geom_mean_diam(i_mode) / 2.0d0
+       emissions%mode(i_mode)%log10_std_dev_radius = log10(sigma_emode(i_mode))
+       emissions%mode(i_mode)%num_conc = num_fluxes(i_mode)
+
+       allocate(emissions%mode(i_mode)%vol_frac(n_aero_spec))
+       allocate(emissions%mode(i_mode)%vol_frac_std(n_aero_spec))
+       emissions%mode(i_mode)%vol_frac(:) = vol_frac(i_mode, :)
+
+       ! Set these to zero.
+       emissions%mode(i_mode)%vol_frac_std(:) = 0.0d0
+       emissions%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
+       emissions%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
+    end do
+
+  end subroutine partmc_interface_e3sm_emissions_sector
 
 end module mo_partmc_interface
