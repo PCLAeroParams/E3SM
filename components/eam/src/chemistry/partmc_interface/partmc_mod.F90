@@ -1283,6 +1283,29 @@ end subroutine compute_partmc_emission_inputs
           end if
        end do
 
+       ! Natural-source scaffolding: register one pseudo-mode per natural source
+       ! so aero_data knows about the source/weight-class names. Real bin-resolved
+       ! fluxes from seasalt_emis / dust_emis get wired in later.
+       i_out = i_out + 1
+       if (i_pass == 2) then
+          sector_modes(i_out)%name = 'emit_SEASALT'
+          sector_modes(i_out)%sector = 'OCEAN'
+          sector_modes(i_out)%parent_mam_mode = 0
+          sector_modes(i_out)%sigma_g = sigmag_amode(1)  ! placeholder until sampled-mode wiring
+          sector_modes(i_out)%n_mass = 0
+          sector_modes(i_out)%n_num  = 0
+       end if
+
+       i_out = i_out + 1
+       if (i_pass == 2) then
+          sector_modes(i_out)%name = 'emit_DUST'
+          sector_modes(i_out)%sector = 'LAND'
+          sector_modes(i_out)%parent_mam_mode = 0
+          sector_modes(i_out)%sigma_g = sigmag_amode(3)  ! placeholder until sampled-mode wiring
+          sector_modes(i_out)%n_mass = 0
+          sector_modes(i_out)%n_num  = 0
+       end if
+
        if (i_pass == 1) then
           n_emit_mode = i_out
           allocate(sector_modes(n_emit_mode))
