@@ -18,6 +18,7 @@ module dust_model
   public :: dust_readnl
   public :: dust_init
   public :: dust_active
+  public :: dust_dmt_grd
 
   integer, parameter :: dust_nbin = 2
   integer, parameter :: dust_nnum = 2

@@ -69,8 +69,18 @@ module mo_partmc_interface
        integer :: n_num            ! Number of species in the number flux.
        character(len=16), allocatable :: num_species(:)   ! num_aN
        character(len=32), allocatable :: num_sec_var(:)   ! sector var in num file
+       ! Sampled-mode metadata for natural sources (SEASALT, DUST). For
+       ! anthropogenic modes is_sampled stays .false. and these fields are unused.
+       logical :: is_sampled = .false.
+       integer :: n_samples  = 0                       ! number of bins
+       real(kind=dp), allocatable :: sample_radius(:)  ! n_samples+1 bin edge radii (m)
+       integer :: sample_pmc_idx = 0                   ! single composition species index
+                                                       ! (sampled modes have one vol_frac=1 species)
     end type sector_mode_t
     type(sector_mode_t), allocatable :: sector_modes(:)
+    ! Max bins across sampled modes — used to size the per-step
+    ! sample_num_conc buffer in partmc_mam_invoke. Set at catalog build.
+    integer :: max_n_samples = 0
     character, allocatable :: buffer(:)
     integer :: buffer_size, max_buffer_size
     integer :: position
@@ -521,14 +531,22 @@ end subroutine compute_partmc_emission_inputs
   end subroutine partmc_mam_inti
 
   ! Solves a time step dt of PartMC.
-  subroutine partmc_mam_invoke(state, cflx, dt)
+  subroutine partmc_mam_invoke(state, cam_in, cflx, dt)
     use physics_types,    only : physics_state
+    use camsrfexch,       only : cam_in_t
     use cam_history,       only : outfld
     use constituents,     only: pcnst
     use mo_chem_utls,        only : get_spc_ndx
     use physconst,    only: spec_class_aerosol, spec_class_gas
+    use ppgrid,           only : pver
 
     type(physics_state), intent(inout):: state
+    ! cam_in carries sst, ocnfrac, dstflx for the natural-source pathway
+    ! (sea salt, dust). Anthropogenic pathway uses cflx as before.
+    ! TODO: once the natural-source field set is settled, decide whether to
+    ! narrow this to specific args (sst, ocnfrac, dstflx, ...) for an
+    ! explicit contract.
+    type(cam_in_t),      intent(in) :: cam_in
     real(kind=dp),       intent(in) :: cflx(pcols,pcnst)              ! constituent surface flux (kg/m^2/s)
     real(kind=dp),            intent(in)    :: dt              ! time step
 
@@ -547,6 +565,9 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp), allocatable :: sigma_emode(:)
     real(kind=dp), allocatable :: num_fluxes_sec(:,:)
     real(kind=dp), allocatable :: vol_frac_sec(:,:,:)
+    ! Natural-source per-step buffers (sampled-mode pathway)
+    real(kind=dp), allocatable :: u10cubed(:)              ! (pcols)
+    real(kind=dp), allocatable :: sample_num_conc(:,:,:)   ! (pcols, n_emit_mode, max_n_samples)
 
     integer ::  n_samp, n_coag, i_time, n_time, n_emit
     integer :: i_mode
@@ -596,6 +617,14 @@ end subroutine compute_partmc_emission_inputs
        allocate(vol_frac_sec(pcols, n_emit_mode, aero_data_n_spec(aero_data)))
        call compute_partmc_emission_inputs_sector(lchnk, ncol, &
             geom_mean_diameter_sec, sigma_emode, num_fluxes_sec, vol_frac_sec)
+       ! Natural-source pseudo-modes (SEASALT, DUST). Stub fills u10cubed
+       ! and zeros sample_num_conc — real bin-resolved emission goes here.
+       if ( max_n_samples > 0 ) then
+          allocate(u10cubed(pcols))
+          allocate(sample_num_conc(pcols, n_emit_mode, max_n_samples))
+          call compute_partmc_natural_emission_inputs(state, cam_in, ncol, &
+               u10cubed, sample_num_conc)
+       end if
     else
        geom_mean_diameter(:,:) = 0d0
        num_fluxes(:,:) = 0d0
@@ -652,9 +681,18 @@ end subroutine compute_partmc_emission_inputs
           n_emit = 0
           ! Set the PartMC data structure for aerosol emissions
           if (use_sector_emissions) then
-             call partmc_interface_e3sm_emissions_sector(emissions, &
-                  geom_mean_diameter_sec(icol,:), sigma_emode, &
-                  num_fluxes_sec(icol,:), vol_frac_sec(icol,:,:))
+             ! TODO: we can refactor this when we are happy with the mixing of modal
+             ! vs binned emissions.
+             if ( allocated(sample_num_conc) ) then
+                call partmc_interface_e3sm_emissions_sector(emissions, &
+                     geom_mean_diameter_sec(icol,:), sigma_emode, &
+                     num_fluxes_sec(icol,:), vol_frac_sec(icol,:,:), &
+                     sample_num_conc(icol,:,:))
+             else
+                call partmc_interface_e3sm_emissions_sector(emissions, &
+                     geom_mean_diameter_sec(icol,:), sigma_emode, &
+                     num_fluxes_sec(icol,:), vol_frac_sec(icol,:,:))
+             end if
           else
              call partmc_interface_e3sm_emissions(state, emissions, &
                   geom_mean_diameter(icol,:), sigma_mam, num_fluxes(icol,:), volume_fractions(icol,:,:))
@@ -728,6 +766,8 @@ end subroutine compute_partmc_emission_inputs
 
     if (use_sector_emissions) then
        deallocate(geom_mean_diameter_sec, sigma_emode, num_fluxes_sec, vol_frac_sec)
+       if ( allocated(u10cubed) )        deallocate(u10cubed)
+       if ( allocated(sample_num_conc) ) deallocate(sample_num_conc)
     end if
 
   end subroutine partmc_mam_invoke
@@ -1175,17 +1215,83 @@ end subroutine compute_partmc_emission_inputs
 
   end function species_has_sector
 
+  ! Populates a sector_mode_t entry for the SEASALT pseudo-mode.
+  !
+  ! TODO: Currently we are just sampling a single SEASALT mode but we may
+  ! want to add organics later, either as another external mode or interally
+  ! mixed with the sea salt.
+  subroutine build_seasalt_sector_mode(sm)
+    use sslt_sections,    only : nsections, rdry
+    use modal_aero_data,  only : sigmag_amode
+
+    type(sector_mode_t), intent(inout) :: sm
+    integer :: i
+
+    sm%name = 'emit_SEASALT'
+    sm%sector = 'OCEAN'
+    sm%parent_mam_mode = 0
+    sm%sigma_g = sigmag_amode(1) ! unused for sampled mode
+    sm%n_mass = 0 ! unused for sampled mode
+    sm%n_num  = 0 ! unused for sampled mode
+
+    sm%is_sampled = .true.
+    sm%n_samples = nsections
+    ! Any ncl constituent will work here.
+    sm%sample_pmc_idx = pmc_idx_for_constituent('ncl_a1')
+
+    ! The bin center radii in rdry are log-spaced; sample_radius
+    ! holds n_samples+1 bin edges constructed by geometric midpoint of
+    ! consecutive centers, with the first/last edges extrapolated using
+    ! the same log-ratio so PartMC's sampled-mode implementation can be used
+    ! without any modification.
+    allocate(sm%sample_radius(nsections + 1))
+    do i = 2,nsections
+       sm%sample_radius(i) = sqrt(rdry(i-1) * rdry(i))
+    end do
+    ! Extrapolate first and last edges using the same log-ratio as the adjacent bins.
+    sm%sample_radius(1) = rdry(1) * sqrt(rdry(1) / rdry(2))
+    sm%sample_radius(nsections+1) = rdry(nsections) * sqrt(rdry(nsections) / rdry(nsections-1))
+
+  end subroutine build_seasalt_sector_mode
+
+  ! Populates a sector_mode_t entry for the DUST pseudo-mode.
+  subroutine build_dust_sector_mode(sm)
+    use dust_model,       only : dust_nbin, dust_dmt_grd
+    use modal_aero_data,  only : sigmag_amode
+
+    type(sector_mode_t), intent(inout) :: sm
+
+    sm%name = 'emit_DUST'
+    sm%sector = 'LAND'
+    sm%parent_mam_mode = 0
+    sm%sigma_g = sigmag_amode(3) ! unused for sampled mode
+    sm%n_mass = 0 ! unused for sampled mode
+    sm%n_num  = 0 ! unused for sampled mode
+
+    sm%is_sampled = .true.
+    sm%n_samples  = dust_nbin
+    ! Any dst constituent will work here.
+    sm%sample_pmc_idx = pmc_idx_for_constituent('dst_a1')
+
+    ! The dust grid dust_dmt_grd already holds dust_nbin+1 bin edge diameters,
+    ! so sample_radius is just dust_dmt_grd / 2.
+    allocate(sm%sample_radius(dust_nbin + 1))
+    sm%sample_radius(:) = dust_dmt_grd(:) / 2.0d0
+
+  end subroutine build_dust_sector_mode
+
   ! Walks the canonical CMIP6 anthropogenic sector list and builds one
   ! sector_modes entry per (MAM-group, sector) pair that is actually present
   ! in the inventory. Sets module-level n_emit_mode to the discovered count.
   !
-  ! MAM-groups handled (MAM4 + CMIP6):
+  ! Example MAM-groups handled (MAM4 + CMIP6):
   !   * BCPOM  (parent mode 4) — bc_a4 + pom_a4 + num_a4
   !   * SO4a1  (parent mode 1) — so4_a1 + num_a1
   !   * SO4a2  (parent mode 2) — so4_a2 + num_a2
   !
   ! The MAM split between so4_a1/so4_a2 (and the corresponding number)
-  ! is inherited as-is.
+  ! is inherited as-is. SEASALT and DUST natural modes are appended
+  ! to the catalog via build_seasalt_sector_mode / build_dust_sector_mode.
   subroutine partmc_build_sector_catalog()
     use modal_aero_data, only : sigmag_amode
 
@@ -1283,32 +1389,30 @@ end subroutine compute_partmc_emission_inputs
           end if
        end do
 
-       ! Natural-source scaffolding: register one pseudo-mode per natural source
-       ! so aero_data knows about the source/weight-class names. Real bin-resolved
-       ! fluxes from seasalt_emis / dust_emis get wired in later.
+       ! Natural-sources: register modes for natural source so aero_data knows about
+       ! the source/weight-class names. Populate mode sample_radius edges here while
+       ! per-step sample_num_conc is computed by compute_partmc_natural_emission_inputs.
        i_out = i_out + 1
        if (i_pass == 2) then
-          sector_modes(i_out)%name = 'emit_SEASALT'
-          sector_modes(i_out)%sector = 'OCEAN'
-          sector_modes(i_out)%parent_mam_mode = 0
-          sector_modes(i_out)%sigma_g = sigmag_amode(1)  ! placeholder until sampled-mode wiring
-          sector_modes(i_out)%n_mass = 0
-          sector_modes(i_out)%n_num  = 0
+          call build_seasalt_sector_mode(sector_modes(i_out))
        end if
 
        i_out = i_out + 1
        if (i_pass == 2) then
-          sector_modes(i_out)%name = 'emit_DUST'
-          sector_modes(i_out)%sector = 'LAND'
-          sector_modes(i_out)%parent_mam_mode = 0
-          sector_modes(i_out)%sigma_g = sigmag_amode(3)  ! placeholder until sampled-mode wiring
-          sector_modes(i_out)%n_mass = 0
-          sector_modes(i_out)%n_num  = 0
+          call build_dust_sector_mode(sector_modes(i_out))
        end if
 
        if (i_pass == 1) then
           n_emit_mode = i_out
           allocate(sector_modes(n_emit_mode))
+       end if
+    end do
+
+    ! Determine max_n_samples for the sampled mode array to be properly sized
+    max_n_samples = 0
+    do i_out = 1, n_emit_mode
+       if (sector_modes(i_out)%n_samples > max_n_samples) then
+          max_n_samples = sector_modes(i_out)%n_samples
        end if
     end do
 
@@ -1413,11 +1517,102 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine compute_partmc_emission_inputs_sector
 
-  ! Sector-resolved version of partmc_interface_e3sm_emissions.
-  subroutine partmc_interface_e3sm_emissions_sector(emissions, geom_mean_diam, &
-       sigma_emode, num_fluxes, vol_frac)
+  ! Stub: per-step inputs for the natural-source pseudo-modes (SEASALT, DUST).
+  !
+  ! Real implementation (to fill in):
+  !   * Seasalt: fi(:ncol,:nsections) = sslt_sections::fluxes(cam_in%sst, u10cubed, ncol)
+  !              sample_num_conc(icol, seasalt_mode_idx, ibin) =
+  !                fi(icol, ibin) * cam_in%ocnfrac(icol) * seasalt_emis_scale
+  !   * Dust:    derive per-bin number from cam_in%dstflx + soil_erodibility +
+  !              dust_emis_sclfctr + dust_dmt_vwr (mass→number conversion).
+  subroutine compute_partmc_natural_emission_inputs(state, cam_in, ncol, &
+       u10cubed, sample_num_conc)
+    use physics_types, only : physics_state
+    use camsrfexch,    only : cam_in_t
+    use ppgrid,        only : pver
+    use sslt_sections, only : nsections, fluxes
+    use aero_model,    only : seasalt_emis_scale
 
-    ! Emissions data structure to pass to PartMC.
+    ! Current physics state.
+    type(physics_state), intent(in)  :: state
+    ! cam_in: passed to provide access to surface variables.
+    type(cam_in_t), intent(in)  :: cam_in
+    ! Number of columns in chunk.
+    integer, intent(in)  :: ncol
+    ! Wind at 10 m raised to the 3.41 power, indexed by column.
+    real(kind=dp), intent(out) :: u10cubed(:)
+    ! Sampled per-bin number flux indexed by (column, sector_mode, bin).
+    ! Only sea salt and dust modes will have non-zero entries here and
+    ! log-normal modes will ignore this array.
+    real(kind=dp), intent(out) :: sample_num_conc(:,:,:)
+
+    real(kind=dp), parameter :: z0 = 1.0d-4 ! ocean roughness length (m); matches aero_model.F90
+    real(kind=dp) :: u10(pcols)
+    real(kind=dp) :: fi_seasalt(pcols, nsections)
+    integer :: icol, ibin, i_mode
+
+    sample_num_conc(:,:,:) = 0.0d0
+    u10cubed(:) = 0.0d0
+
+    ! Wind at 10 m, raised to the 3.41 power per Gong et al. (1997).
+    ! Same code path as aero_model.F90:2880-2887.
+    do icol = 1,ncol
+       u10(icol) = sqrt(state%u(icol,pver)**2 + state%v(icol,pver)**2)
+       u10cubed(icol) = u10(icol) * log(10.0d0 / z0) / log(state%zm(icol,pver) / z0)
+       u10cubed(icol) = u10cubed(icol)**3.41d0
+    end do
+
+    ! Sea salt: bin-resolved number flux density (m^-2 s^-1) per column from
+    ! Martensson/Monahan-style polynomials in sslt_sections. Multiplied by
+    ! ocean fraction so over-land columns (ocnfrac=0) emit zero naturally.
+    fi_seasalt(:ncol, :) = fluxes(cam_in%sst(:ncol), u10cubed(:ncol), ncol)
+
+    do i_mode = 1, n_emit_mode
+       if ( .not. sector_modes(i_mode)%is_sampled ) cycle
+       if ( trim(sector_modes(i_mode)%name) == 'emit_SEASALT' ) then
+          do icol = 1, ncol
+             do ibin = 1, nsections
+                sample_num_conc(icol, i_mode, ibin) = &
+                     max(0.0d0, fi_seasalt(icol, ibin)) &
+                     * cam_in%ocnfrac(icol) * seasalt_emis_scale
+             end do
+          end do
+
+          if ( masterproc ) then
+             write(102,*) '-----------------------------------------'
+             write(102,*) 'Sea salt sample_num_conc (i_mode=', i_mode, ')'
+             write(102,*) 'seasalt_emis_scale (from aero_model namelist) = ', seasalt_emis_scale
+             write(102,*) 'icol | sst | ocnfrac | u10cubed | total num flux (m^-2 s^-1)'
+             do icol = 1, ncol
+                write(102,*) icol, cam_in%sst(icol), cam_in%ocnfrac(icol), &
+                     u10cubed(icol), sum(sample_num_conc(icol, i_mode, 1:nsections))
+             end do
+             write(102,*) 'Per-bin breakdown (icol = 1):'
+             write(102,*) 'ibin | radius (m) | num_conc (m^-2 s^-1)'
+             do ibin = 1, nsections
+                write(102,*) ibin, sector_modes(i_mode)%sample_radius(ibin), &
+                     sample_num_conc(1, i_mode, ibin)
+             end do
+             write(102,*) '-----------------------------------------'
+          end if
+       end if
+       ! TODO: 'emit_DUST' branch — derive per-bin number from cam_in%dstflx,
+       ! soil_erodibility, dust_emis_sclfctr, and dust_dmt_vwr.
+
+    end do
+
+  end subroutine compute_partmc_natural_emission_inputs
+
+  ! Sector-resolved version of partmc_interface_e3sm_emissions. Branches per
+  ! mode: anthropogenic modes get AERO_MODE_TYPE_LOG_NORMAL with the usual
+  ! (char_radius, sigma, num_conc, vol_frac); natural sampled modes
+  ! (sector_modes(i)%is_sampled == .true.) get AERO_MODE_TYPE_SAMPLED with
+  ! per-bin (sample_radius, sample_num_conc) and a single-species vol_frac.
+  ! Returns the emissions data structure to be passed to PartMC for the current step.
+  subroutine partmc_interface_e3sm_emissions_sector(emissions, geom_mean_diam, &
+       sigma_emode, num_fluxes, vol_frac, sample_num_conc)
+
+    ! Emissions data structure to pass to PartMC for sampling.
     type(aero_dist_t), intent(inout) :: emissions
     ! Geometric mean diameter of each sector mode. Not necesarily the same
     ! as the parent MAM mode diameter.
@@ -1430,8 +1625,11 @@ end subroutine compute_partmc_emission_inputs
     ! PartMC species index, not per-mode species index so no per-mode species
     ! mapping needed.
     real(kind=dp), intent(in) :: vol_frac(:,:)       ! (n_emit_mode, n_aero_spec)
+    ! Per-bin number flux for sampled modes; ignored for log-normal modes.
+    ! Currently may be unallocated when no sampled modes are present.
+    real(kind=dp), intent(in), optional :: sample_num_conc(:,:)  ! (n_emit_mode, max_n_samples)
 
-    integer :: i_mode, n_aero_spec
+    integer :: i_mode, n_aero_spec, n_smp, pmc_idx
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
@@ -1443,23 +1641,48 @@ end subroutine compute_partmc_emission_inputs
     do i_mode = 1, n_emit_mode
        mode_name = sector_modes(i_mode)%name
        emissions%mode(i_mode)%name = mode_name
-       emissions%mode(i_mode)%type = AERO_MODE_TYPE_LOG_NORMAL
        emissions%mode(i_mode)%source = aero_data_source_by_name(aero_data, mode_name)
        weight_class_name = mode_name
        emissions%mode(i_mode)%weight_class = &
             aero_data_weight_class_by_name(aero_data, weight_class_name)
-       emissions%mode(i_mode)%char_radius = geom_mean_diam(i_mode) / 2.0d0
-       emissions%mode(i_mode)%log10_std_dev_radius = log10(sigma_emode(i_mode))
-       emissions%mode(i_mode)%num_conc = num_fluxes(i_mode)
 
        allocate(emissions%mode(i_mode)%vol_frac(n_aero_spec))
        allocate(emissions%mode(i_mode)%vol_frac_std(n_aero_spec))
-       emissions%mode(i_mode)%vol_frac(:) = vol_frac(i_mode, :)
-
-       ! Set these to zero.
        emissions%mode(i_mode)%vol_frac_std(:) = 0.0d0
-       emissions%mode(i_mode)%sample_radius = [ real(kind=dp) :: ]
-       emissions%mode(i_mode)%sample_num_conc = [ real(kind=dp) :: ]
+
+       if ( sector_modes(i_mode)%is_sampled ) then
+          ! Sampled-mode (binned) pathway for natural sources.
+          emissions%mode(i_mode)%type = AERO_MODE_TYPE_SAMPLED
+          ! char_radius and log10_std_dev_radius unused by sampled mode
+          emissions%mode(i_mode)%char_radius = 0.0d0
+          emissions%mode(i_mode)%log10_std_dev_radius = log10(sigma_emode(i_mode))
+
+          n_smp = sector_modes(i_mode)%n_samples
+          emissions%mode(i_mode)%sample_radius   = sector_modes(i_mode)%sample_radius(:)
+          if ( present(sample_num_conc) ) then
+             emissions%mode(i_mode)%sample_num_conc = sample_num_conc(i_mode, 1:n_smp)
+          else
+             emissions%mode(i_mode)%sample_num_conc = spread(0.0d0, 1, n_smp)
+          end if
+          emissions%mode(i_mode)%num_conc = sum(emissions%mode(i_mode)%sample_num_conc)
+
+          ! Single-species composition: put all volume fraction into
+          ! sample_pmc_idx (e.g. ncl_a1 for SEASALT, dst_a1 for DUST).
+          ! TODO: If we add organics to be internally mixed with sea salt,
+          ! we will need to split the vol_frac between sea salt and organics.
+          emissions%mode(i_mode)%vol_frac(:) = 0.0d0
+          pmc_idx = sector_modes(i_mode)%sample_pmc_idx
+          if (pmc_idx > 0) emissions%mode(i_mode)%vol_frac(pmc_idx) = 1.0d0
+       else
+          ! Anthropogenic log-normal pathway.
+          emissions%mode(i_mode)%type = AERO_MODE_TYPE_LOG_NORMAL
+          emissions%mode(i_mode)%char_radius          = geom_mean_diam(i_mode) / 2.0d0
+          emissions%mode(i_mode)%log10_std_dev_radius = log10(sigma_emode(i_mode))
+          emissions%mode(i_mode)%num_conc             = num_fluxes(i_mode)
+          emissions%mode(i_mode)%vol_frac(:)          = vol_frac(i_mode, :)
+          emissions%mode(i_mode)%sample_radius        = [ real(kind=dp) :: ]
+          emissions%mode(i_mode)%sample_num_conc      = [ real(kind=dp) :: ]
+       end if
     end do
 
   end subroutine partmc_interface_e3sm_emissions_sector
