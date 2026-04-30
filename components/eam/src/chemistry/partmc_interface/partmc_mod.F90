@@ -37,7 +37,7 @@ module mo_partmc_interface
     integer :: i_repeat, i_group
     integer :: rand_init
     ! Maximum number of computational particles. Used for output.
-    integer, parameter, public :: n_part_max = 100
+    integer, parameter, public :: n_part_max = 500
     ! Maximum number of aerosol species. Used for output.
     integer, parameter, public :: n_aero_sp_max = 25
 
@@ -310,7 +310,7 @@ end subroutine compute_partmc_emission_inputs
     character(len=AERO_MODE_NAME_LEN) :: mode_name
     character(len=SPEC_LINE_MAX_VAR_LEN) :: weight_class_name
 
-    n_part_ideal = 50.0d0
+    n_part_ideal = 250.0d0
 
     env_state_init%elapsed_time = 0d0
     
@@ -1517,14 +1517,23 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine compute_partmc_emission_inputs_sector
 
-  ! Stub: per-step inputs for the natural-source pseudo-modes (SEASALT, DUST).
+  ! Per-step inputs for the natural-source pseudo-modes (SEASALT, DUST).
   !
-  ! Real implementation (to fill in):
   !   * Seasalt: fi(:ncol,:nsections) = sslt_sections::fluxes(cam_in%sst, u10cubed, ncol)
   !              sample_num_conc(icol, seasalt_mode_idx, ibin) =
   !                fi(icol, ibin) * cam_in%ocnfrac(icol) * seasalt_emis_scale
   !   * Dust:    derive per-bin number from cam_in%dstflx + soil_erodibility +
   !              dust_emis_sclfctr + dust_dmt_vwr (mass→number conversion).
+  !
+  ! TODO:The dust implementation is a first pass and needs improvement.
+  ! The bins are simply too large. The binned approach can be quite attractive when
+  ! we have many bins to resolve the size distribution in a way that we do not need to assume a
+  ! log-normal. For PartMC, we sample a diameters between bin edges uniformally.
+  ! This assumption is not ideal when the bins are large. This likely means that the smaller
+  ! particles will be oversampled in the smallest bin and the larger particles will be
+  ! oversampled in the last bin.
+  ! We may actually be best off with a log-normal approach for dust, or consider adding 
+  ! more bins to properly resolve the size and mass distribution.
   subroutine compute_partmc_natural_emission_inputs(state, cam_in, ncol, &
        u10cubed, sample_num_conc)
     use physics_types, only : physics_state
@@ -1532,6 +1541,11 @@ end subroutine compute_partmc_emission_inputs
     use ppgrid,        only : pver
     use sslt_sections, only : nsections, fluxes
     use aero_model,    only : seasalt_emis_scale
+    use dust_model,    only : dust_nbin, dust_emis_sclfctr, dust_dmt_vwr
+    use shr_dust_mod,  only : dust_emis_scheme
+    use soil_erod_mod, only : soil_erodibility, soil_erod_fact
+    use mo_constants,  only : dust_density
+    use physconst,     only : pi
 
     ! Current physics state.
     type(physics_state), intent(in)  :: state
@@ -1547,12 +1561,16 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp), intent(out) :: sample_num_conc(:,:,:)
 
     real(kind=dp), parameter :: z0 = 1.0d-4 ! ocean roughness length (m); matches aero_model.F90
+    real(kind=dp), parameter :: soil_erod_threshold = 0.1d0  ! matches dust_emis
     real(kind=dp) :: u10(pcols)
     real(kind=dp) :: fi_seasalt(pcols, nsections)
+    real(kind=dp) :: soil_erod_val, mass_flux, x_mton
+    integer :: lchnk
     integer :: icol, ibin, i_mode
 
     sample_num_conc(:,:,:) = 0.0d0
     u10cubed(:) = 0.0d0
+    lchnk = state%lchnk
 
     ! Wind at 10 m, raised to the 3.41 power per Gong et al. (1997).
     ! Same code path as aero_model.F90:2880-2887.
@@ -1596,8 +1614,53 @@ end subroutine compute_partmc_emission_inputs
              write(102,*) '-----------------------------------------'
           end if
        end if
-       ! TODO: 'emit_DUST' branch — derive per-bin number from cam_in%dstflx,
-       ! soil_erodibility, dust_emis_sclfctr, and dust_dmt_vwr.
+       if ( trim(sector_modes(i_mode)%name) == 'emit_DUST' ) then
+          ! Per-column, per-bin dust mass and number flux. Direct port of the
+          ! per-column logic in dust_model.F90:dust_emis (lines 143-171).
+          ! Mass flux uses CLM-supplied dust_flux_in (in cam_in%dstflx),
+          ! rescaled by dust_emis_sclfctr per bin and weighted by soil
+          ! erodibility. Number is derived via x_mton = 6/(pi*rho*Dvwr^3).
+          !
+          ! NOTE: aero_model.F90:2851-2868 caps total dust mass flux against
+          ! dstemislimit and rescales the per-bin distribution if the cap is
+          ! hit. That cap is not applied here — for tightly comparable totals
+          ! against MAM's cflx it should be ported. Cap rarely triggers in
+          ! practice, so deferred for now.
+          do icol = 1, ncol
+             soil_erod_val = soil_erodibility(icol, lchnk)
+             if ( dust_emis_scheme == 2 ) soil_erod_val = 1.0d0
+             if ( soil_erod_val < soil_erod_threshold ) soil_erod_val = 0.0d0
+
+             do ibin = 1, dust_nbin
+                mass_flux = sum(-cam_in%dstflx(icol, :)) * 0.73d0 / 0.87d0 &
+                     * dust_emis_sclfctr(ibin) * soil_erod_val / soil_erod_fact * 1.15d0
+                x_mton = 6.0d0 / (pi * dust_density * dust_dmt_vwr(ibin)**3)
+                sample_num_conc(icol, i_mode, ibin) = mass_flux * x_mton
+             end do
+          end do
+
+          if ( masterproc ) then
+             write(102,*) '-----------------------------------------'
+             write(102,*) 'Dust sample_num_conc (i_mode=', i_mode, ')'
+             write(102,*) 'soil_erod_fact (from soil_erod_mod) = ', soil_erod_fact
+             write(102,*) 'dust_emis_scheme (from shr_dust_mod) = ', dust_emis_scheme
+             write(102,*) 'icol | soil_erod | dst_total | total num flux (m^-2 s^-1)'
+             do icol = 1, ncol
+                soil_erod_val = soil_erodibility(icol, lchnk)
+                if ( dust_emis_scheme == 2 ) soil_erod_val = 1.0d0
+                if ( soil_erod_val < soil_erod_threshold ) soil_erod_val = 0.0d0
+                write(102,*) icol, soil_erod_val, sum(-cam_in%dstflx(icol, :)), &
+                     sum(sample_num_conc(icol, i_mode, 1:dust_nbin))
+             end do
+             write(102,*) 'Per-bin breakdown (icol = 1):'
+             write(102,*) 'ibin | radius edge low (m) | dmt_vwr (m) | num_conc (m^-2 s^-1)'
+             do ibin = 1, dust_nbin
+                write(102,*) ibin, sector_modes(i_mode)%sample_radius(ibin), &
+                     dust_dmt_vwr(ibin), sample_num_conc(1, i_mode, ibin)
+             end do
+             write(102,*) '-----------------------------------------'
+          end if
+       end if
 
     end do
 
