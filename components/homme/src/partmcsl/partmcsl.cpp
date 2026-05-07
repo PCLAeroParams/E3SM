@@ -72,10 +72,13 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     homme::FA3<const homme::Real> area(area_p, n_subcells_per_elem, max_num_elem_neighbors, nelemd);
     homme::FA3<const homme::Real> adv_points(reinterpret_cast<const homme::Real*>(adv_points_p), ndim, nverts,
       n_subcells_per_elem);
-    // output views
+    // output views.  FA4 dim order must match the Fortran allocation
+    // (max_ndest, nlev, n_subcells, nelemd) since FA{N} is LayoutLeft and
+    // dest_cell_idxs/dest_portions are allocated that way in
+    // partmcsl_advection.F90.
     homme::FA3<homme::Int> ndest(ndest_p, nlev, n_subcells_per_elem, nelemd);
-    homme::FA4<homme::Int> dest_idx(dest_idx_p, nlev, max_ndest_cell, n_subcells_per_elem, nelemd);
-    homme::FA4<homme::Real> dest_frac(frac_p, nlev, max_ndest_cell, n_subcells_per_elem, nelemd);
+    homme::FA4<homme::Int> dest_idx(dest_idx_p, max_ndest_cell, nlev, n_subcells_per_elem, nelemd);
+    homme::FA4<homme::Real> dest_frac(frac_p, max_ndest_cell, nlev, n_subcells_per_elem, nelemd);
 
 //     ss << "partmcsl::calc_source_partition received ie " << ie << " nelemd " << nelemd
 //        << " n_elem_neighbors " << n_elem_neighbors << " elem_self_idx " << elem_self_idx

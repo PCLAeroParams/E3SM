@@ -35,7 +35,6 @@ namespace partmcsl {
   template <typename CV1, typename CV2, typename CV3>
   KOKKOS_INLINE_FUNCTION Real tri_area(const CV1& a, const CV2& b,
                                               const CV3& c) {
-    constexpr Real fp_tol = 1e-14;
     const Real s1 = distance(a, b);
     const Real s2 = distance(b, c);
     const Real s3 = distance(c, a);
@@ -43,10 +42,11 @@ namespace partmcsl {
     Real zz = std::tan(0.5 * half_perim) * std::tan(0.5 * (half_perim - s1)) *
               std::tan(0.5 * (half_perim - s2)) *
               std::tan(0.5 * (half_perim - s3));
-    if (std::abs(zz) < fp_tol) {
-      // guard against "negative zero"
-      zz = 0.0;
-    }
+    // L'Huilier's z must be non-negative for a valid spherical triangle.
+    // Clamp negative FP noise from degenerate triangles to zero, but preserve
+    // small positive values -- a thin triangle can have z ~ 1e-15 with a real
+    // area ~ 4*sqrt(z) ~ 1e-7 that we must not discard.
+    if (zz < 0.0) zz = 0.0;
     return 4 * atan(sqrt(zz));
   }
 

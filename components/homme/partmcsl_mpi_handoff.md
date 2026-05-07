@@ -12,8 +12,10 @@ Added:
 
 - `arrival_partition_t` — receiver-side mirror of `source_partition_t`.  Indexed
   by `(d, k, cj, je)` for the *receiving* element je owned by this rank.
-  Stores `nsrc`, `src_gid`, `src_subcell`, `src_frac`.  Foreign-only — local
-  self/neighbor contributions are read directly from `src_partition`.
+  Stores `nsrc`, `src_gid`, `src_subcell`, `src_frac`.  **Full stencil**: holds
+  every record targeting je from every source — foreign, local non-self, and
+  self.  Consumers read inflow as `sum(arrival_partition records)` with no
+  local/foreign branching.
 - Module-level `partmcsl_ghostbuf : GhostBuffer3D_t` and `ghostbuf_initialized`
   flag.  `initGhostBuffer3D` in `partmcsl_init`, `FreeGhostBuffer3D` in
   `partmcsl_finalize`.
@@ -21,7 +23,7 @@ Added:
   `pmcsl_ghost_nhc=20` → `pmcsl_ghost_slot=441` ≥ payload (436).
 - Pack/unpack helpers and the public driver
   `partmcsl_exchange_source_partition(par, ithr, elem, nets, nete)` =
-  pack → `ghost_exchangeVfull` → unpack.
+  pack → `ghost_exchangeVfull` → unpack (+ self-record injection).
 - Three tests (`test_identity_exchange`, `test_topology_coverage`,
   `test_sum_to_one`) called from `partmcsl_test`.
 
@@ -53,6 +55,12 @@ treated as a flat scratchpad (reshape from/to 1D `payload`).  Packing copies
 the same payload to every neighbor slot via `loc2buf`/`putmapP_ghost`; unpack
 reads via `getmapP_ghost` and gets the source GID via `desc%globalID(l)`.
 
+**Self-record injection:** ghost exchange has no self-edge, so a source
+element's records that target itself never appear in any ghost slot.  After
+the neighbor-slot unpack pass, the unpack walks each owned ie's own
+`src_partition` and appends records whose `dest gid == elem(ie)%GlobalID` to
+`arrival_partition`.  This makes the full-stencil contract hold uniformly.
+
 **Batching:** all `nlev` levels exchanged in one call (`nlyr=nlev` in the
 ghost buffer).  Comment in code mentions we may want per-level when the
 particle exchange lands (larger payloads).
@@ -60,22 +68,26 @@ particle exchange lands (larger payloads).
 ## What the three tests assert
 
 1. **identity** (`test_identity_exchange`) — synthesize identity src_partition
-   (each cell→itself, frac=1.0).  Every record has
-   `gid_dest == source_elem%GlobalID`, never matches a foreign je's gid.
-   Assert: `arrival_partition%nsrc` is zero everywhere on every rank.
+   (each cell→itself, frac=1.0).  Foreign and local-non-self neighbor slots
+   contribute nothing (their `gid_dest` never matches je); only the self-record
+   injection produces output.  Assert: per (je, cj, k), exactly one arrival
+   record with `src_gid == elem(je)%GlobalID`, `src_subcell == cj`,
+   `src_frac == 1`.
 
 2. **topology coverage** (`test_topology_coverage`) — synthesize uniform
    src_partition (each ie sends 1/nneighbors(ie) to each neighbor at same
-   subcell).  Per owned je, expected `nsrc(k, cj, je) ==` count of *foreign*
-   neighbors of je.  Each arrival record's `src_subcell == cj`, `src_gid` is
-   in je's neighbor list (and not je itself), `src_frac` ∈ {1/8, 1/9}.
+   subcell, including self).  Per owned je, expected
+   `nsrc(k, cj, je) == fv_mesh%nneighbors(je)` (every neighbor — foreign,
+   local non-self, and self).  Each arrival record's `src_subcell == cj`,
+   `src_gid` is in je's neighbor list (self allowed), `src_frac` ∈ {1/8, 1/9}.
 
 3. **sum-to-one** (`test_sum_to_one`) — same uniform setup.  Per (je, cj, k),
-   `sum(local_src_partition contributions targeting (je,cj,k))` plus
    `sum(arrival_partition fracs)` equals
    `sum over n in je's neighbors of 1/nneighbors(n)`.  For owned n we know
    nneighbors(n) directly; for foreign n we read frac from arrival_partition
    at `(cj=1, k=1, src_gid=n)` (uniform setup guarantees a record exists).
+   No local-side scan of src_partition is needed — full stencil collapses the
+   total inflow into one sum.
 
 Tolerance for sum check: `1e-12`.
 
@@ -122,6 +134,14 @@ log lines `partmcsl_test: identity exchange passed.` /
    nneighbors mis-inferred.  Quick fix: add a 5th word to the payload header
    carrying `nneighbors(ie)` and use it directly instead of inferring from
    `src_frac`.  Bumps payload to 437 words; still fits in 441 slot.
+
+## Status
+
+All four MPI tests pass under the full-stencil contract
+(`check_ij_corners`, `identity`, `topology coverage`, `sum-to-one`).  The
+run then enters the main timestepping loop and hits the pre-existing C++
+errors in `partmcsl.cpp` (item 4 above) at `calc_source_partition`.  Those
+are the next thing to tackle; the MPI work here is independent of them.
 
 ## Where particle-exchange work picks up (deferred)
 
