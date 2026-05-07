@@ -24,6 +24,10 @@ use hybvcoord_mod,        only: hvcoord_t, set_layer_locations
 use kinds,                only: rl=>real_kind, iulog
 use parallel_mod,         only: abortmp
 
+#ifdef HOMME_ENABLE_PARTMCSL
+use partmcsl_advection_mod, only: source_partition_t, src_partition
+#endif 
+
 ! model specific routines - must be provided by each model:
 use element_ops,          only: set_state, set_state_i, copy_state, tests_finalize, set_forcing_rayleigh_friction
 
@@ -45,10 +49,29 @@ real(rl):: zi(nlevp), zm(nlev)                                          ! z coor
 real(rl):: ddn_hyai(nlevp), ddn_hybi(nlevp)                             ! vertical derivativess of hybrid coefficients
 real(rl):: tau
 real(rl):: ztop
+
+#ifdef HOMME_ENABLE_PARTMCSL
+!
+! PhysgridData_t is copied from dcmip16_wrapper.F90, 
+! since dcmip16 already "uses" dcmip12_wrapper.F90.
+!
+type :: PhysgridData_t
+   integer :: nphys
+   real(rl), allocatable :: ps(:,:), zs(:,:), T(:,:,:), uv(:,:,:,:), omega_p(:,:,:), q(:,:,:,:)
+end type PhysgridData_t
+
+type (PhysgridData_t) :: pg_data
+#endif
+
 contains
 
 !_____________________________________________________________________
 subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
+#ifdef HOMME_ENABLE_PARTMCSL  
+  use gllfvremap_mod
+  use perf_mod, only: t_startf, t_stopf
+  use partmcsl_advection_mod, only : src_partition
+#endif
 
   ! 3d deformational flow
 
@@ -68,9 +91,16 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       ztop    = 12000.d0,     &                                         ! model top (m)
       H       = Rd * T0 / g                                             ! scale height
 
-  integer :: i,j,k,ie                                                   ! loop indices
+  integer :: i,j,k,ie, icol                                           ! loop indices
   real(rl):: lon,lat                                                    ! pointwise coordiantes
+#ifdef HOMME_ENABLE_PARTMCSL  
+  real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,q(8),dp,eta_dot,dp_dn 
+  real(rl):: oldq(4) 
+  integer :: qi, isrc     
+  integer, parameter :: nphys = 2, ncol=4
+#else 
   real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,q(4),dp,eta_dot,dp_dn       ! pointwise field values
+#endif  
 
   ! set analytic vertical coordinates at t=0
   if(.not. initialized) then
@@ -79,6 +109,20 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     hvcoord%etai  = exp(-zi/H)                                          ! set eta levels from z
     call set_hybrid_coefficients(hvcoord,hybrid, hvcoord%etai(1),1.0_rl)! set hybrid A and B from eta levels
     call set_layer_locations(hvcoord, .true., hybrid%masterthread)
+#ifdef HOMME_ENABLE_PARTMCSL
+    if (qsize < 8) then
+      if (hybrid%masterthread) write(iulog,*) 'partmcsl dcmip2012 test 1-1: 3d deformational flow requires qsize >= 8'
+      call abortmp('qsize set too small for dcmip test case')
+    endif
+    if (hybrid%ithr == 0) then
+       pg_data%nphys = nphys
+       call gfr_init(hybrid%par, elem, nphys, boost_pg1=.true.)
+       allocate(pg_data%ps(ncol,nelemd), pg_data%zs(ncol,nelemd), pg_data%T(ncol,nlev,nelemd), &
+            pg_data%omega_p(ncol,nlev,nelemd), pg_data%uv(ncol,2,nlev,nelemd), &
+            pg_data%q(ncol,nlev,qsize,nelemd))
+    endif
+    !$omp barrier
+#endif    
     initialized = .true.
   endif
 
@@ -91,8 +135,33 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 
       dp = pressure_thickness(ps,k,hvcoord)
       call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
+      
+#ifdef HOMME_ENABLE_PARTMCSL      
+      if (time == 0) then
+        ! at t = 0, copy tracers q1-q4 into tracers q5-q8, then remap to physics to 
+        ! initialize the physics grid test tracers
+        call t_startf('gfr_dyn_to_fv_phys')
+        q(5:8) = q(1:4)
+        call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
+        call gfr_dyn_to_fv_phys(hybrid, nt, hvcoord, elem, nets, nete, &
+             pg_data%ps, pg_data%zs, pg_data%T, pg_data%uv, pg_data%omega_p, pg_data%q)
+        call t_stopf('gfr_dyn_to_fv_phys')
+      else
+        ! for t>0: use source partition (computed during time step) 
+        ! and advect tracers q5-q8 on the physics grid,
+        ! then remap to dynamics to compare with tracers q1-q4.
+        do icol=1,4
+          oldq = pg_data%q(icol, k, 5:8, ie)
+          pg_data%q(icol, k, 5:8, ie) = 0.0_rl          
+          do isrc=1,src_partition%ndest(k, icol, ie)
+            pg_data%q(icol, k, 5:8, ie) = pg_data%q(icol, k, 5:8, ie)
+!              + src_partition%
+          enddo
+        enddo
+      endif
+#else
       if(time==0) call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
-
+#endif
   enddo; enddo; enddo; enddo
 
   ! set prescribed state at level interfaces
@@ -833,8 +902,6 @@ subroutine set_tracers(q,nq, dp,i,j,k,lat,lon,elem)
      elem%state%Q(i,j,k,qi)    = 1
      elem%state%Qdp (i,j,k,qi,:) = elem%state%Q(i,j,k,qi)*dp
   enddo
-
-
 end subroutine
 
 subroutine dcmip2012_print_test1_conv_results(test_case, elem, tl, hvcoord, par, subnum)
@@ -852,4 +919,5 @@ subroutine dcmip2012_print_test1_conv_results(test_case, elem, tl, hvcoord, par,
 end subroutine dcmip2012_print_test1_conv_results
 
 end module dcmip12_wrapper
+
 #endif

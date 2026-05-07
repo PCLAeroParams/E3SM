@@ -59,7 +59,7 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
   Real* frac_p) {
     using siqk::slice;
 
-    constexpr Real area_tol = 1e-3;
+    constexpr Real area_tol = 1e-6;
 
     slmm_assert(src_partition);
     slmm_throw_if(!src_partition, "src_partition not allocated.");
@@ -110,14 +110,21 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     slmm_throw_if( ncells_in_mesh != n_elem_neighbors * n_subcells_per_elem, "unexpected number of cells in mesh.");
 
     const Int start_cell_idx = (src_partition->elem_self_idx(ie) - 1) * n_subcells_per_elem;
-    slmm_assert( (start_cell_idx >=0 and start_cell_idx < mesh_area.extent(0) - n_subcells_per_elem ) );
+    slmm_assert( (start_cell_idx >=0 and start_cell_idx <= mesh_area.extent(0) - n_subcells_per_elem ) );
     for (int adv_cell_idx = 0; adv_cell_idx<n_subcells_per_elem; ++adv_cell_idx) {
       // loop over advected subcells of elem(ie)
 
-      const Real src_area = mesh_area(start_cell_idx + adv_cell_idx);
+//       const Real src_area = mesh_area(start_cell_idx + adv_cell_idx);
+      const Real src_area = tri_area(Kokkos::subview(adv_points, Kokkos::ALL, 0, adv_cell_idx),
+                                     Kokkos::subview(adv_points, Kokkos::ALL, 1, adv_cell_idx),
+                                     Kokkos::subview(adv_points, Kokkos::ALL, 2, adv_cell_idx)) +
+                            tri_area(Kokkos::subview(adv_points, Kokkos::ALL, 0, adv_cell_idx),
+                                     Kokkos::subview(adv_points, Kokkos::ALL, 2, adv_cell_idx),
+                                     Kokkos::subview(adv_points, Kokkos::ALL, 3, adv_cell_idx));
+
       slmm_assert(src_area > 0);
 //       ss.str("");
-//       ss << "elem " << ie << " subcell " << adv_cell_idx << " starts has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
+//       ss << "elem " << ie << " subcell " << adv_cell_idx << " has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
 //       std::cout << ss.str();
       int n_elem_overlap = 0;
       for (int cell_idx=0; cell_idx<ncells_in_mesh; ++cell_idx) {
@@ -152,9 +159,22 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
           Real bc[3];
           barycenter(bc, verts_out, n_overlap_verts);
           Real ov_area = 0.0;
+          Real bc_ov_area = 0.0;
           for (int i=0; i<n_overlap_verts; ++i) {
-            ov_area += tri_area(slice(verts_out, i), slice(verts_out, (i+1)%n_overlap_verts), bc);
+            bc_ov_area += tri_area(slice(verts_out, i), slice(verts_out, (i+1)%n_overlap_verts), bc);
           }
+          for (int i=0; i<n_overlap_verts-2; ++i) {
+            ov_area += tri_area(slice(verts_out, 0), slice(verts_out, i+1), slice(verts_out, i+2));
+          }
+          if (std::abs(bc_ov_area - ov_area) > 1e-13) {
+            ss.str("");
+            ss << "partmcsl calc_source_partition error: overlap area mismatch "
+               << "barycenter method = " << bc_ov_area << " triangulation method = " << ov_area
+               << " abs(diff) = " << std::abs(bc_ov_area - ov_area) << "\n";
+
+          }
+          slmm_throw_if(std::abs(bc_ov_area - ov_area) > 1e-13 , ss.str());
+//           slmm_assert( std::abs(bc_ov_area - ov_area) < 1e-13);
 
           const Int dest_insert_idx = ndest(lev_idx, adv_cell_idx, ie)++;
           dest_idx(dest_insert_idx, lev_idx, adv_cell_idx, ie) = cell_idx;
@@ -165,13 +185,21 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
       for (int j=0; j<ndest(lev_idx, adv_cell_idx, ie); ++j) {
         total_frac += dest_frac(j, lev_idx, adv_cell_idx, ie);
       }
+
+      /**
+        assert that the sum of all overlap subregions's areas =
+        the advected cell's original area
+      */
       std::ostringstream ss;
       if (std::abs(total_frac - 1.0) > area_tol) {
+        ss.str("");
         ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n";
         ss << "   at ie = " << ie << " of " << nelemd << " src_area = " << src_area <<
         " found " << n_elem_overlap << " overlap vertices in this elem" << "\n";
       }
       slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, ss.str());
+//       slmm_assert(std::abs(total_frac - 1.0) < area_tol);
+
     } // loop over advected subcells of elem(ie)
   }
 

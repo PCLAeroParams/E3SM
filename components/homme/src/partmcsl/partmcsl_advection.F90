@@ -27,6 +27,7 @@ module partmcsl_advection_mod
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
   public :: partmcsl_step_forward
   public :: partmcsl_exchange_source_partition
+  public :: source_partition_t, src_partition
   
   
                         
@@ -132,8 +133,8 @@ module partmcsl_advection_mod
   integer, parameter :: pmcsl_ghost_slot = pmcsl_ghost_np * (pmcsl_ghost_nhc + 1)
 
   type(local_fv_mesh_t), private :: fv_mesh
-  type(source_partition_t), private :: src_partition
-  type(arrival_partition_t), private :: arrival_partition
+  type(source_partition_t) :: src_partition
+  type(arrival_partition_t) :: arrival_partition
   type(GhostBuffer3D_t), private :: partmcsl_ghostbuf
   logical, private :: ghostbuf_initialized = .false.
   

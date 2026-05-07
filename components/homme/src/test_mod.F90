@@ -216,6 +216,7 @@ subroutine compute_test_forcing(elem,hybrid,hvcoord,nt,ntQ,dt,nets,nete,tl)
   use dcmip12_wrapper, only:  dcmip2012_test2_x_forcing
   use held_suarez_mod, only: hs_forcing
   use control_mod,     only: ftype
+
   implicit none
   type(element_t),  intent(inout) :: elem(:)                            ! element array
   type(hybrid_t),   intent(in)    :: hybrid                             ! hybrid parallel structure
