@@ -156,28 +156,12 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
         slmm_assert(n_overlap_verts <= max_num_intersections);
         n_elem_overlap += n_overlap_verts;
         if (n_overlap_verts > 0) {
-          // advected subcell aci has an intersection with static cell ci
-          // compute area of overlap region
-          // TODO: Replace the barycenter area computation with a simple triangulation
-          Real bc[3];
-          barycenter(bc, verts_out, n_overlap_verts);
+          // advected subcell aci has an intersection with static cell ci;
+          // compute area of overlap region by triangulating from vertex 0.
           Real ov_area = 0.0;
-          Real bc_ov_area = 0.0;
-          for (int i=0; i<n_overlap_verts; ++i) {
-            bc_ov_area += tri_area(slice(verts_out, i), slice(verts_out, (i+1)%n_overlap_verts), bc);
-          }
           for (int i=0; i<n_overlap_verts-2; ++i) {
             ov_area += tri_area(slice(verts_out, 0), slice(verts_out, i+1), slice(verts_out, i+2));
           }
-          if (std::abs(bc_ov_area - ov_area) > 1e-13) {
-            ss.str("");
-            ss << "partmcsl calc_source_partition error: overlap area mismatch "
-               << "barycenter method = " << bc_ov_area << " triangulation method = " << ov_area
-               << " abs(diff) = " << std::abs(bc_ov_area - ov_area) << "\n";
-
-          }
-          slmm_throw_if(std::abs(bc_ov_area - ov_area) > 1e-13 , ss.str());
-//           slmm_assert( std::abs(bc_ov_area - ov_area) < 1e-13);
 
           const Int dest_insert_idx = ndest(lev_idx, adv_cell_idx, ie)++;
           dest_idx(dest_insert_idx, lev_idx, adv_cell_idx, ie) = cell_idx;
