@@ -398,13 +398,15 @@ subroutine fill_uniform_src_partition()
 end subroutine fill_uniform_src_partition
 
 ! Test 1: identity exchange.
-!   With every source cell mapping 100% to itself, every packed record has
-!   gid_dest == source_elem%GlobalID, which never matches any *foreign* je's
-!   GlobalID.  After exchange + unpack the arrival_partition must be empty.
+!   With every source cell mapping 100% to itself, foreign and local-non-self
+!   neighbor slots contribute nothing (their gid_dest never matches je).  Only
+!   self-arrivals appear: exactly one record per (je, cj, k) with src_gid ==
+!   je%GlobalID, src_subcell == cj, src_frac == 1.
 subroutine test_identity_exchange(par, elem)
   type(parallel_t), intent(in) :: par
   type(element_t),  intent(in) :: elem(:)
   integer :: ie, ci, k
+  real(real_kind), parameter :: id_tol = 1e-12_real_kind
 
   call fill_identity_src_partition()
   call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
@@ -412,10 +414,20 @@ subroutine test_identity_exchange(par, elem)
   do ie = 1, nelemd
     do k = 1, nlev
       do ci = 1, nphys_cell_per_elem
-        if (arrival_partition%nsrc(k, ci, ie) /= 0) then
-          write(iulog,*) 'test_identity_exchange: nonzero arrivals at ie=', ie, &
-              ' cj=', ci, ' k=', k, ' nsrc=', arrival_partition%nsrc(k, ci, ie)
-          call abortmp('test_identity_exchange failed: foreign records present.')
+        if (arrival_partition%nsrc(k, ci, ie) /= 1) then
+          write(iulog,*) 'test_identity_exchange: arrival count mismatch at ie=', ie, &
+              ' cj=', ci, ' k=', k, ' got=', arrival_partition%nsrc(k, ci, ie), &
+              ' expected= 1'
+          call abortmp('test_identity_exchange failed: arrival count.')
+        endif
+        if (arrival_partition%src_gid(1, k, ci, ie) /= elem(ie)%GlobalID) then
+          call abortmp('test_identity_exchange failed: src_gid not self.')
+        endif
+        if (arrival_partition%src_subcell(1, k, ci, ie) /= ci) then
+          call abortmp('test_identity_exchange failed: src_subcell /= cj.')
+        endif
+        if (abs(arrival_partition%src_frac(1, k, ci, ie) - one) > id_tol) then
+          call abortmp('test_identity_exchange failed: src_frac /= 1.')
         endif
       enddo
     enddo
@@ -443,15 +455,17 @@ end function lookup_owned_nneighbors
 
 ! Test 2: topology coverage.
 !   Use the uniform synthetic src_partition (each ie sends 1/nneighbors(ie) to
-!   each of its neighbors at the same subcell).  After exchange, every owned je
-!   must receive exactly one record per *foreign* neighbor of je at every (cj, k).
-!   Each record's source-subcell equals cj (the receiver subcell), src_gid is
-!   one of je's neighbor GlobalIDs, and src_frac is 1/nneighbors(src_gid).
+!   each of its neighbors at the same subcell, including self).  After exchange,
+!   under the full-stencil contract, every owned je must receive exactly one
+!   record per neighbor of je (foreign, local non-self, and self) at every
+!   (cj, k).  Each record's source-subcell equals cj (the receiver subcell),
+!   src_gid is one of je's neighbor GlobalIDs, and src_frac is 1/nneighbors(src_gid)
+!   which on a cubed-sphere mesh is either 1/8 (corner element) or 1/9 (interior).
 subroutine test_topology_coverage(par, elem)
   type(parallel_t), intent(in) :: par
   type(element_t),  intent(in) :: elem(:)
-  integer :: je, in, ci, k, d, expected_foreign_count
-  integer :: nbr_gid, src_nbr_count
+  integer :: je, in, ci, k, d, expected_count
+  integer :: nbr_gid
   logical :: found_in_neighbors
   real(real_kind) :: expected_frac
 
@@ -459,22 +473,14 @@ subroutine test_topology_coverage(par, elem)
   call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
 
   do je = 1, nelemd
-    ! Count je's foreign (non-self, non-locally-owned) neighbors.
-    expected_foreign_count = 0
-    do in = 1, fv_mesh%nneighbors(je)
-      if (in == fv_mesh%my_elem_local_idx(je)) cycle
-      nbr_gid = fv_mesh%elem_global_id(1, in, je)
-      if (lookup_owned_nneighbors(elem, nbr_gid) == -1) then
-        expected_foreign_count = expected_foreign_count + 1
-      endif
-    enddo
+    expected_count = fv_mesh%nneighbors(je)
 
     do k = 1, nlev
       do ci = 1, nphys_cell_per_elem
-        if (arrival_partition%nsrc(k, ci, je) /= expected_foreign_count) then
+        if (arrival_partition%nsrc(k, ci, je) /= expected_count) then
           write(iulog,*) 'test_topology_coverage: arrival count mismatch at je=', je, &
               ' cj=', ci, ' k=', k, ' got=', arrival_partition%nsrc(k, ci, je), &
-              ' expected=', expected_foreign_count
+              ' expected=', expected_count
           call abortmp('test_topology_coverage failed: arrival count.')
         endif
         do d = 1, arrival_partition%nsrc(k, ci, je)
@@ -482,11 +488,8 @@ subroutine test_topology_coverage(par, elem)
           if (arrival_partition%src_subcell(d, k, ci, je) /= ci) then
             call abortmp('test_topology_coverage failed: unexpected src_subcell.')
           endif
-          ! source gid must appear in je's neighbor list (and not be je itself)
+          ! source gid must appear in je's neighbor list (self is allowed)
           nbr_gid = arrival_partition%src_gid(d, k, ci, je)
-          if (nbr_gid == elem(je)%GlobalID) then
-            call abortmp('test_topology_coverage failed: self gid in arrivals.')
-          endif
           found_in_neighbors = .false.
           do in = 1, fv_mesh%nneighbors(je)
             if (fv_mesh%elem_global_id(1, in, je) == nbr_gid) then
@@ -497,9 +500,7 @@ subroutine test_topology_coverage(par, elem)
           if (.not. found_in_neighbors) then
             call abortmp('test_topology_coverage failed: src_gid not a neighbor of je.')
           endif
-          ! frac comes from a foreign source whose nneighbors we don't know locally;
-          ! but we know it has to match either 8 or 9 since partmcsl asserts that
-          ! at init.  Verify frac is one of the two valid values.
+          ! frac must be 1/nneighbors(source) -- either 1/8 (corner) or 1/9 (interior).
           expected_frac = one / 9.0_real_kind
           if (abs(arrival_partition%src_frac(d, k, ci, je) - expected_frac) > 1e-10_real_kind &
               .and. abs(arrival_partition%src_frac(d, k, ci, je) - one/8.0_real_kind) &
@@ -531,19 +532,19 @@ end subroutine test_topology_coverage
 subroutine test_sum_to_one(par, elem)
   type(parallel_t), intent(in) :: par
   type(element_t),  intent(in) :: elem(:)
-  integer :: je, ie_local, in, ci_src, ci, k, d, in_dest, ci_dest
+  integer :: je, in, ci, k, d
   integer :: src_gid, owned_n
-  real(real_kind) :: sum_local, sum_remote, sum_total, expected
+  real(real_kind) :: sum_total, expected
   real(real_kind), parameter :: sum_tol = 1e-12_real_kind
 
   call fill_uniform_src_partition()
   call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
 
   do je = 1, nelemd
-    ! Compute expected sum_local + sum_remote at every (cj, k) of je.  In the
-    ! uniform synthetic, every neighbor n of je contributes exactly one record
-    ! per (cj, k), with frac = 1/nneighbors(n).  For foreign n we trust the
-    ! 1/8 or 1/9 invariant established at init.
+    ! Build expected total inflow at (je, cj, k) under the uniform synthetic:
+    ! each neighbor n of je (including self) contributes exactly one record per
+    ! (cj, k) with frac = 1/nneighbors(n).  For owned n we read nneighbors
+    ! directly; for foreign n we read frac from arrival_partition at (cj=1,k=1).
     expected = zero
     do in = 1, fv_mesh%nneighbors(je)
       src_gid = fv_mesh%elem_global_id(1, in, je)
@@ -551,8 +552,6 @@ subroutine test_sum_to_one(par, elem)
       if (owned_n > 0) then
         expected = expected + one / real(owned_n, real_kind)
       else
-        ! foreign neighbor: read its frac from the arrival_partition record
-        ! that was packed by it.  Look it up at (cj=1, k=1, src_gid=src_gid).
         do d = 1, arrival_partition%nsrc(1, 1, je)
           if (arrival_partition%src_gid(d, 1, 1, je) == src_gid) then
             expected = expected + arrival_partition%src_frac(d, 1, 1, je)
@@ -564,34 +563,16 @@ subroutine test_sum_to_one(par, elem)
 
     do k = 1, nlev
       do ci = 1, nphys_cell_per_elem
-        ! Local contributions: walk every locally-owned source and accumulate
-        ! the fractions of records that target (je, cj=ci) at level k.
-        sum_local = zero
-        do ie_local = 1, nelemd
-          do ci_src = 1, nphys_cell_per_elem
-            do d = 1, src_partition%ndest(k, ci_src, ie_local)
-              call decode_local_dest_idx( &
-                  src_partition%dest_cell_idxs(d, k, ci_src, ie_local), &
-                  in_dest, ci_dest)
-              if (fv_mesh%elem_global_id(1, in_dest, ie_local) == elem(je)%GlobalID &
-                  .and. ci_dest == ci) then
-                sum_local = sum_local + src_partition%dest_portions(d, k, ci_src, ie_local)
-              endif
-            enddo
-          enddo
-        enddo
-
-        ! Remote contributions from arrival_partition.
-        sum_remote = zero
+        ! Full stencil: total inflow at (je, cj, k) is the sum over every
+        ! arrival_partition record (foreign + local non-self + self).
+        sum_total = zero
         do d = 1, arrival_partition%nsrc(k, ci, je)
-          sum_remote = sum_remote + arrival_partition%src_frac(d, k, ci, je)
+          sum_total = sum_total + arrival_partition%src_frac(d, k, ci, je)
         enddo
 
-        sum_total = sum_local + sum_remote
         if (abs(sum_total - expected) > sum_tol) then
           write(iulog,*) 'test_sum_to_one: mismatch at je=', je, ' cj=', ci, &
-              ' k=', k, ' total=', sum_total, ' expected=', expected, &
-              ' local=', sum_local, ' remote=', sum_remote
+              ' k=', k, ' total=', sum_total, ' expected=', expected
           call abortmp('test_sum_to_one failed: total /= expected.')
         endif
       enddo
@@ -809,15 +790,18 @@ end subroutine
     enddo
   end subroutine partmcsl_pack_source_partition
 
-  ! Unpack ghost buffer into arrival_partition.  For each owned je, walk je's neighbor
-  ! slots; for each slot decode the foreign source element's payload and keep only
-  ! records whose gid_dest equals je%GlobalID (these are records that target je).
+  ! Unpack ghost buffer into arrival_partition.  Full stencil: for each owned je
+  ! we collect every record that targets je from every source -- foreign, local
+  ! non-self, and self.  Foreign + local non-self come through je's neighbor
+  ! ghost slots; self records don't traverse ghost exchange (no self-edge) and
+  ! are injected directly from src_partition at the end.
   subroutine partmcsl_unpack_arrival_partition(elem, nets, nete)
     type(element_t), intent(in) :: elem(:)
     integer,         intent(in) :: nets, nete
     real(real_kind) :: payload(pmcsl_ghost_slot)
     integer :: ie, k, l_local, l, is, ci, d, base
     integer :: src_elem_gid, src_ndest, gid_dest, ci_dest, cj, slot
+    integer :: in_dest
     real(real_kind) :: frac
 
     do ie = nets, nete
@@ -853,6 +837,31 @@ end subroutine
                 arrival_partition%src_frac(slot, k, cj, ie)    = frac
               endif
             enddo
+          enddo
+        enddo
+      enddo
+    enddo
+
+    ! Self-arrivals: walk each owned ie's own src_partition and inject records
+    ! whose destination is ie itself.  These would otherwise be missed because
+    ! ghost exchange has no self-edge.
+    do ie = nets, nete
+      do k = 1, nlev
+        do ci = 1, nphys_cell_per_elem
+          do d = 1, src_partition%ndest(k, ci, ie)
+            call decode_local_dest_idx( &
+                src_partition%dest_cell_idxs(d, k, ci, ie), in_dest, ci_dest)
+            if (fv_mesh%elem_global_id(1, in_dest, ie) /= elem(ie)%GlobalID) cycle
+            cj   = ci_dest
+            slot = arrival_partition%nsrc(k, cj, ie) + 1
+            if (slot > max_ndest) then
+              call abortmp('partmcsl unpack: arrival_partition slot overflow (self).')
+            endif
+            arrival_partition%nsrc(k, cj, ie)              = slot
+            arrival_partition%src_gid(slot, k, cj, ie)     = elem(ie)%GlobalID
+            arrival_partition%src_subcell(slot, k, cj, ie) = ci
+            arrival_partition%src_frac(slot, k, cj, ie)    = &
+                src_partition%dest_portions(d, k, ci, ie)
           enddo
         enddo
       enddo
