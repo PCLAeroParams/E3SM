@@ -1,0 +1,4 @@
+- This project develops a transport scheme to support a stochastic aerosol model in the E3SM atmosphere component.
+- The code is the standalone dynamical core, HOMME.  It uses cubic spectral elements in the hortizontal, coupled to 2nd order finite difference methods in the vertical columns.
+- The cubic GLL elements are split into 2x2 columns of cell-averged (like a finite volume method) for a coarser "physics grid."
+- The transport scheme must define what portion of cell i arrives at cell j over a timestep, for all i.

@@ -6,11 +6,14 @@ module partmcsl_advection_mod
 !   Terms like "elem" and "element" refer to Homme's spectral elements and related data structures.
 !   Terms such as "cell" and "fv" refer to the physics grid's finite volume cells.
 
+  use bndry_mod, only          : ghost_exchangeVfull
   use coordinate_systems_mod, only : cartesian3D_t, cartesian2D_t, &
                   spherical_polar_t, distance, change_coordinates, sphere_tri_area
   use control_mod, only: cubed_sphere_map, dt_tracer_factor, dt_remap_factor
   use cube_mod, only: ref2sphere
   use dimensions_mod, only     : nlev, np, nelemd
+  use edge_mod, only           : initGhostBuffer3D, FreeGhostBuffer3D
+  use edgetype_mod, only       : GhostBuffer3D_t
   use element_mod, only        : element_t
   use kinds, only              : real_kind, iulog
   use parallel_mod, only       : parallel_t, abortmp
@@ -20,9 +23,10 @@ module partmcsl_advection_mod
 
   implicit none
   private
-  
+
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
   public :: partmcsl_step_forward
+  public :: partmcsl_exchange_source_partition
   
   
                         
@@ -73,7 +77,27 @@ module partmcsl_advection_mod
   type :: source_partition_t
     integer, allocatable :: ndest(:,:,:) ! (nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: dest_cell_idxs(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
-    real(real_kind), allocatable :: dest_portions(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)    
+    real(real_kind), allocatable :: dest_portions(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+  end type
+
+  !=====================================
+  ! PartMCSL arrival partition (foreign contributions received from other ranks)
+  !
+  ! For each element je owned by this rank, for each destination subcell cj of je
+  ! and each vertical level k:
+  !   nsrc(k, cj, je) is the number of foreign-source records contributing to (je, cj, k).
+  !   src_gid(d, k, cj, je) is the GlobalID of the source element on the remote rank.
+  !   src_subcell(d, k, cj, je) is the source subcell within that foreign element [1..4].
+  !   src_frac(d, k, cj, je) is the fraction of the source cell delivered into (je, cj).
+  !
+  ! Self-contributions and contributions from other locally-owned source elements are
+  ! NOT stored here; they are read directly from src_partition by tests/consumers that
+  ! need the local+remote sum.
+  type :: arrival_partition_t
+    integer, allocatable :: nsrc(:,:,:)             ! (nlev, nphys_cell_per_elem, nelemd)
+    integer, allocatable :: src_gid(:,:,:,:)        ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    integer, allocatable :: src_subcell(:,:,:,:)    ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
   
 !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
@@ -90,10 +114,28 @@ module partmcsl_advection_mod
                                  one = 1.0_real_kind, &
                                 half = 0.5_real_kind
   real(kind=real_kind), parameter :: fp_tol = 1e-14_real_kind
-  
-  
+
+  !=====================================
+  ! Ghost-exchange buffer sizing for source-partition exchange.
+  !
+  ! Per element, per vertical level, the packed payload is:
+  !   nphys_cell_per_elem ndest values (one per source subcell), cast int->real
+  !   nphys_cell_per_elem * max_ndest * 3 record words: (gid_dest, subcell_dest, frac)
+  !
+  ! Records beyond ndest(k,ci,ie) are zero-padded; ndest is the trusted count at unpack.
+  ! Choose ghost-buffer dims (np, nhc) so np*(nhc+1) >= pmcsl_payload_words.
+  integer, parameter :: pmcsl_payload_words = nphys_cell_per_elem &
+                          + nphys_cell_per_elem * max_ndest * 3
+  ! For default constants (4, 36) -> 4 + 432 = 436. (21, 20) gives 21*21 = 441.
+  integer, parameter :: pmcsl_ghost_np  = 21
+  integer, parameter :: pmcsl_ghost_nhc = 20
+  integer, parameter :: pmcsl_ghost_slot = pmcsl_ghost_np * (pmcsl_ghost_nhc + 1)
+
   type(local_fv_mesh_t), private :: fv_mesh
   type(source_partition_t), private :: src_partition
+  type(arrival_partition_t), private :: arrival_partition
+  type(GhostBuffer3D_t), private :: partmcsl_ghostbuf
+  logical, private :: ghostbuf_initialized = .false.
   
   contains
 
@@ -170,6 +212,27 @@ subroutine partmcsl_init(par, elem)
     src_partition%ndest = 0
     src_partition%dest_cell_idxs = -1
     src_partition%dest_portions = zero
+
+    !--------------------------------------------
+    ! allocate memory for arrival partition (foreign contributions in)
+    !--------------------------------------------
+    allocate(arrival_partition%nsrc(nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_gid(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_subcell(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_frac(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    arrival_partition%nsrc = 0
+    arrival_partition%src_gid = -1
+    arrival_partition%src_subcell = -1
+    arrival_partition%src_frac = zero
+
+    !--------------------------------------------
+    ! allocate the ghost-exchange buffer used for source-partition communication
+    !--------------------------------------------
+    if (pmcsl_ghost_slot < pmcsl_payload_words) then
+      call abortmp('partmcsl: pmcsl_ghost_slot too small for payload; recompute (np, nhc).')
+    endif
+    call initGhostBuffer3D(partmcsl_ghostbuf, nlev, pmcsl_ghost_np, pmcsl_ghost_nhc)
+    ghostbuf_initialized = .true.
     
     !--------------------------------------------
     ! construct local mesh for each local element
@@ -270,15 +333,281 @@ end subroutine
 subroutine partmcsl_test(par, elem)
   type(parallel_t), intent(in) :: par
   type(element_t), intent(in) :: elem(:)
-  
+
   if (do_checks) then
       call check_ij_corners(par, elem)
       call partmcsl_check_elem_area(par, elem)
+      call test_identity_exchange(par, elem)
+      call test_topology_coverage(par, elem)
+      call test_sum_to_one(par, elem)
   endif
   if (par%masterproc) then
       write(iulog,*) "partmcsl_test: all tests passed."
   endif
-end subroutine   
+end subroutine
+
+! Reset src_partition to all-zero / no destinations (every test starts from a
+! known-empty state so leftover entries don't contaminate the next test).
+subroutine reset_src_partition()
+  src_partition%ndest          = 0
+  src_partition%dest_cell_idxs = -1
+  src_partition%dest_portions  = zero
+end subroutine reset_src_partition
+
+! Populate src_partition with the identity mapping: each (ie, ci, k) sends 100%
+! to its own (ie, ci, k).  dest_cell_idxs uses the flat 0-based index produced
+! by the C++ side: (in_self - 1) * nphys_cell_per_elem + (ci - 1).
+subroutine fill_identity_src_partition()
+  integer :: ie, ci, k, in_self
+  call reset_src_partition()
+  do ie = 1, nelemd
+    in_self = fv_mesh%my_elem_local_idx(ie)
+    do k = 1, nlev
+      do ci = 1, nphys_cell_per_elem
+        src_partition%ndest(k, ci, ie) = 1
+        src_partition%dest_cell_idxs(1, k, ci, ie) = &
+            (in_self - 1) * nphys_cell_per_elem + (ci - 1)
+        src_partition%dest_portions(1, k, ci, ie) = one
+      enddo
+    enddo
+  enddo
+end subroutine fill_identity_src_partition
+
+! Populate src_partition so that each (ie, ci, k) distributes evenly across all
+! nneighbors(ie) of its neighbors (including self), targeting the same subcell
+! ci in each neighbor.  Each fraction equals 1/nneighbors(ie); per-source totals
+! sum exactly to 1.0.
+subroutine fill_uniform_src_partition()
+  integer :: ie, ci, k, in
+  real(real_kind) :: frac
+  call reset_src_partition()
+  do ie = 1, nelemd
+    frac = one / real(fv_mesh%nneighbors(ie), real_kind)
+    do k = 1, nlev
+      do ci = 1, nphys_cell_per_elem
+        src_partition%ndest(k, ci, ie) = fv_mesh%nneighbors(ie)
+        do in = 1, fv_mesh%nneighbors(ie)
+          src_partition%dest_cell_idxs(in, k, ci, ie) = &
+              (in - 1) * nphys_cell_per_elem + (ci - 1)
+          src_partition%dest_portions(in, k, ci, ie) = frac
+        enddo
+      enddo
+    enddo
+  enddo
+end subroutine fill_uniform_src_partition
+
+! Test 1: identity exchange.
+!   With every source cell mapping 100% to itself, every packed record has
+!   gid_dest == source_elem%GlobalID, which never matches any *foreign* je's
+!   GlobalID.  After exchange + unpack the arrival_partition must be empty.
+subroutine test_identity_exchange(par, elem)
+  type(parallel_t), intent(in) :: par
+  type(element_t),  intent(in) :: elem(:)
+  integer :: ie, ci, k
+
+  call fill_identity_src_partition()
+  call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
+
+  do ie = 1, nelemd
+    do k = 1, nlev
+      do ci = 1, nphys_cell_per_elem
+        if (arrival_partition%nsrc(k, ci, ie) /= 0) then
+          write(iulog,*) 'test_identity_exchange: nonzero arrivals at ie=', ie, &
+              ' cj=', ci, ' k=', k, ' nsrc=', arrival_partition%nsrc(k, ci, ie)
+          call abortmp('test_identity_exchange failed: foreign records present.')
+        endif
+      enddo
+    enddo
+  enddo
+
+  if (par%masterproc) then
+    write(iulog,*) 'partmcsl_test: identity exchange passed.'
+  endif
+end subroutine test_identity_exchange
+
+! Look up nneighbors of an element by global id, scanning locally-owned elements.
+! Returns -1 if the gid is not on this rank.
+function lookup_owned_nneighbors(elem, gid) result (n)
+  type(element_t), intent(in) :: elem(:)
+  integer,         intent(in) :: gid
+  integer :: n, ie_local
+  n = -1
+  do ie_local = 1, nelemd
+    if (elem(ie_local)%GlobalID == gid) then
+      n = fv_mesh%nneighbors(ie_local)
+      return
+    endif
+  enddo
+end function lookup_owned_nneighbors
+
+! Test 2: topology coverage.
+!   Use the uniform synthetic src_partition (each ie sends 1/nneighbors(ie) to
+!   each of its neighbors at the same subcell).  After exchange, every owned je
+!   must receive exactly one record per *foreign* neighbor of je at every (cj, k).
+!   Each record's source-subcell equals cj (the receiver subcell), src_gid is
+!   one of je's neighbor GlobalIDs, and src_frac is 1/nneighbors(src_gid).
+subroutine test_topology_coverage(par, elem)
+  type(parallel_t), intent(in) :: par
+  type(element_t),  intent(in) :: elem(:)
+  integer :: je, in, ci, k, d, expected_foreign_count
+  integer :: nbr_gid, src_nbr_count
+  logical :: found_in_neighbors
+  real(real_kind) :: expected_frac
+
+  call fill_uniform_src_partition()
+  call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
+
+  do je = 1, nelemd
+    ! Count je's foreign (non-self, non-locally-owned) neighbors.
+    expected_foreign_count = 0
+    do in = 1, fv_mesh%nneighbors(je)
+      if (in == fv_mesh%my_elem_local_idx(je)) cycle
+      nbr_gid = fv_mesh%elem_global_id(1, in, je)
+      if (lookup_owned_nneighbors(elem, nbr_gid) == -1) then
+        expected_foreign_count = expected_foreign_count + 1
+      endif
+    enddo
+
+    do k = 1, nlev
+      do ci = 1, nphys_cell_per_elem
+        if (arrival_partition%nsrc(k, ci, je) /= expected_foreign_count) then
+          write(iulog,*) 'test_topology_coverage: arrival count mismatch at je=', je, &
+              ' cj=', ci, ' k=', k, ' got=', arrival_partition%nsrc(k, ci, je), &
+              ' expected=', expected_foreign_count
+          call abortmp('test_topology_coverage failed: arrival count.')
+        endif
+        do d = 1, arrival_partition%nsrc(k, ci, je)
+          ! source subcell must equal the receiver subcell ci
+          if (arrival_partition%src_subcell(d, k, ci, je) /= ci) then
+            call abortmp('test_topology_coverage failed: unexpected src_subcell.')
+          endif
+          ! source gid must appear in je's neighbor list (and not be je itself)
+          nbr_gid = arrival_partition%src_gid(d, k, ci, je)
+          if (nbr_gid == elem(je)%GlobalID) then
+            call abortmp('test_topology_coverage failed: self gid in arrivals.')
+          endif
+          found_in_neighbors = .false.
+          do in = 1, fv_mesh%nneighbors(je)
+            if (fv_mesh%elem_global_id(1, in, je) == nbr_gid) then
+              found_in_neighbors = .true.
+              exit
+            endif
+          enddo
+          if (.not. found_in_neighbors) then
+            call abortmp('test_topology_coverage failed: src_gid not a neighbor of je.')
+          endif
+          ! frac comes from a foreign source whose nneighbors we don't know locally;
+          ! but we know it has to match either 8 or 9 since partmcsl asserts that
+          ! at init.  Verify frac is one of the two valid values.
+          expected_frac = one / 9.0_real_kind
+          if (abs(arrival_partition%src_frac(d, k, ci, je) - expected_frac) > 1e-10_real_kind &
+              .and. abs(arrival_partition%src_frac(d, k, ci, je) - one/8.0_real_kind) &
+                    > 1e-10_real_kind) then
+            write(iulog,*) 'test_topology_coverage: bad frac=', &
+                arrival_partition%src_frac(d, k, ci, je)
+            call abortmp('test_topology_coverage failed: src_frac not 1/8 or 1/9.')
+          endif
+        enddo
+      enddo
+    enddo
+  enddo
+
+  if (par%masterproc) then
+    write(iulog,*) 'partmcsl_test: topology coverage passed.'
+  endif
+end subroutine test_topology_coverage
+
+! Test 3: conservation / sum-to-one with cross traffic.
+!   Use the uniform synthetic src_partition.  At every owned (je, cj, k) the
+!   total contribution (local-self + local-other + remote) should equal
+!   sum over n in je's neighbors of 1/nneighbors(n).  We can compute this exact
+!   expected value when every neighbor of je is locally owned (so we know its
+!   nneighbors directly); when je has any foreign neighbor we still know the
+!   count but not nneighbors of those foreign neighbors, so we accept either
+!   1/8 or 1/9 contributions for foreign records and verify the resulting sum
+!   is consistent with one of the admissible totals.  In all-9-neighbor
+!   stencils the expected total is exactly 1.0.
+subroutine test_sum_to_one(par, elem)
+  type(parallel_t), intent(in) :: par
+  type(element_t),  intent(in) :: elem(:)
+  integer :: je, ie_local, in, ci_src, ci, k, d, in_dest, ci_dest
+  integer :: src_gid, owned_n
+  real(real_kind) :: sum_local, sum_remote, sum_total, expected
+  real(real_kind), parameter :: sum_tol = 1e-12_real_kind
+
+  call fill_uniform_src_partition()
+  call partmcsl_exchange_source_partition(par, 0, elem, 1, nelemd)
+
+  do je = 1, nelemd
+    ! Compute expected sum_local + sum_remote at every (cj, k) of je.  In the
+    ! uniform synthetic, every neighbor n of je contributes exactly one record
+    ! per (cj, k), with frac = 1/nneighbors(n).  For foreign n we trust the
+    ! 1/8 or 1/9 invariant established at init.
+    expected = zero
+    do in = 1, fv_mesh%nneighbors(je)
+      src_gid = fv_mesh%elem_global_id(1, in, je)
+      owned_n = lookup_owned_nneighbors(elem, src_gid)
+      if (owned_n > 0) then
+        expected = expected + one / real(owned_n, real_kind)
+      else
+        ! foreign neighbor: read its frac from the arrival_partition record
+        ! that was packed by it.  Look it up at (cj=1, k=1, src_gid=src_gid).
+        do d = 1, arrival_partition%nsrc(1, 1, je)
+          if (arrival_partition%src_gid(d, 1, 1, je) == src_gid) then
+            expected = expected + arrival_partition%src_frac(d, 1, 1, je)
+            exit
+          endif
+        enddo
+      endif
+    enddo
+
+    do k = 1, nlev
+      do ci = 1, nphys_cell_per_elem
+        ! Local contributions: walk every locally-owned source and accumulate
+        ! the fractions of records that target (je, cj=ci) at level k.
+        sum_local = zero
+        do ie_local = 1, nelemd
+          do ci_src = 1, nphys_cell_per_elem
+            do d = 1, src_partition%ndest(k, ci_src, ie_local)
+              call decode_local_dest_idx( &
+                  src_partition%dest_cell_idxs(d, k, ci_src, ie_local), &
+                  in_dest, ci_dest)
+              if (fv_mesh%elem_global_id(1, in_dest, ie_local) == elem(je)%GlobalID &
+                  .and. ci_dest == ci) then
+                sum_local = sum_local + src_partition%dest_portions(d, k, ci_src, ie_local)
+              endif
+            enddo
+          enddo
+        enddo
+
+        ! Remote contributions from arrival_partition.
+        sum_remote = zero
+        do d = 1, arrival_partition%nsrc(k, ci, je)
+          sum_remote = sum_remote + arrival_partition%src_frac(d, k, ci, je)
+        enddo
+
+        sum_total = sum_local + sum_remote
+        if (abs(sum_total - expected) > sum_tol) then
+          write(iulog,*) 'test_sum_to_one: mismatch at je=', je, ' cj=', ci, &
+              ' k=', k, ' total=', sum_total, ' expected=', expected, &
+              ' local=', sum_local, ' remote=', sum_remote
+          call abortmp('test_sum_to_one failed: total /= expected.')
+        endif
+      enddo
+    enddo
+  enddo
+
+  ! Reset to a clean state so we don't leave synthetic data in place.
+  call reset_src_partition()
+  arrival_partition%nsrc        = 0
+  arrival_partition%src_gid     = -1
+  arrival_partition%src_subcell = -1
+  arrival_partition%src_frac    = zero
+
+  if (par%masterproc) then
+    write(iulog,*) 'partmcsl_test: sum-to-one passed.'
+  endif
+end subroutine test_sum_to_one
   
 subroutine check_ij_corners(par, elem)
     type(parallel_t), intent(in) :: par
@@ -382,7 +711,7 @@ end subroutine
   end subroutine
   
   subroutine partmcsl_finalize()
-    if (allocated(fv_mesh%points)) then 
+    if (allocated(fv_mesh%points)) then
       deallocate(fv_mesh%points)
 !       deallocate(fv_mesh%elem_local_id)
       deallocate(fv_mesh%elem_global_id)
@@ -397,10 +726,152 @@ end subroutine
       deallocate(src_partition%dest_portions)
       deallocate(src_partition%ndest)
     endif
+    if (allocated(arrival_partition%nsrc)) then
+      deallocate(arrival_partition%nsrc)
+      deallocate(arrival_partition%src_gid)
+      deallocate(arrival_partition%src_subcell)
+      deallocate(arrival_partition%src_frac)
+    endif
+    if (ghostbuf_initialized) then
+      call FreeGhostBuffer3D(partmcsl_ghostbuf)
+      ghostbuf_initialized = .false.
+    endif
   end subroutine partmcsl_finalize
 
   
   
+  ! Decode a flat C++ cell index (0-based) from src_partition%dest_cell_idxs into
+  ! a 1-based (in_dest, ci_dest) pair.  See partmcsl.hpp:init_local_mesh_if_needed
+  ! for the layout: cell_idx = nbr_idx * n_subcells_per_elem + subcell_idx (0-based).
+  subroutine decode_local_dest_idx(local_dest_idx, in_dest, ci_dest)
+    integer, intent(in)  :: local_dest_idx
+    integer, intent(out) :: in_dest, ci_dest
+    integer :: nbr0, sub0
+    nbr0    = local_dest_idx / nphys_cell_per_elem
+    sub0    = mod(local_dest_idx, nphys_cell_per_elem)
+    in_dest = nbr0 + 1
+    ci_dest = sub0 + 1
+  end subroutine decode_local_dest_idx
+
+  ! Pack the per-element, per-level payload for src_partition into a flat 1D buffer
+  ! sized pmcsl_ghost_slot.  Layout (1-based indices):
+  !   payload(1..nphys_cell_per_elem)              : ndest(k, ci=1..4, ie) cast to real
+  !   payload(nphys_cell_per_elem + (ci-1)*max_ndest*3 + (d-1)*3 + 1) : gid_dest
+  !   payload(... + 2)                             : ci_dest (subcell in destination element)
+  !   payload(... + 3)                             : dest_portions (fraction)
+  ! Trailing entries (d > ndest) are zero.
+  subroutine pack_payload(ie, k, payload)
+    integer,              intent(in)  :: ie, k
+    real(real_kind),      intent(out) :: payload(pmcsl_ghost_slot)
+    integer :: ci, d, base, in_dest, ci_dest, gid_dest, ndest_here
+
+    payload = zero
+
+    do ci = 1, nphys_cell_per_elem
+      payload(ci) = real(src_partition%ndest(k, ci, ie), real_kind)
+    enddo
+
+    do ci = 1, nphys_cell_per_elem
+      base = nphys_cell_per_elem + (ci - 1) * max_ndest * 3
+      ndest_here = src_partition%ndest(k, ci, ie)
+      do d = 1, ndest_here
+        call decode_local_dest_idx(src_partition%dest_cell_idxs(d, k, ci, ie), &
+                                   in_dest, ci_dest)
+        gid_dest = fv_mesh%elem_global_id(1, in_dest, ie)
+        if (real(gid_dest, real_kind) > 2.0_real_kind**52) then
+          call abortmp('partmcsl pack_payload: gid exceeds safe int->real cast range.')
+        endif
+        payload(base + (d-1)*3 + 1) = real(gid_dest, real_kind)
+        payload(base + (d-1)*3 + 2) = real(ci_dest,  real_kind)
+        payload(base + (d-1)*3 + 3) = src_partition%dest_portions(d, k, ci, ie)
+      enddo
+    enddo
+  end subroutine pack_payload
+
+  ! Pack one ie's payload into every neighbor slot in the ghost buffer for every level.
+  subroutine partmcsl_pack_source_partition(elem, nets, nete)
+    type(element_t), intent(in) :: elem(:)
+    integer,         intent(in) :: nets, nete
+    real(real_kind) :: payload(pmcsl_ghost_slot)
+    integer :: ie, k, l_local, l, is
+
+    do ie = nets, nete
+      do k = 1, nlev
+        call pack_payload(ie, k, payload)
+        do l_local = 1, elem(ie)%desc%actual_neigh_edges
+          l  = elem(ie)%desc%loc2buf(l_local)
+          is = elem(ie)%desc%putmapP_ghost(l)
+          partmcsl_ghostbuf%buf(:, :, k, is) = &
+              reshape(payload, (/ pmcsl_ghost_np, pmcsl_ghost_nhc + 1 /))
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_pack_source_partition
+
+  ! Unpack ghost buffer into arrival_partition.  For each owned je, walk je's neighbor
+  ! slots; for each slot decode the foreign source element's payload and keep only
+  ! records whose gid_dest equals je%GlobalID (these are records that target je).
+  subroutine partmcsl_unpack_arrival_partition(elem, nets, nete)
+    type(element_t), intent(in) :: elem(:)
+    integer,         intent(in) :: nets, nete
+    real(real_kind) :: payload(pmcsl_ghost_slot)
+    integer :: ie, k, l_local, l, is, ci, d, base
+    integer :: src_elem_gid, src_ndest, gid_dest, ci_dest, cj, slot
+    real(real_kind) :: frac
+
+    do ie = nets, nete
+      arrival_partition%nsrc(:, :, ie) = 0
+    enddo
+
+    do ie = nets, nete
+      do l_local = 1, elem(ie)%desc%actual_neigh_edges
+        l  = elem(ie)%desc%loc2buf(l_local)
+        is = elem(ie)%desc%getmapP_ghost(l)
+        src_elem_gid = elem(ie)%desc%globalID(l)
+
+        do k = 1, nlev
+          payload = reshape(partmcsl_ghostbuf%buf(:, :, k, is), &
+                            (/ pmcsl_ghost_slot /))
+          do ci = 1, nphys_cell_per_elem
+            src_ndest = nint(payload(ci))
+            base = nphys_cell_per_elem + (ci - 1) * max_ndest * 3
+            do d = 1, src_ndest
+              gid_dest = nint(payload(base + (d-1)*3 + 1))
+              ci_dest  = nint(payload(base + (d-1)*3 + 2))
+              frac     =     payload(base + (d-1)*3 + 3)
+
+              if (gid_dest == elem(ie)%GlobalID) then
+                cj = ci_dest
+                slot = arrival_partition%nsrc(k, cj, ie) + 1
+                if (slot > max_ndest) then
+                  call abortmp('partmcsl unpack: arrival_partition slot overflow.')
+                endif
+                arrival_partition%nsrc(k, cj, ie)            = slot
+                arrival_partition%src_gid(slot, k, cj, ie)     = src_elem_gid
+                arrival_partition%src_subcell(slot, k, cj, ie) = ci
+                arrival_partition%src_frac(slot, k, cj, ie)    = frac
+              endif
+            enddo
+          enddo
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_unpack_arrival_partition
+
+  ! Top-level driver: pack -> ghost_exchangeVfull -> unpack.
+  subroutine partmcsl_exchange_source_partition(par, ithr, elem, nets, nete)
+    type(parallel_t), intent(in)    :: par
+    integer,          intent(in)    :: ithr, nets, nete
+    type(element_t),  intent(in)    :: elem(:)
+
+    if (.not. ghostbuf_initialized) then
+      call abortmp('partmcsl_exchange_source_partition: ghost buffer not initialized.')
+    endif
+    call partmcsl_pack_source_partition(elem, nets, nete)
+    call ghost_exchangeVfull(par, ithr, partmcsl_ghostbuf)
+    call partmcsl_unpack_arrival_partition(elem, nets, nete)
+  end subroutine partmcsl_exchange_source_partition
+
   subroutine partmcsl_step_forward(elem, dt, nets, nete, tl)
     use iso_c_binding, only: c_int
     type (element_t)     , intent(inout) :: elem(:)
