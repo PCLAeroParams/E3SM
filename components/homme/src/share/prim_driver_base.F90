@@ -1922,19 +1922,23 @@ contains
 #ifdef HOMME_ENABLE_PARTMCSL
     use partmcsl_advection_mod, only : partmcsl_finalize
 #endif
+    use parallel_mod, only : iam
     implicit none
 
 #ifdef TRILINOS
     call noxfinish()
 #endif
 
+    if (iam == 0) print *, "prim_finalize: before compose_finalize"
 #ifdef HOMME_ENABLE_COMPOSE
     if (transport_alg > 0) call compose_finalize()
 #endif
 
+    if (iam == 0) print *, "prim_finalize: before partmcsl_finalize"
 #ifdef HOMME_ENABLE_PARTMCSL
     call partmcsl_finalize()
 #endif
+    if (iam == 0) print *, "prim_finalize: done"
     ! ==========================
     ! end of the hybrid program
     ! ==========================
