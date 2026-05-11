@@ -52,7 +52,7 @@ real(rl):: ztop
 
 #ifdef HOMME_ENABLE_PARTMCSL
 !
-! PhysgridData_t is copied from dcmip16_wrapper.F90, 
+! PhysgridData_t is copied from dcmip16_wrapper.F90,
 ! since dcmip16 already "uses" dcmip12_wrapper.F90.
 !
 type :: PhysgridData_t
@@ -61,6 +61,12 @@ type :: PhysgridData_t
 end type PhysgridData_t
 
 type (PhysgridData_t) :: pg_data
+
+! Zero-valued T and uv tendency buffers, sized to match pg_data.  Reused on
+! every call to gfr_fv_phys_to_dyn from dcmip2012_test1_1_phys_to_dyn so that
+! the remap-back affects only Q (the partmcsl-advected tracers).
+real(rl), allocatable :: pg_zero_T(:,:,:)        ! (ncol, nlev, nelemd)
+real(rl), allocatable :: pg_zero_uv(:,:,:,:)     ! (ncol, 2, nlev, nelemd)
 #endif
 
 contains
@@ -91,16 +97,15 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       ztop    = 12000.d0,     &                                         ! model top (m)
       H       = Rd * T0 / g                                             ! scale height
 
-  integer :: i,j,k,ie, icol                                           ! loop indices
+  integer :: i,j,k,ie                                                   ! loop indices
   real(rl):: lon,lat                                                    ! pointwise coordiantes
-#ifdef HOMME_ENABLE_PARTMCSL  
-  real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,q(8),dp,eta_dot,dp_dn 
-  real(rl):: oldq(4) 
-  integer :: qi, isrc     
+  real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,dp,eta_dot,dp_dn
+#ifdef HOMME_ENABLE_PARTMCSL
+  real(rl):: q(8)
   integer, parameter :: nphys = 2, ncol=4
-#else 
-  real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,q(4),dp,eta_dot,dp_dn       ! pointwise field values
-#endif  
+#else
+  real(rl):: q(4) ! pointwise field values
+#endif
 
   ! set analytic vertical coordinates at t=0
   if(.not. initialized) then
@@ -116,10 +121,13 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     endif
     if (hybrid%ithr == 0) then
        pg_data%nphys = nphys
-       call gfr_init(hybrid%par, elem, nphys, boost_pg1=.true.)
+       call gfr_init(hybrid%par, elem, nphys)
        allocate(pg_data%ps(ncol,nelemd), pg_data%zs(ncol,nelemd), pg_data%T(ncol,nlev,nelemd), &
             pg_data%omega_p(ncol,nlev,nelemd), pg_data%uv(ncol,2,nlev,nelemd), &
             pg_data%q(ncol,nlev,qsize,nelemd))
+       allocate(pg_zero_T(ncol,nlev,nelemd), pg_zero_uv(ncol,2,nlev,nelemd))
+       pg_zero_T = 0.0_rl
+       pg_zero_uv = 0.0_rl
     endif
     !$omp barrier
 #endif    
@@ -135,34 +143,29 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 
       dp = pressure_thickness(ps,k,hvcoord)
       call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
-      
-#ifdef HOMME_ENABLE_PARTMCSL      
+
+#ifdef HOMME_ENABLE_PARTMCSL
       if (time == 0) then
-        ! at t = 0, copy tracers q1-q4 into tracers q5-q8, then remap to physics to 
-        ! initialize the physics grid test tracers
-        call t_startf('gfr_dyn_to_fv_phys')
+        ! Mirror q1..q4 into q5..q8 so the partmcsl-advected physgrid tracers
+        ! share the IC of the dynamics-grid tracers.
         q(5:8) = q(1:4)
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
-        call gfr_dyn_to_fv_phys(hybrid, nt, hvcoord, elem, nets, nete, &
-             pg_data%ps, pg_data%zs, pg_data%T, pg_data%uv, pg_data%omega_p, pg_data%q)
-        call t_stopf('gfr_dyn_to_fv_phys')
-      else
-        ! for t>0: use source partition (computed during time step) 
-        ! and advect tracers q5-q8 on the physics grid,
-        ! then remap to dynamics to compare with tracers q1-q4.
-        do icol=1,4
-          oldq = pg_data%q(icol, k, 5:8, ie)
-          pg_data%q(icol, k, 5:8, ie) = 0.0_rl          
-          do isrc=1,src_partition%ndest(k, icol, ie)
-            pg_data%q(icol, k, 5:8, ie) = pg_data%q(icol, k, 5:8, ie)
-!              + src_partition%
-          enddo
-        enddo
       endif
 #else
       if(time==0) call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
 #endif
   enddo; enddo; enddo; enddo
+
+#ifdef HOMME_ENABLE_PARTMCSL
+  if (time == 0) then
+    ! Initialize physgrid tracer state once from the GLL IC.  Subsequent
+    ! evolution of pg_data%q will be done by partmcsl (TODO).
+    call t_startf('gfr_dyn_to_fv_phys')
+    call gfr_dyn_to_fv_phys(hybrid, nt, hvcoord, elem, nets, nete, &
+         pg_data%ps, pg_data%zs, pg_data%T, pg_data%uv, pg_data%omega_p, pg_data%q)
+    call t_stopf('gfr_dyn_to_fv_phys')
+  endif
+#endif
 
   ! set prescribed state at level interfaces
   do ie = nets,nete; do k=1,nlevp; do j=1,np; do i=1,np
@@ -917,6 +920,46 @@ subroutine dcmip2012_print_test1_conv_results(test_case, elem, tl, hvcoord, par,
 
   call test1_conv_print_results(test_case, elem, tl, hvcoord, par, subnum)
 end subroutine dcmip2012_print_test1_conv_results
+
+#ifdef HOMME_ENABLE_PARTMCSL
+subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
+  ! Map the partmcsl-advected physgrid tracer state pg_data%q back onto the
+  ! GLL grid so the existing NetCDF writer (which reads elem%state%Q) can
+  ! emit Q5..Q8.  No-op if pg_data%q has not been allocated -- i.e. this
+  ! test was not the active one.
+  use gllfvremap_mod, only: gfr_fv_phys_to_dyn, gfr_f2g_dss
+  use time_mod,       only: TimeLevel_t
+  use perf_mod,       only: t_startf, t_stopf
+
+  type(element_t),   intent(inout) :: elem(:)
+  type(hybrid_t),    intent(in)    :: hybrid
+  type(hvcoord_t),   intent(in)    :: hvcoord
+  type(TimeLevel_t), intent(in)    :: tl
+  integer,           intent(in)    :: nets, nete
+
+  integer :: ie, qi
+
+  if (.not. allocated(pg_data%q)) return
+
+  call t_startf('partmcsl_phys_to_dyn')
+  ! gfr_fv_phys_to_dyn writes the new state into derived%FQ.  T and uv are
+  ! treated as tendencies; we pass zero buffers so FT and FM are unchanged
+  ! in any meaningful sense for this prescribed-wind test.
+  call gfr_fv_phys_to_dyn(hybrid, tl%n0, hvcoord, elem, nets, nete, &
+       pg_zero_T, pg_zero_uv, pg_data%q)
+  call gfr_f2g_dss(hybrid, elem, nets, nete)
+
+  ! Copy the partmcsl-advected slots back into state%Q so the NetCDF writer
+  ! sees them.  Slots 1..4 are the dynamics-grid tracers; we leave those as
+  ! the SL transport produced them.
+  do ie = nets, nete
+    do qi = 5, qsize
+      elem(ie)%state%Q(:,:,:,qi) = elem(ie)%derived%FQ(:,:,:,qi)
+    end do
+  end do
+  call t_stopf('partmcsl_phys_to_dyn')
+end subroutine dcmip2012_test1_1_phys_to_dyn
+#endif
 
 end module dcmip12_wrapper
 

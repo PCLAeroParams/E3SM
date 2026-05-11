@@ -139,9 +139,41 @@ log lines `partmcsl_test: identity exchange passed.` /
 
 All four MPI tests pass under the full-stencil contract
 (`check_ij_corners`, `identity`, `topology coverage`, `sum-to-one`).  The
-run then enters the main timestepping loop and hits the pre-existing C++
-errors in `partmcsl.cpp` (item 4 above) at `calc_source_partition`.  Those
-are the next thing to tackle; the MPI work here is independent of them.
+dcmip2012 test case advances through the main timestepping loop without
+the C++ assertion failures from item 4 -- those were addressed by:
+
+- `partmcsl_sphere_geometry.hpp` `tri_area`: replaced the `|zz| < 1e-14`
+  guard with a `zz < 0` clamp.  The old guard zeroed legitimate small areas
+  on thin spherical triangles (z ~ 1e-15 → real area ~ 4*sqrt(z) ~ 1e-7),
+  which made the barycenter fan undercount and broke total-frac sums.
+- `partmcsl.cpp` FA4 dim order for `dest_idx`/`dest_frac` corrected to
+  `(max_ndest_cell, nlev, n_subcells_per_elem, nelemd)` to match the
+  Fortran allocation under LayoutLeft.
+- `partmcsl.cpp` overlap-area cross-check (barycenter fan vs vertex
+  triangulation) removed.  After the `tri_area` fix the two methods agree
+  to FP precision; the cross-check was a debug-time sanity gate (`TODO`
+  was already in the code) and the triangulation method is the production
+  path.
+
+## Follow-ups (deferred)
+
+1. **Runtime is very slow** for the dcmip2012 test case.  Hot path is
+   `calc_source_partition` (per ie, per level, per advected subcell, per
+   static mesh cell -> `clip_against_poly` + `tri_area` fan).  Likely
+   wins: move the `verts_in` copy out of the inner loop (TODO already
+   noted at `partmcsl.cpp` clip_against_poly scope), batch levels, port
+   the per-cell intersection work onto the device.  Profile first to
+   confirm where the time actually goes.
+
+2. **NetCDF output is missing the doubled tracer fields** needed to
+   validate the new transport scheme against the dcmip2012 reference.
+   The standalone-Homme NetCDF wiring writes the dycore Q/Q2/Q3/Q4 from
+   the GLL grid -- we need physics-grid (pg2) tracers advected by
+   PartMCsl to be written too.  See `partmcsl_readme.md` "Test case
+   driver" section: pattern to follow is `dcmip16_wrapper.F90` + its
+   `PhysgridData_t` (used by `dcmip2016_test1_pg2`); build a similar
+   container for the four PartMCsl-advected tracers and hook it into
+   the I/O path so we can check convergence.
 
 ## Where particle-exchange work picks up (deferred)
 

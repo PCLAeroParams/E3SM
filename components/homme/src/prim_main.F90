@@ -31,7 +31,12 @@ program prim_main
 #endif
 #ifdef HOMME_ENABLE_PARTMCSL
   use partmcsl_advection_mod, only: partmcsl_test
-#endif 
+#ifndef CAM
+  ! dcmip12_wrapper is the standalone-Homme test-case driver; it is not
+  ! compiled under CAM.  The remap-back call below is therefore CAM-guarded.
+  use dcmip12_wrapper,        only: dcmip2012_test1_1_phys_to_dyn
+#endif
+#endif
   use test_mod,         only: print_test_results
 
 #ifdef PIO_INTERP
@@ -265,6 +270,13 @@ program prim_main
         call prim_run_subcycle(elem, hybrid,nets,nete, tstep, .false., tl, hvcoord,1)
         call t_stopf('prim_run')
      end do
+
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(CAM)
+     ! Refresh GLL state%Q(:,:,:,5:8) from the partmcsl-evolved physgrid
+     ! tracer state so the NetCDF writer below can see Q5..Q8.  No-op for
+     ! non-dcmip2012 runs (early-returns when pg_data%q is unallocated).
+     call dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
+#endif
 #if (defined HORIZ_OPENMP)
      !$OMP END PARALLEL
 #endif
