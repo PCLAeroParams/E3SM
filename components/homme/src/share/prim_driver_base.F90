@@ -1335,11 +1335,11 @@ contains
     end if
     call t_stopf("prim_step_advec")
     
-#ifdef HOMME_ENABLE_PARTMCSL      
-      ! TODO: add timer start call here
+#ifdef HOMME_ENABLE_PARTMCSL
+      call t_startf('partmcsl_step_forward')
       call partmcsl_step_forward(elem, dt, nets, nete, tl)
-      ! TODO: add timer stop call here
-#endif      
+      call t_stopf('partmcsl_step_forward')
+#endif
   end subroutine prim_step
 
   subroutine prim_step_flexible(hybrid, elem, nets, nete, dt, tl, hvcoord, compute_diagnostics)

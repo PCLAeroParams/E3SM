@@ -17,6 +17,7 @@ module partmcsl_advection_mod
   use element_mod, only        : element_t
   use kinds, only              : real_kind, iulog
   use parallel_mod, only       : parallel_t, abortmp
+  use perf_mod, only           : t_startf, t_stopf
   use physical_constants, only : rearth
   use time_mod, only           : TimeLevel_t
   use partmcsl_mod
@@ -157,6 +158,7 @@ subroutine partmcsl_init(par, elem)
     integer :: facenum 
     type(spherical_polar_t) :: p_sph
     
+    call t_startf('partmcsl_init')
     !--------------------------------------------
     ! make sure we're ok to get started
     !--------------------------------------------
@@ -303,6 +305,7 @@ subroutine partmcsl_init(par, elem)
     if (par%masterproc) then
       write(iulog,*) 'partmcsl: exiting partmcsl_init'
     endif
+    call t_stopf('partmcsl_init')
 end subroutine partmcsl_init
   
 subroutine ij_idx_from_corner_idx(iloc, jloc, corner_idx)
@@ -877,9 +880,11 @@ end subroutine
     if (.not. ghostbuf_initialized) then
       call abortmp('partmcsl_exchange_source_partition: ghost buffer not initialized.')
     endif
+    call t_startf('partmcsl_exchange_src_partition')
     call partmcsl_pack_source_partition(elem, nets, nete)
     call ghost_exchangeVfull(par, ithr, partmcsl_ghostbuf)
     call partmcsl_unpack_arrival_partition(elem, nets, nete)
+    call t_stopf('partmcsl_exchange_src_partition')
   end subroutine partmcsl_exchange_source_partition
 
   subroutine partmcsl_step_forward(elem, dt, nets, nete, tl)
@@ -896,28 +901,32 @@ end subroutine
     integer :: di, ci, dest_idx, src_idx
     real(kind=real_kind) :: dest_frac
 !     integer(kind=c_int) :: test_array(5)
-!     
+!
 !     test_array = 5
 !     call test_const_int_array1(test_array, 5)
-    
+
     ! TODO: barrier (if necessary)
-    ! TODO: timer start
 
     do ie = nets, nete ! loop over elements worked by this thread
       do k=1, nlev ! loop over vertical levels
-      
+
         !------------------------
         ! step 1: advect fv cells forward
+        call t_startf('partmcsl_fwd_advection')
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
+        call t_stopf('partmcsl_fwd_advection')
 !         write(iulog,*) "partmcsl_step_forward: advection done at elem ", ie, " lev ", k
         !------------------------
         ! step 2: compute overlap portions (c++)
+        call t_startf('partmcsl_calc_src_partition')
         call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
-             k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, & 
+             k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, &
              src_partition%dest_cell_idxs, src_partition%dest_portions)
+        call t_stopf('partmcsl_calc_src_partition')
         !------------------------
         ! step 3: move partmc particles
+        call t_startf('partmcsl_step3_move')
         do ci=1,4 ! loop over subcells owned by this element
           ! TODO: get partmc instance from source cell
           do di=1, src_partition%ndest(k,ci,ie)
@@ -932,11 +941,11 @@ end subroutine
             ! TODO: PartMC MPI send/receive subroutines
           enddo
         enddo
+        call t_stopf('partmcsl_step3_move')
       enddo
     enddo ! loop over elements worked by this thread
 
-    ! TODO: barrier (if necessary)    
-    ! TODO timer stop
+    ! TODO: barrier (if necessary)
   end subroutine partmcsl_step_forward
  
   subroutine partmcsl_fwd_advection(acart, vt0, vt1, fvm, elem, ie, dt)
