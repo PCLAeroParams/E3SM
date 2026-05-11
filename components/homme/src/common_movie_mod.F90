@@ -27,7 +27,7 @@ module common_movie_mod
 #ifndef HOMME_WITHOUT_PIOLIBRARY
 
 #ifdef _PRIM
-  integer, parameter :: varcnt =  38
+  integer, parameter :: varcnt =  43
 
   integer, parameter :: maxdims =  6
 
@@ -57,6 +57,11 @@ module common_movie_mod
                                                  'Q2         ', &
                                                  'Q3         ', &
                                                  'Q4         ', &
+                                                 'Q5         ', &
+                                                 'Q6         ', &
+                                                 'Q7         ', &
+                                                 'Q8         ', &
+                                                 'Q9         ', &
                                                  'geo        ', &
                                                  'omega      ', &
                                                  'dp3d       ', &
@@ -97,6 +102,11 @@ module common_movie_mod
                                                                1,2,5,0,0,0, & ! Q2
                                                                1,2,5,0,0,0, & ! Q3
                                                                1,2,5,0,0,0, & ! Q4
+                                                               1,2,5,0,0,0, & ! Q5
+                                                               1,2,5,0,0,0, & ! Q6
+                                                               1,2,5,0,0,0, & ! Q7
+                                                               1,2,5,0,0,0, & ! Q8
+                                                               1,2,5,0,0,0, & ! Q9
                                                                1,2,5,0,0,0, & ! geo
                                                                1,2,5,0,0,0, & !omega
                                                                1,2,5,0,0,0, & !dp3d
@@ -114,15 +124,19 @@ module common_movie_mod
   integer, parameter :: vartype(varcnt)=(/nf_double, nf_double, nf_double,nf_double, nf_double,nf_double,nf_double,& !ps:cv_lon
                                           nf_int,    nf_double,nf_double,nf_double,nf_double,& !corners:T
                                           nf_double, nf_double,nf_double,nf_double,nf_double,nf_double,& !Th:w
-                                          nf_double, nf_double, nf_double,nf_double,& 
-                                          nf_double, nf_double,nf_double,nf_double,nf_double,& !Q:geo
+                                          nf_double, nf_double, nf_double,nf_double,&
+                                          nf_double, nf_double,nf_double,nf_double,& !Q:Q4
+                                          nf_double, nf_double,nf_double,nf_double,nf_double,& !Q5:Q9
+                                          nf_double,& !geo
                                           nf_double, nf_double,nf_double,nf_double,nf_double,nf_double,& !omega:ilev
                                           nf_double, nf_double,nf_double,nf_double,nf_double/)
   logical, parameter :: varrequired(varcnt)=(/.false.,.false.,.false.,.false.,.false.,.false.,.false.,&
                                               .false.,.false.,.false.,.false.,.false.,&
                                               .false.,.false.,.false.,.false.,.false.,.false.,&
                                               .false.,.false.,.false.,.false.,&
-                                              .false.,.false.,.false.,.false.,.false.,&
+                                              .false.,.false.,.false.,.false.,& ! Q,Q2,Q3,Q4
+                                              .false.,.false.,.false.,.false.,.false.,& ! Q5,Q6,Q7,Q8,Q9
+                                              .false.,& ! geo
                                               .false.,.false.,.true. ,.true. ,&
                                               .true. ,.true. ,&   ! lev,ilev
                                               .true. ,.true. ,&   ! hy arrays
