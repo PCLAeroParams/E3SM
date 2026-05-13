@@ -254,13 +254,23 @@ static homme::HommeIslMpi::Ptr g_csl_mpi;
 HommeIslMpi::Ptr get_isl_mpi_singleton () { return g_csl_mpi; }
 
 void slmm_finalize () {
+  int r = -1;
+  { int initialized = 0, finalized = 0;
+    MPI_Initialized(&initialized); MPI_Finalized(&finalized);
+    if (initialized && !finalized) MPI_Comm_rank(MPI_COMM_WORLD, &r);
+  }
+  if (r == 0) { std::cout << "slmm_finalize: enter\n" << std::flush; }
 #if defined COMPOSE_HORIZ_OPENMP
 # pragma omp master
 #endif
   {
+    if (r == 0) { std::cout << "slmm_finalize: before ~g_csl_mpi\n" << std::flush; }
     homme::g_csl_mpi = nullptr;
+    if (r == 0) { std::cout << "slmm_finalize: before ~g_advecter\n" << std::flush; }
     homme::g_advecter = nullptr;
+    if (r == 0) { std::cout << "slmm_finalize: before delete_tracer_arrays\n" << std::flush; }
     homme::delete_tracer_arrays();
+    if (r == 0) { std::cout << "slmm_finalize: done\n" << std::flush; }
   }
 }
 } // namespace homme
