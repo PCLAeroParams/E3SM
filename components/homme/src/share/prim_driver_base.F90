@@ -1929,16 +1929,25 @@ contains
     call noxfinish()
 #endif
 
-    if (iam == 0) print *, "prim_finalize: before compose_finalize"
+    if (iam == 1) then
+      print *, "prim_finalize: before compose_finalize"
+      flush(6)
+    endif
 #ifdef HOMME_ENABLE_COMPOSE
     if (transport_alg > 0) call compose_finalize()
 #endif
 
-    if (iam == 0) print *, "prim_finalize: before partmcsl_finalize"
+    if (iam == 1) then
+      print *, "prim_finalize: before partmcsl_finalize"
+      flush(6)
+    endif
 #ifdef HOMME_ENABLE_PARTMCSL
     call partmcsl_finalize()
 #endif
-    if (iam == 0) print *, "prim_finalize: done"
+    if (iam == 1) then
+      print *, "prim_finalize: done"
+      flush(6)
+    endif
     ! ==========================
     ! end of the hybrid program
     ! ==========================
