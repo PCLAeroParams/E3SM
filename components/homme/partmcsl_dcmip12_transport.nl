@@ -6,9 +6,9 @@
   partmethod        = 4                         ! mesh parition method: 4 = space filling curve
   topology          = "cube"                    ! mesh type: cubed sphere
   test_case         = "dcmip2012_test1_1"       ! test identifier
-  ne                = 30                        ! number of elements per cube face
+  ne                = 4                         ! number of elements per cube face
   qsize             = 8                         ! num tracer fields
-  ndays             = 12                         ! num simulation days: 0 = use nmax steps
+  ndays             = 1                         ! num simulation days: 0 = use nmax steps
   statefreq         = 200                       ! number of steps between screen dumps
   restartfreq       = -1                        ! don't write restart files if < 0
   runtype           = 0                         ! 0 = new run

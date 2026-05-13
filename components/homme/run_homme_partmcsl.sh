@@ -7,7 +7,7 @@ mach=$homme/cmake/machineFiles/cee-compute.cmake
 # wdir=/pscratch/pabosle/e3sm-pclap
 wdir=/scratch/pabosle/e3sm-pclap
 # source $e3sm/pclap-e3sm-test.F2010.ne4pg2_oQU480.partmcsl/.env_mach_specific.sh
-source $HOME/cee-homme-env.sh
+# source $HOME/cee-homme-env.sh
 
 
 execName=theta-l-nlev20-native
@@ -49,7 +49,7 @@ then
   printf "Configuring standalone Homme\n"
 # configure Homme with CMake
   cd $wdir
-  cmake -B $wdir -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=DEBUG -DHOMME_USE_MKL=FALSE $homme
+  cmake -B $wdir -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHOMME_USE_MKL=FALSE $homme
 fi
 
 if [ "$buildFlag" ]
