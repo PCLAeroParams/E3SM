@@ -83,23 +83,27 @@ module partmcsl_advection_mod
   end type
 
   !=====================================
-  ! PartMCSL arrival partition (foreign contributions received from other ranks)
+  ! PartMCSL arrival partition (full-stencil contributions received at each owned destination)
   !
   ! For each element je owned by this rank, for each destination subcell cj of je
   ! and each vertical level k:
-  !   nsrc(k, cj, je) is the number of foreign-source records contributing to (je, cj, k).
-  !   src_gid(d, k, cj, je) is the GlobalID of the source element on the remote rank.
-  !   src_subcell(d, k, cj, je) is the source subcell within that foreign element [1..4].
+  !   nsrc(k, cj, je) is the number of source records contributing to (je, cj, k).
+  !   src_gid(d, k, cj, je) is the GlobalID of the source element (any rank).
+  !   src_subcell(d, k, cj, je) is the source subcell within that element [1..4].
   !   src_frac(d, k, cj, je) is the fraction of the source cell delivered into (je, cj).
+  !   src_lneighbor(d, k, cj, je) is the local index of the source in je's neighbor list:
+  !     0 sentinel means "self" (source == je) -- consumer reads q from local state;
+  !     1..nneighbors(je) means use je's halo at slot src_lneighbor (foreign or local-non-self).
   !
-  ! Self-contributions and contributions from other locally-owned source elements are
-  ! NOT stored here; they are read directly from src_partition by tests/consumers that
-  ! need the local+remote sum.
+  ! Full stencil: holds every record targeting je from every source -- foreign,
+  ! local-non-self, and self.  Foreign + local-non-self arrive via ghost exchange;
+  ! self records are injected directly from src_partition at unpack time.
   type :: arrival_partition_t
     integer, allocatable :: nsrc(:,:,:)             ! (nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_gid(:,:,:,:)        ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_subcell(:,:,:,:)    ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
   
 !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
@@ -133,11 +137,36 @@ module partmcsl_advection_mod
   integer, parameter :: pmcsl_ghost_nhc = 20
   integer, parameter :: pmcsl_ghost_slot = pmcsl_ghost_np * (pmcsl_ghost_nhc + 1)
 
+  !=====================================
+  ! Ghost-exchange buffer sizing for the q halo.
+  !
+  ! Per element, per vertical level, the packed payload is:
+  !   nphys_cell_per_elem * pmcsl_nq reals -- pg_q(ci, k, t, ie) for ci=1..4, t=1..pmcsl_nq.
+  ! pmcsl_nq is the number of partmcsl-advected tracers.  For dcmip 2012 test 1.1
+  ! these are slots 5..8 of pg_data%q (Q5..Q8); see memory entry
+  ! "partmcsl_project_interface_refactor" for why this is scaffolding.
+  integer, parameter :: pmcsl_nq = 4
+  integer, parameter :: pmcsl_q_payload_words = nphys_cell_per_elem * pmcsl_nq
+  ! For (4, 3): np*(nhc+1) = 4*4 = 16, exact fit for payload = 16.
+  integer, parameter :: pmcsl_q_ghost_np  = 4
+  integer, parameter :: pmcsl_q_ghost_nhc = 3
+  integer, parameter :: pmcsl_q_ghost_slot = pmcsl_q_ghost_np * (pmcsl_q_ghost_nhc + 1)
+
   type(local_fv_mesh_t), private :: fv_mesh
   type(source_partition_t) :: src_partition
   type(arrival_partition_t) :: arrival_partition
   type(GhostBuffer3D_t), private :: partmcsl_ghostbuf
   logical, private :: ghostbuf_initialized = .false.
+  type(GhostBuffer3D_t), private :: partmcsl_q_ghostbuf
+  logical, private :: q_ghostbuf_initialized = .false.
+  ! q_halo(ci, t, k, l_local, je) holds neighbor-q values after exchange:
+  !   ci: source subcell [1..nphys_cell_per_elem]
+  !   t : partmcsl tracer slot [1..pmcsl_nq]
+  !   k : vertical level [1..nlev]
+  !   l_local: local neighbor index of source in je's neighbor list [1..nneighbors(je)]
+  !   je: this rank's owned element index [1..nelemd]
+  ! Self contributions are NOT in the halo; consumer reads them from local pg_q.
+  real(real_kind), allocatable, private :: q_halo(:,:,:,:,:)
   
   contains
 
@@ -223,10 +252,19 @@ subroutine partmcsl_init(par, elem)
     allocate(arrival_partition%src_gid(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_subcell(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_frac(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_lneighbor(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     arrival_partition%nsrc = 0
     arrival_partition%src_gid = -1
     arrival_partition%src_subcell = -1
     arrival_partition%src_frac = zero
+    arrival_partition%src_lneighbor = -1
+
+    !--------------------------------------------
+    ! allocate q_halo: per owned je, per neighbor slot, holds neighbor q values
+    ! after the q-halo exchange.  Self values are NOT stored here.
+    !--------------------------------------------
+    allocate(q_halo(nphys_cell_per_elem, pmcsl_nq, nlev, fv_mesh%max_nneighbors, nelemd))
+    q_halo = zero
 
     !--------------------------------------------
     ! allocate the ghost-exchange buffer used for source-partition communication
@@ -236,6 +274,15 @@ subroutine partmcsl_init(par, elem)
     endif
     call initGhostBuffer3D(partmcsl_ghostbuf, nlev, pmcsl_ghost_np, pmcsl_ghost_nhc)
     ghostbuf_initialized = .true.
+
+    !--------------------------------------------
+    ! allocate the ghost-exchange buffer used for q-halo communication
+    !--------------------------------------------
+    if (pmcsl_q_ghost_slot < pmcsl_q_payload_words) then
+      call abortmp('partmcsl: pmcsl_q_ghost_slot too small for payload; recompute (np, nhc).')
+    endif
+    call initGhostBuffer3D(partmcsl_q_ghostbuf, nlev, pmcsl_q_ghost_np, pmcsl_q_ghost_nhc)
+    q_ghostbuf_initialized = .true.
     
     !--------------------------------------------
     ! construct local mesh for each local element
@@ -716,10 +763,16 @@ end subroutine
       deallocate(arrival_partition%src_gid)
       deallocate(arrival_partition%src_subcell)
       deallocate(arrival_partition%src_frac)
+      deallocate(arrival_partition%src_lneighbor)
     endif
+    if (allocated(q_halo)) deallocate(q_halo)
     if (ghostbuf_initialized) then
       call FreeGhostBuffer3D(partmcsl_ghostbuf)
       ghostbuf_initialized = .false.
+    endif
+    if (q_ghostbuf_initialized) then
+      call FreeGhostBuffer3D(partmcsl_q_ghostbuf)
+      q_ghostbuf_initialized = .false.
     endif
   end subroutine partmcsl_finalize
 
@@ -834,10 +887,11 @@ end subroutine
                 if (slot > max_ndest) then
                   call abortmp('partmcsl unpack: arrival_partition slot overflow.')
                 endif
-                arrival_partition%nsrc(k, cj, ie)            = slot
+                arrival_partition%nsrc(k, cj, ie)              = slot
                 arrival_partition%src_gid(slot, k, cj, ie)     = src_elem_gid
                 arrival_partition%src_subcell(slot, k, cj, ie) = ci
                 arrival_partition%src_frac(slot, k, cj, ie)    = frac
+                arrival_partition%src_lneighbor(slot, k, cj, ie) = l_local
               endif
             enddo
           enddo
@@ -847,7 +901,8 @@ end subroutine
 
     ! Self-arrivals: walk each owned ie's own src_partition and inject records
     ! whose destination is ie itself.  These would otherwise be missed because
-    ! ghost exchange has no self-edge.
+    ! ghost exchange has no self-edge.  src_lneighbor=0 flags "self": consumers
+    ! read q from local pg_q rather than from the halo.
     do ie = nets, nete
       do k = 1, nlev
         do ci = 1, nphys_cell_per_elem
@@ -865,6 +920,7 @@ end subroutine
             arrival_partition%src_subcell(slot, k, cj, ie) = ci
             arrival_partition%src_frac(slot, k, cj, ie)    = &
                 src_partition%dest_portions(d, k, ci, ie)
+            arrival_partition%src_lneighbor(slot, k, cj, ie) = 0
           enddo
         enddo
       enddo
@@ -887,65 +943,180 @@ end subroutine
     call t_stopf('partmcsl_exchange_src_partition')
   end subroutine partmcsl_exchange_source_partition
 
-  subroutine partmcsl_step_forward(elem, dt, nets, nete, tl)
+  ! Pack pg_q(:, k, :, ie) into a flat 1D buffer sized pmcsl_q_ghost_slot.
+  ! Layout: payload((t-1)*nphys_cell_per_elem + ci) = pg_q(ci, k, t, ie)
+  !   for ci = 1..nphys_cell_per_elem and t = 1..pmcsl_nq.
+  subroutine pack_q_payload(pg_q, ie, k, payload)
+    real(real_kind), intent(in)  :: pg_q(:,:,:,:)
+    integer,         intent(in)  :: ie, k
+    real(real_kind), intent(out) :: payload(pmcsl_q_ghost_slot)
+    integer :: ci, t
+
+    payload = zero
+    do t = 1, pmcsl_nq
+      do ci = 1, nphys_cell_per_elem
+        payload((t-1)*nphys_cell_per_elem + ci) = pg_q(ci, k, t, ie)
+      enddo
+    enddo
+  end subroutine pack_q_payload
+
+  ! For each owned ie, pack its q payload into every neighbor slot in the q
+  ! ghost buffer for every vertical level.  Mirrors partmcsl_pack_source_partition.
+  subroutine partmcsl_pack_q_halo(pg_q, elem, nets, nete)
+    real(real_kind), intent(in) :: pg_q(:,:,:,:)
+    type(element_t), intent(in) :: elem(:)
+    integer,         intent(in) :: nets, nete
+    real(real_kind) :: payload(pmcsl_q_ghost_slot)
+    integer :: ie, k, l_local, l, is
+
+    do ie = nets, nete
+      do k = 1, nlev
+        call pack_q_payload(pg_q, ie, k, payload)
+        do l_local = 1, elem(ie)%desc%actual_neigh_edges
+          l  = elem(ie)%desc%loc2buf(l_local)
+          is = elem(ie)%desc%putmapP_ghost(l)
+          partmcsl_q_ghostbuf%buf(:, :, k, is) = &
+              reshape(payload, (/ pmcsl_q_ghost_np, pmcsl_q_ghost_nhc + 1 /))
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_pack_q_halo
+
+  ! Unpack q ghost buffer into q_halo(:, :, :, l_local, je).  Self values are
+  ! NOT in the halo (no self-edge in ghost exchange); consumers read those
+  ! directly from local pg_q.
+  subroutine partmcsl_unpack_q_halo(elem, nets, nete)
+    type(element_t), intent(in) :: elem(:)
+    integer,         intent(in) :: nets, nete
+    real(real_kind) :: payload(pmcsl_q_ghost_slot)
+    integer :: ie, k, l_local, l, is, ci, t
+
+    do ie = nets, nete
+      do l_local = 1, elem(ie)%desc%actual_neigh_edges
+        l  = elem(ie)%desc%loc2buf(l_local)
+        is = elem(ie)%desc%getmapP_ghost(l)
+        do k = 1, nlev
+          payload = reshape(partmcsl_q_ghostbuf%buf(:, :, k, is), &
+                            (/ pmcsl_q_ghost_slot /))
+          do t = 1, pmcsl_nq
+            do ci = 1, nphys_cell_per_elem
+              q_halo(ci, t, k, l_local, ie) = payload((t-1)*nphys_cell_per_elem + ci)
+            enddo
+          enddo
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_unpack_q_halo
+
+  ! Top-level driver: pack -> ghost_exchangeVfull -> unpack.
+  subroutine partmcsl_exchange_q_halo(par, ithr, pg_q, elem, nets, nete)
+    type(parallel_t), intent(in) :: par
+    integer,          intent(in) :: ithr, nets, nete
+    real(real_kind),  intent(in) :: pg_q(:,:,:,:)
+    type(element_t),  intent(in) :: elem(:)
+
+    if (.not. q_ghostbuf_initialized) then
+      call abortmp('partmcsl_exchange_q_halo: q ghost buffer not initialized.')
+    endif
+    call t_startf('partmcsl_exchange_q_halo')
+    call partmcsl_pack_q_halo(pg_q, elem, nets, nete)
+    call ghost_exchangeVfull(par, ithr, partmcsl_q_ghostbuf)
+    call partmcsl_unpack_q_halo(elem, nets, nete)
+    call t_stopf('partmcsl_exchange_q_halo')
+  end subroutine partmcsl_exchange_q_halo
+
+  ! Step forward: phase A (advect + calc_src_partition per ie,k), phase B
+  ! (exchange src_partition -> arrival_partition AND exchange q halo), phase C
+  ! (per-cell mixing-ratio update using arrival_partition + halo).
+  !
+  ! pg_q is the partmcsl-advected tracer state on the FV grid; for dcmip 2012
+  ! test 1.1 this is pg_data%q(:, :, 5:8, :) (see plan
+  ! ~/.claude/plans/giggly-tumbling-garden.md and memory entry
+  ! partmcsl_project_interface_refactor).  Eventually this signature will
+  ! change to accept a particle-payload-shaped state.
+  subroutine partmcsl_step_forward(par, ithr, elem, dt, nets, nete, tl, pg_q)
     use iso_c_binding, only: c_int
+    type(parallel_t),     intent(in)    :: par
+    integer,              intent(in)    :: ithr
     type (element_t)     , intent(inout) :: elem(:)
-    real(kind=real_kind) , intent(in   ) :: dt  ! time step size
+    real(kind=real_kind) , intent(in   ) :: dt   ! time step size
     integer              , intent(in   ) :: nets ! thread starting element idx in [1,nelemd]
     integer              , intent(in   ) :: nete ! thread ending element idx in [1,nelemd]
-    type (TimeLevel_t)   , intent(in   ) :: tl 
+    type (TimeLevel_t)   , intent(in   ) :: tl
+    real(real_kind)      , intent(inout) :: pg_q(:, :, :, :)
+        ! (nphys_cell_per_elem, nlev, pmcsl_nq, nelemd) -- partmcsl's tracers
     ! local variables
     type(cartesian3D_t) :: advected_pts(nverts, nphys_cell_per_elem)
-    integer :: ie, k ! loop iterators
-    integer :: t1 ! time point 1 (end of advection timestep)
-    integer :: di, ci, dest_idx, src_idx
-    real(kind=real_kind) :: dest_frac
-!     integer(kind=c_int) :: test_array(5)
-!
-!     test_array = 5
-!     call test_const_int_array1(test_array, 5)
+    integer :: ie, je, k, ci, cj, d
+    integer :: src_ci, l_loc
+    real(real_kind) :: frac
+    real(real_kind), allocatable :: q_new(:,:,:,:)
 
-    ! TODO: barrier (if necessary)
+    if (size(pg_q, 3) /= pmcsl_nq) then
+      call abortmp('partmcsl_step_forward: pg_q tracer count != pmcsl_nq.')
+    endif
 
-    do ie = nets, nete ! loop over elements worked by this thread
-      do k=1, nlev ! loop over vertical levels
-
-        !------------------------
-        ! step 1: advect fv cells forward
+    !-----------------------------------------------------------
+    ! Phase A: step 1 (advect) + step 2 (calc_src_partition).
+    !-----------------------------------------------------------
+    do ie = nets, nete
+      do k = 1, nlev
         call t_startf('partmcsl_fwd_advection')
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         call t_stopf('partmcsl_fwd_advection')
-!         write(iulog,*) "partmcsl_step_forward: advection done at elem ", ie, " lev ", k
-        !------------------------
-        ! step 2: compute overlap portions (c++)
+
         call t_startf('partmcsl_calc_src_partition')
-        call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), fv_mesh%my_elem_local_idx(ie), &
-             k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, src_partition%ndest, &
+        call calc_src_partition(ie, nelemd, fv_mesh%nneighbors(ie), &
+             fv_mesh%my_elem_local_idx(ie), &
+             k, nlev, fv_mesh%points, fv_mesh%subcell_area, advected_pts, &
+             src_partition%ndest, &
              src_partition%dest_cell_idxs, src_partition%dest_portions)
         call t_stopf('partmcsl_calc_src_partition')
-        !------------------------
-        ! step 3: move partmc particles
-        call t_startf('partmcsl_step3_move')
-        do ci=1,4 ! loop over subcells owned by this element
-          ! TODO: get partmc instance from source cell
-          do di=1, src_partition%ndest(k,ci,ie)
-            ! TODO: get partmc instance from destination cell
-            dest_idx = src_partition%dest_cell_idxs(di, k, ci, ie)
-            dest_frac = src_partition%dest_portions(di, k, ci, ie)
-            !------------------------
-            ! step 3a: accumulate particle info, make sure send/receive buffers are big enough
-            !------------------------
-            ! step 3b: send particles from src_idx to dest_idx
-            ! TODO: send dest_frac of src particles from src_idx to dst_idx
-            ! TODO: PartMC MPI send/receive subroutines
+      enddo
+    enddo
+
+    !-----------------------------------------------------------
+    ! Phase B: exchanges -- collective.  Populate arrival_partition
+    ! (full-stencil source records) and q_halo (neighbor q values).
+    !-----------------------------------------------------------
+    call partmcsl_exchange_source_partition(par, ithr, elem, nets, nete)
+    call partmcsl_exchange_q_halo(par, ithr, pg_q, elem, nets, nete)
+
+    !-----------------------------------------------------------
+    ! Phase C: step 3 -- per-cell mixing-ratio update.
+    !   q_new(je, cj, k, :) = sum over arrival records of frac * q_src
+    ! where q_src is local pg_q if src_lneighbor == 0 (self), else q_halo
+    ! at the recorded local neighbor index.  Writes go through a temp
+    ! array because pg_q reads at (src_ci, k, :, je) overlap with the
+    ! pending writes at (cj, k, :, je) for different cj at the same je.
+    !-----------------------------------------------------------
+    call t_startf('partmcsl_step3_move')
+    allocate(q_new(nphys_cell_per_elem, nlev, pmcsl_nq, nets:nete))
+    q_new = zero
+    do je = nets, nete
+      do k = 1, nlev
+        do cj = 1, nphys_cell_per_elem
+          do d = 1, arrival_partition%nsrc(k, cj, je)
+            src_ci = arrival_partition%src_subcell(d, k, cj, je)
+            frac   = arrival_partition%src_frac(d, k, cj, je)
+            l_loc  = arrival_partition%src_lneighbor(d, k, cj, je)
+            if (l_loc == 0) then
+              ! self: read q from local pg_q
+              q_new(cj, k, :, je) = q_new(cj, k, :, je) &
+                                    + frac * pg_q(src_ci, k, :, je)
+            else
+              ! foreign or local-non-self: read q from halo
+              q_new(cj, k, :, je) = q_new(cj, k, :, je) &
+                                    + frac * q_halo(src_ci, :, k, l_loc, je)
+            endif
           enddo
         enddo
-        call t_stopf('partmcsl_step3_move')
       enddo
-    enddo ! loop over elements worked by this thread
-
-    ! TODO: barrier (if necessary)
+    enddo
+    pg_q(:, :, :, nets:nete) = q_new(:, :, :, nets:nete)
+    deallocate(q_new)
+    call t_stopf('partmcsl_step3_move')
   end subroutine partmcsl_step_forward
  
   subroutine partmcsl_fwd_advection(acart, vt0, vt1, fvm, elem, ie, dt)
