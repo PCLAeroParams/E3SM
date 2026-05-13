@@ -70,7 +70,7 @@ cat <<EOF > $jobFile
 #SBATCH -A fy210162
 #SBATCH -n 112
 #SBATCH --reservation flight-cldera
-mpirun --map-by ppr:56:socket:PE=1 --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile
+mpirun --map-by core --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile
 EOF
 chmod +x $jobFile
 cat $jobFile
@@ -78,5 +78,5 @@ fi
 
 if [ "$runFlag" ]
 then
-mpirun --map-by ppr:56:socket:PE=1 --bind-to hwthread --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
+mpirun --map-by core --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
 fi
