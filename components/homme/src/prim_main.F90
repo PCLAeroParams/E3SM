@@ -297,6 +297,17 @@ program prim_main
   call t_stopf('prim_main_loop')
 
   if(par%masterproc) print *,"Finished main timestepping loop",tl%nstep
+  ! Emit timer summary BEFORE prim_finalize so partmcsl timing data is
+  ! captured even if compose_finalize() hangs during teardown.
+  if(par%masterproc) then
+    print *,"writing pre-finalize timing data"
+    flush(6)
+  endif
+  call t_prf('HommeTime_pre_finalize', par%comm)
+  if(par%masterproc) then
+    print *,"pre-finalize timing data written"
+    flush(6)
+  endif
   call prim_finalize()
   if(par%masterproc) print *,"closing history files"
 
