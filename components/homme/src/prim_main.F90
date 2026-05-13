@@ -308,22 +308,30 @@ program prim_main
     print *,"pre-finalize timing data written"
     flush(6)
   endif
-  call prim_finalize()
+
+  ! Close history files BEFORE prim_finalize.  compose_finalize() inside
+  ! prim_finalize hangs in ~IslMpi member destruction; if we don't close
+  ! the NetCDF file first, prim_movie_finish never runs and the file is
+  ! left without its final nc_close (header/record-count update, collective
+  ! MPI_File_close for pnetcdf).
   if(par%masterproc) print *,"closing history files"
-
   call print_test_results(elem, tl, hvcoord, par)
-
 #if defined PIO_INTERP
   call interp_movie_finish
 #else
   call prim_movie_finish
 #endif
-
 #if (defined MODEL_THETA_L && defined ARKODE)
   if (calc_nonlinear_stats) then
     call finalize_nonlinear_stats(par%comm, par%rank, par%root, par%nprocs)
   endif
 #endif
+  if(par%masterproc) then
+    print *,"history files closed"
+    flush(6)
+  endif
+
+  call prim_finalize()
 
 #if defined(HOMMEXX_BFB_TESTING) && !KOKKOS_TARGET
   call finalize_kokkos_f90();

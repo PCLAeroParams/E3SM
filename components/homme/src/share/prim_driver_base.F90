@@ -1266,9 +1266,10 @@ contains
     use reduction_mod,      only: parallelmax
     use time_mod,           only: time_at,TimeLevel_t, timelevel_update, nsplit
     use prim_state_mod,     only: prim_printstate
-#ifdef HOMME_ENABLE_PARTMCSL    
+#ifdef HOMME_ENABLE_PARTMCSL
     use partmcsl_advection_mod, only: partmcsl_step_forward
-#endif        
+    use dcmip12_wrapper, only: pg_data
+#endif
 
     type(element_t),      intent(inout) :: elem(:)
     type(hybrid_t),       intent(in)    :: hybrid   ! distributed parallel structure (shared)
@@ -1337,7 +1338,8 @@ contains
     
 #ifdef HOMME_ENABLE_PARTMCSL
       call t_startf('partmcsl_step_forward')
-      call partmcsl_step_forward(elem, dt, nets, nete, tl)
+      call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt, nets, nete, &
+                                 tl, pg_data%q(:, :, 5:8, :))
       call t_stopf('partmcsl_step_forward')
 #endif
   end subroutine prim_step
