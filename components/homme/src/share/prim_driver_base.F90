@@ -1916,7 +1916,7 @@ contains
 #endif
 
 #ifdef HOMME_ENABLE_COMPOSE
-    use compose_mod, only: compose_finalize
+    use compose_mod, only: compose_finalize, cedr_finalize, slmm_finalize, kokkos_finalize
     use control_mod, only: transport_alg
 #endif
 #ifdef HOMME_ENABLE_PARTMCSL
@@ -1934,7 +1934,32 @@ contains
       flush(6)
     endif
 #ifdef HOMME_ENABLE_COMPOSE
-    if (transport_alg > 0) call compose_finalize()
+    ! Expanded inline (was: call compose_finalize()) to localize the
+    ! post-integration hang.  Kokkos::finalize() is the prime suspect.
+    if (transport_alg > 0) then
+      if (iam == 1) then
+        print *, "prim_finalize: before cedr_finalize"
+        flush(6)
+      endif
+      call cedr_finalize()
+
+      if (iam == 1) then
+        print *, "prim_finalize: before slmm_finalize"
+        flush(6)
+      endif
+      call slmm_finalize()
+
+      if (iam == 1) then
+        print *, "prim_finalize: before kokkos_finalize"
+        flush(6)
+      endif
+      call kokkos_finalize()
+
+      if (iam == 1) then
+        print *, "prim_finalize: after kokkos_finalize"
+        flush(6)
+      endif
+    endif
 #endif
 
     if (iam == 1) then
