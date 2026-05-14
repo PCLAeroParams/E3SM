@@ -1267,7 +1267,7 @@ contains
     use time_mod,           only: time_at,TimeLevel_t, timelevel_update, nsplit
     use prim_state_mod,     only: prim_printstate
 #ifdef HOMME_ENABLE_PARTMCSL
-    use partmcsl_advection_mod, only: partmcsl_step_forward
+    use partmcsl_advection_mod, only: partmcsl_step_forward, partmcsl_vertical_step
     use dcmip12_wrapper, only: pg_data
 #endif
 
@@ -1341,6 +1341,8 @@ contains
       call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt, nets, nete, &
                                  tl, pg_data%q(:, :, 5:8, :))
       call t_stopf('partmcsl_step_forward')
+      call partmcsl_vertical_step(hybrid%par, hybrid%ithr, elem, hvcoord, dt, &
+                                  nets, nete, tl, pg_data%q(:, :, 5:8, :))
 #endif
   end subroutine prim_step
 

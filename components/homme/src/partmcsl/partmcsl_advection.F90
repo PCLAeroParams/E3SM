@@ -11,10 +11,11 @@ module partmcsl_advection_mod
                   spherical_polar_t, distance, change_coordinates, sphere_tri_area
   use control_mod, only: cubed_sphere_map, dt_tracer_factor, dt_remap_factor
   use cube_mod, only: ref2sphere
-  use dimensions_mod, only     : nlev, np, nelemd
+  use dimensions_mod, only     : nlev, nlevp, np, nelemd
   use edge_mod, only           : initGhostBuffer3D, FreeGhostBuffer3D
   use edgetype_mod, only       : GhostBuffer3D_t
   use element_mod, only        : element_t
+  use hybvcoord_mod, only      : hvcoord_t
   use kinds, only              : real_kind, iulog
   use parallel_mod, only       : parallel_t, abortmp
   use perf_mod, only           : t_startf, t_stopf
@@ -26,7 +27,7 @@ module partmcsl_advection_mod
   private
 
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
-  public :: partmcsl_step_forward
+  public :: partmcsl_step_forward, partmcsl_vertical_step
   public :: partmcsl_exchange_source_partition
   public :: source_partition_t, src_partition
   
@@ -108,7 +109,25 @@ module partmcsl_advection_mod
   
 !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
 !   elem(ie)%state%v(:,:,:,:,tl%np1)stores v at t1
-  
+
+  !=====================================
+  ! Vertical source partition (column-local, no MPI).
+  !
+  ! For each owned (ie, ci, k_src), ndest_v(k_src, ci, ie) records how many
+  ! destination levels the source cell spills into after Lagrangian advection
+  ! of the cell's pressure-space interfaces.  dest_lev_idxs(d, k_src, ci, ie)
+  ! holds the destination level index in [1, nlev]; dest_portions(d, ...) the
+  ! fraction of source cell thickness landing there.  Sums to 1 over d.
+  !
+  ! Future work: fold this and the horizontal source_partition_t into a single
+  ! 3D arrival/source partition.  For now horizontal and vertical are applied
+  ! sequentially.
+  type :: vertical_source_partition_t
+    integer,         allocatable :: ndest(:,:,:)            ! (nlev, nphys_cell_per_elem, nelemd)
+    integer,         allocatable :: dest_lev_idxs(:,:,:,:)  ! (max_ndest_v, nlev, nphys_cell_per_elem, nelemd)
+    real(real_kind), allocatable :: dest_portions(:,:,:,:)  ! (max_ndest_v, nlev, nphys_cell_per_elem, nelemd)
+  end type
+
   !
   ! for testing
   !
@@ -152,13 +171,26 @@ module partmcsl_advection_mod
   integer, parameter :: pmcsl_q_ghost_nhc = 3
   integer, parameter :: pmcsl_q_ghost_slot = pmcsl_q_ghost_np * (pmcsl_q_ghost_nhc + 1)
 
+  !=====================================
+  ! Vertical-step sizing.  max_ndest_v bounds the number of destination levels
+  ! a single source cell can spill into under one tracer-step Lagrangian shift.
+  ! For modest CFL it's typically 1 or 2; 5 is conservative.  Guarded at runtime
+  ! in column_overlap_partition.
+  integer, parameter :: max_ndest_v = 5
+
   type(local_fv_mesh_t), private :: fv_mesh
   type(source_partition_t) :: src_partition
   type(arrival_partition_t) :: arrival_partition
+  type(vertical_source_partition_t), private :: src_partition_v
   type(GhostBuffer3D_t), private :: partmcsl_ghostbuf
   logical, private :: ghostbuf_initialized = .false.
   type(GhostBuffer3D_t), private :: partmcsl_q_ghostbuf
   logical, private :: q_ghostbuf_initialized = .false.
+  ! gll_to_fv_center_w(i, j, ci): tensor-product Lagrange weights evaluating a
+  ! scalar GLL field g(np, np) at the 4 FV cell centers in the reference quad
+  ! [-1, 1]^2.  Used for pointwise interpolation of eta_dot_dpdn_prescribed
+  ! and ps_v from GLL nodes to FV cell centers in the vertical step.
+  real(real_kind), allocatable, private :: gll_to_fv_center_w(:,:,:)
   ! q_halo(ci, t, k, l_local, je) holds neighbor-q values after exchange:
   !   ci: source subcell [1..nphys_cell_per_elem]
   !   t : partmcsl tracer slot [1..pmcsl_nq]
@@ -265,6 +297,23 @@ subroutine partmcsl_init(par, elem)
     !--------------------------------------------
     allocate(q_halo(nphys_cell_per_elem, pmcsl_nq, nlev, fv_mesh%max_nneighbors, nelemd))
     q_halo = zero
+
+    !--------------------------------------------
+    ! allocate vertical source partition (column-local; no MPI).
+    !--------------------------------------------
+    allocate(src_partition_v%ndest(nlev, nphys_cell_per_elem, nelemd))
+    allocate(src_partition_v%dest_lev_idxs(max_ndest_v, nlev, nphys_cell_per_elem, nelemd))
+    allocate(src_partition_v%dest_portions(max_ndest_v, nlev, nphys_cell_per_elem, nelemd))
+    src_partition_v%ndest         = 0
+    src_partition_v%dest_lev_idxs = -1
+    src_partition_v%dest_portions = zero
+
+    !--------------------------------------------
+    ! Precompute Lagrange weights for GLL -> FV cell-center pointwise
+    ! interpolation used by the vertical step.
+    !--------------------------------------------
+    allocate(gll_to_fv_center_w(np, np, nphys_cell_per_elem))
+    call compute_gll_to_fv_center_weights()
 
     !--------------------------------------------
     ! allocate the ghost-exchange buffer used for source-partition communication
@@ -391,11 +440,121 @@ subroutine partmcsl_test(par, elem)
       call test_identity_exchange(par, elem)
       call test_topology_coverage(par, elem)
       call test_sum_to_one(par, elem)
+      call test_column_overlap_partition(par)
   endif
   if (par%masterproc) then
       write(iulog,*) "partmcsl_test: all tests passed."
   endif
 end subroutine
+
+! Unit tests for column_overlap_partition.  Pure 1D, no element context,
+! so we just feed synthetic interface arrays of length nlev+1 and check
+! the resulting partition.
+subroutine test_column_overlap_partition(par)
+  type(parallel_t), intent(in) :: par
+  integer :: ndest_col(nlev)
+  integer :: dest_idxs(max_ndest_v, nlev)
+  real(real_kind) :: dest_fracs(max_ndest_v, nlev)
+  real(real_kind) :: p_dst(nlevp), p_src(nlevp)
+  real(real_kind) :: sum_frac
+  real(real_kind), parameter :: tol = 1e-12_real_kind
+  real(real_kind), parameter :: dp_uniform = 1.0e4_real_kind  ! 100 hPa cells
+  real(real_kind), parameter :: shift = 0.25_real_kind * dp_uniform
+  integer :: k, d
+
+  ! Build a uniform Eulerian column: p_dst(k) = (k-1)*dp_uniform from
+  ! "model top" (k=1, p=0) to "surface" (k=nlevp, p=nlev*dp_uniform).
+  do k = 1, nlevp
+    p_dst(k) = real(k - 1, real_kind) * dp_uniform
+  enddo
+
+  ! -- Test 1: zero-flow identity.  p_src == p_dst -> each source cell
+  ! lands entirely in its own destination level.
+  p_src = p_dst
+  call column_overlap_partition(nlev, p_src, p_dst, &
+      ndest_col, dest_idxs, dest_fracs)
+  do k = 1, nlev
+    if (ndest_col(k) /= 1) then
+      call abortmp('test_column_overlap: identity ndest != 1.')
+    endif
+    if (dest_idxs(1, k) /= k) then
+      call abortmp('test_column_overlap: identity dest index != source.')
+    endif
+    if (abs(dest_fracs(1, k) - one) > tol) then
+      call abortmp('test_column_overlap: identity frac != 1.')
+    endif
+  enddo
+
+  ! -- Test 2: uniform downward shift of all interior interfaces by
+  ! `shift` (< one cell thickness).  Top (k=1) and surface (k=nlevp) pinned.
+  ! Every interior source cell should split into exactly two destinations
+  ! (k_src and k_src+1), each frac in (0, 1).
+  p_src(1)     = p_dst(1)
+  p_src(nlevp) = p_dst(nlevp)
+  do k = 2, nlev
+    p_src(k) = p_dst(k) + shift
+  enddo
+  call column_overlap_partition(nlev, p_src, p_dst, &
+      ndest_col, dest_idxs, dest_fracs)
+
+  ! k_src=1: top pinned, bottom shifted down -> still ndest=1 (cell stretches
+  ! within k=1 destination... actually it overlaps k=1 only because bottom
+  ! shifts deeper into k=2.  Need to check geometry.
+  ! With p_dst(1)=0, p_dst(2)=dp, p_src(1)=0, p_src(2)=dp+shift, source cell
+  ! k_src=1 occupies [0, dp+shift] which overlaps k_dst=1 (full dp width)
+  ! and k_dst=2 (shift width).  ndest=2.
+  !
+  ! For k_src=nlev: similarly overlaps k_dst=nlev-1 and nlev.
+  ! For interior k_src=2..nlev-1: top shifted, bottom shifted -> shifted
+  ! interval has same width but offset, overlaps k_dst=k_src and k_src+1.
+
+  ! Just verify the conservation property for every source cell.
+  do k = 1, nlev
+    sum_frac = zero
+    do d = 1, ndest_col(k)
+      sum_frac = sum_frac + dest_fracs(d, k)
+    enddo
+    if (abs(sum_frac - one) > tol) then
+      write(iulog,*) 'test_column_overlap: shift sum_frac=', sum_frac, &
+          ' at k_src=', k
+      call abortmp('test_column_overlap: shift sum_frac != 1.')
+    endif
+    if (ndest_col(k) < 1 .or. ndest_col(k) > 2) then
+      write(iulog,*) 'test_column_overlap: shift ndest out of range at k_src=', &
+          k, ' got=', ndest_col(k)
+      call abortmp('test_column_overlap: shift unexpected ndest.')
+    endif
+  enddo
+
+  ! -- Test 3: explicit conservation check with a non-uniform shift.
+  ! Set every interior interface to a random-ish but stable perturbation
+  ! that keeps p_src monotonic and inside [p_dst(1), p_dst(nlevp)].  Then
+  ! every source cell's fractions must still sum to one.
+  p_src(1)     = p_dst(1)
+  p_src(nlevp) = p_dst(nlevp)
+  do k = 2, nlev
+    ! Alternate sign so different cells stretch/compress.
+    p_src(k) = p_dst(k) + 0.1_real_kind * dp_uniform * &
+        merge(one, -one, mod(k, 2) == 0)
+  enddo
+  call column_overlap_partition(nlev, p_src, p_dst, &
+      ndest_col, dest_idxs, dest_fracs)
+  do k = 1, nlev
+    sum_frac = zero
+    do d = 1, ndest_col(k)
+      sum_frac = sum_frac + dest_fracs(d, k)
+    enddo
+    if (abs(sum_frac - one) > tol) then
+      write(iulog,*) 'test_column_overlap: random sum_frac=', sum_frac, &
+          ' at k_src=', k
+      call abortmp('test_column_overlap: random sum_frac != 1.')
+    endif
+  enddo
+
+  if (par%masterproc) then
+    write(iulog,*) 'partmcsl_test: column_overlap_partition passed.'
+  endif
+end subroutine test_column_overlap_partition
 
 ! Reset src_partition to all-zero / no destinations (every test starts from a
 ! known-empty state so leftover entries don't contaminate the next test).
@@ -766,6 +925,12 @@ end subroutine
       deallocate(arrival_partition%src_lneighbor)
     endif
     if (allocated(q_halo)) deallocate(q_halo)
+    if (allocated(src_partition_v%ndest)) then
+      deallocate(src_partition_v%ndest)
+      deallocate(src_partition_v%dest_lev_idxs)
+      deallocate(src_partition_v%dest_portions)
+    endif
+    if (allocated(gll_to_fv_center_w)) deallocate(gll_to_fv_center_w)
     if (ghostbuf_initialized) then
       call FreeGhostBuffer3D(partmcsl_ghostbuf)
       ghostbuf_initialized = .false.
@@ -1175,6 +1340,281 @@ end subroutine
       enddo
     enddo
     
-  end subroutine partmcsl_fwd_advection  
+  end subroutine partmcsl_fwd_advection
+
+  !=====================================================================
+  ! Vertical transport step (column-local, piecewise-constant partition).
+  !
+  ! Architecture:
+  !   partmcsl_vertical_step
+  !     -> partmcsl_calc_vertical_src_partition  ! build src_partition_v
+  !     -> partmcsl_apply_vertical_src_partition ! write q_new -> pg_q
+  !
+  ! No MPI: each FV cell column is independent.  Mirrors the horizontal
+  ! source-partition framework: Lagrangian-advect cell tops/bottoms by
+  ! the prescribed vertical mass flux eta_dot_dpdn (Pa/s) over dt, then
+  ! compute 1D overlap of each advected source cell with the fixed
+  ! Eulerian pressure interfaces to produce "portion of source cell k_src
+  ! -> destination cell k_dst" fractions.
+  !
+  ! Working coord is interface pressure p_i = hyai(i)*p0 + hybi(i)*ps.
+  ! Choosing pressure means Lagrangian motion is simply
+  !   p_new = p_old + eta_dot_dpdn * dt
+  ! since eta_dot_dpdn already has units of dp/dt along eta-following
+  ! surfaces.  No division by dp/deta or hybrid-coord conversion.
+  !=====================================================================
+
+  ! Precompute Lagrange-basis weights so that for a scalar GLL field
+  ! g_gll(np, np):
+  !   f_fv(ci) = sum_{i,j} gll_to_fv_center_w(i, j, ci) * g_gll(i, j)
+  ! evaluates g at the 4 FV cell centers in the reference quad [-1, 1]^2.
+  ! Called once in partmcsl_init.
+  subroutine compute_gll_to_fv_center_weights()
+    use quadrature_mod, only: quadrature_t, gausslobatto
+    type(quadrature_t) :: gll
+    real(real_kind) :: a_c(nphys_cell_per_elem), b_c(nphys_cell_per_elem)
+    real(real_kind) :: la(np), lb(np)
+    real(real_kind) :: xgll(np)
+    integer :: ci, i, j, k
+
+    ! Cell centers in [-1, 1]^2.  Order matches ref_coords_ab's 0-based
+    ! subcell layout (SW, SE, NE, NW) shifted to 1-based ci=1..4.
+    a_c = (/ -half,  half,  half, -half /)
+    b_c = (/ -half, -half,  half,  half /)
+
+    gll = gausslobatto(np)
+    do i = 1, np
+      xgll(i) = real(gll%points(i), real_kind)
+    enddo
+    deallocate(gll%points)
+    deallocate(gll%weights)
+
+    do ci = 1, nphys_cell_per_elem
+      do i = 1, np
+        la(i) = one
+        do k = 1, np
+          if (k /= i) then
+            la(i) = la(i) * (a_c(ci) - xgll(k)) / (xgll(i) - xgll(k))
+          endif
+        enddo
+      enddo
+      do j = 1, np
+        lb(j) = one
+        do k = 1, np
+          if (k /= j) then
+            lb(j) = lb(j) * (b_c(ci) - xgll(k)) / (xgll(j) - xgll(k))
+          endif
+        enddo
+      enddo
+      do j = 1, np
+        do i = 1, np
+          gll_to_fv_center_w(i, j, ci) = la(i) * lb(j)
+        enddo
+      enddo
+    enddo
+  end subroutine compute_gll_to_fv_center_weights
+
+  ! Pointwise tensor-product Lagrange evaluation of a scalar GLL field at
+  ! the 4 FV cell centers, using precomputed weights from
+  ! compute_gll_to_fv_center_weights.
+  subroutine interpolate_gll_to_fv_centers(g_gll, f_fv)
+    real(real_kind), intent(in)  :: g_gll(np, np)
+    real(real_kind), intent(out) :: f_fv(nphys_cell_per_elem)
+    integer :: ci, i, j
+
+    do ci = 1, nphys_cell_per_elem
+      f_fv(ci) = zero
+      do j = 1, np
+        do i = 1, np
+          f_fv(ci) = f_fv(ci) + gll_to_fv_center_w(i, j, ci) * g_gll(i, j)
+        enddo
+      enddo
+    enddo
+  end subroutine interpolate_gll_to_fv_centers
+
+  ! Pure 1D kernel: compute, for each source cell k_src, the destination
+  ! levels k_dst that source cell overlaps and the fractional overlap.
+  !
+  ! Convention: k=1 is model top, k=nlev_col is surface; interface arrays
+  ! are 1..nlev_col+1 with index k bounding the upper edge of cell k.  In
+  ! pressure-space the values increase with k (top has lowest p).
+  !
+  ! Inputs:
+  !   nlev_col            -- column depth
+  !   p_src_iface(1..nlev_col+1) -- advected interface pressures (Pa); strictly
+  !                                 increasing in k
+  !   p_dst_iface(1..nlev_col+1) -- fixed Eulerian interface pressures (Pa)
+  !
+  ! Outputs (per source cell k_src):
+  !   ndest(k_src)               number of destination levels k_dst that
+  !                              source k_src spills into (>= 1)
+  !   dest_lev_idxs(d, k_src)    destination level [1, nlev_col], d=1..ndest
+  !   dest_portions(d, k_src)    overlap fraction in [0, 1]; sums to 1
+  !
+  ! Wall BC: caller pins p_src_iface(1) = p_dst_iface(1) and
+  ! p_src_iface(nlev_col+1) = p_dst_iface(nlev_col+1) so no mass exits the
+  ! column.  fractions sum to exactly 1 per source.
+  subroutine column_overlap_partition(nlev_col, p_src_iface, p_dst_iface, &
+                                       ndest, dest_lev_idxs, dest_portions)
+    integer,         intent(in)  :: nlev_col
+    real(real_kind), intent(in)  :: p_src_iface(nlev_col+1)
+    real(real_kind), intent(in)  :: p_dst_iface(nlev_col+1)
+    integer,         intent(out) :: ndest(nlev_col)
+    integer,         intent(out) :: dest_lev_idxs(max_ndest_v, nlev_col)
+    real(real_kind), intent(out) :: dest_portions(max_ndest_v, nlev_col)
+    integer :: k_src, k_dst, d
+    real(real_kind) :: src_top, src_bot, src_thick
+    real(real_kind) :: dst_top, dst_bot, overlap
+
+    ndest         = 0
+    dest_lev_idxs = -1
+    dest_portions = zero
+
+    do k_src = 1, nlev_col
+      src_top   = p_src_iface(k_src)
+      src_bot   = p_src_iface(k_src + 1)
+      src_thick = src_bot - src_top
+      if (src_thick <= zero) then
+        call abortmp('partmcsl column_overlap: non-positive source cell thickness.')
+      endif
+
+      d = 0
+      do k_dst = 1, nlev_col
+        dst_top = p_dst_iface(k_dst)
+        dst_bot = p_dst_iface(k_dst + 1)
+        overlap = min(src_bot, dst_bot) - max(src_top, dst_top)
+        if (overlap > zero) then
+          d = d + 1
+          if (d > max_ndest_v) then
+            call abortmp('partmcsl column_overlap: max_ndest_v exceeded; bump the parameter.')
+          endif
+          dest_lev_idxs(d, k_src) = k_dst
+          dest_portions(d, k_src) = overlap / src_thick
+        endif
+      enddo
+      if (d == 0) then
+        call abortmp('partmcsl column_overlap: source cell has zero overlap with column.')
+      endif
+      ndest(k_src) = d
+    enddo
+  end subroutine column_overlap_partition
+
+  ! For each owned (ie, ci) column, interpolate eta_dot_dpdn_prescribed and
+  ! ps_v from GLL nodes to the FV cell center, Lagrangian-advect the level
+  ! interface pressures over dt, and build the per-column source partition.
+  !
+  ! TODO: for non-prescribed-wind cases the vertical-velocity source becomes
+  ! elem%derived%omega_p (with appropriate conversion).  Specialized to
+  ! eta_dot_dpdn_prescribed today because that's what dcmip 2012 test 1.1 sets.
+  subroutine partmcsl_calc_vertical_src_partition(elem, hvcoord, dt, nets, nete, tl)
+    type(element_t),  intent(in) :: elem(:)
+    type(hvcoord_t),  intent(in) :: hvcoord
+    real(real_kind),  intent(in) :: dt
+    integer,          intent(in) :: nets, nete
+    type(TimeLevel_t),intent(in) :: tl
+    integer :: ie, ci, k
+    real(real_kind) :: ps_fv(nphys_cell_per_elem)
+    real(real_kind) :: edd_fv(nphys_cell_per_elem, nlevp)
+    real(real_kind) :: p_dst(nlevp), p_src(nlevp)
+    integer :: ndest_col(nlev)
+    integer :: dest_idxs_col(max_ndest_v, nlev)
+    real(real_kind) :: dest_fracs_col(max_ndest_v, nlev)
+
+    do ie = nets, nete
+      ! Surface pressure at FV cell centers (one value per ci).
+      call interpolate_gll_to_fv_centers(elem(ie)%state%ps_v(:,:,tl%n0), ps_fv)
+
+      ! Prescribed eta_dot_dpdn at each interface, sampled at FV cell centers.
+      do k = 1, nlevp
+        call interpolate_gll_to_fv_centers( &
+            elem(ie)%derived%eta_dot_dpdn_prescribed(:,:,k), edd_fv(:, k))
+      enddo
+
+      do ci = 1, nphys_cell_per_elem
+        ! Fixed Eulerian interface pressures p(k) = hyai(k)*p0 + hybi(k)*ps.
+        do k = 1, nlevp
+          p_dst(k) = hvcoord%hyai(k) * hvcoord%ps0 + hvcoord%hybi(k) * ps_fv(ci)
+        enddo
+
+        ! Lagrangian-advect interfaces.  Wall BC at top (k=1) and surface
+        ! (k=nlevp): clamp to fixed Eulerian values regardless of any
+        ! eta_dot_dpdn value sampled there.
+        p_src(1)     = p_dst(1)
+        p_src(nlevp) = p_dst(nlevp)
+        do k = 2, nlev
+          p_src(k) = p_dst(k) + edd_fv(ci, k) * dt
+        enddo
+
+        ! Guard against pathological inversions from large CFL or noisy w.
+        do k = 1, nlev
+          if (p_src(k+1) <= p_src(k)) then
+            call abortmp('partmcsl vertical: advected interfaces not monotonic; reduce dt or check eta_dot_dpdn.')
+          endif
+        enddo
+
+        call column_overlap_partition(nlev, p_src, p_dst, &
+            ndest_col, dest_idxs_col, dest_fracs_col)
+
+        do k = 1, nlev
+          src_partition_v%ndest(k, ci, ie)              = ndest_col(k)
+          src_partition_v%dest_lev_idxs(:, k, ci, ie)   = dest_idxs_col(:, k)
+          src_partition_v%dest_portions(:, k, ci, ie)   = dest_fracs_col(:, k)
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_calc_vertical_src_partition
+
+  ! Apply src_partition_v to pg_q in place.  Source-form accumulation:
+  !   q_new(ci, k_dst, t, ie) += dest_portions(d, k_src, ci, ie)
+  !                              * pg_q(ci, k_src, t, ie)
+  ! Reads at k_src overlap writes at k_dst across k in the same column, so
+  ! writes go to a temp q_new which is then copied back.
+  subroutine partmcsl_apply_vertical_src_partition(pg_q, nets, nete)
+    real(real_kind), intent(inout) :: pg_q(:, :, :, :)
+    integer,         intent(in)    :: nets, nete
+    integer :: ie, ci, k_src, k_dst, d
+    real(real_kind), allocatable :: q_new(:,:,:,:)
+    real(real_kind) :: frac
+
+    allocate(q_new(nphys_cell_per_elem, nlev, pmcsl_nq, nets:nete))
+    q_new = zero
+    do ie = nets, nete
+      do ci = 1, nphys_cell_per_elem
+        do k_src = 1, nlev
+          do d = 1, src_partition_v%ndest(k_src, ci, ie)
+            k_dst = src_partition_v%dest_lev_idxs(d, k_src, ci, ie)
+            frac  = src_partition_v%dest_portions(d, k_src, ci, ie)
+            q_new(ci, k_dst, :, ie) = q_new(ci, k_dst, :, ie) &
+                                      + frac * pg_q(ci, k_src, :, ie)
+          enddo
+        enddo
+      enddo
+    enddo
+    pg_q(:, :, :, nets:nete) = q_new(:, :, :, nets:nete)
+    deallocate(q_new)
+  end subroutine partmcsl_apply_vertical_src_partition
+
+  ! Top-level driver: build partition, then apply.  Mirrors the horizontal
+  ! step's pack -> exchange -> unpack -> apply structure (minus the
+  ! exchange, since vertical is column-local).
+  subroutine partmcsl_vertical_step(par, ithr, elem, hvcoord, dt, nets, nete, tl, pg_q)
+    type(parallel_t),  intent(in)    :: par
+    integer,           intent(in)    :: ithr
+    type(element_t),   intent(in)    :: elem(:)
+    type(hvcoord_t),   intent(in)    :: hvcoord
+    real(real_kind),   intent(in)    :: dt
+    integer,           intent(in)    :: nets, nete
+    type(TimeLevel_t), intent(in)    :: tl
+    real(real_kind),   intent(inout) :: pg_q(:, :, :, :)
+
+    if (size(pg_q, 3) /= pmcsl_nq) then
+      call abortmp('partmcsl_vertical_step: pg_q tracer count != pmcsl_nq.')
+    endif
+
+    call t_startf('partmcsl_vertical_step')
+    call partmcsl_calc_vertical_src_partition(elem, hvcoord, dt, nets, nete, tl)
+    call partmcsl_apply_vertical_src_partition(pg_q, nets, nete)
+    call t_stopf('partmcsl_vertical_step')
+  end subroutine partmcsl_vertical_step
 
 end module partmcsl_advection_mod
