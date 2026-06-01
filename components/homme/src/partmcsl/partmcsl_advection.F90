@@ -526,6 +526,12 @@ subroutine test_column_overlap_partition(par)
     endif
   enddo
 
+  ! Note: tests 2 and 3 use a uniform Eulerian column, so the new
+  ! dp_dst(k_src)/dp_dst(k_dst) mass weight is identically 1 and dest_portions
+  ! reduces to the bare overlap fraction.  Source-form sum-to-1 happens to
+  ! hold here as a special case, not in general.  Test 4 exercises the
+  ! non-uniform-dp case where it does not.
+
   ! -- Test 3: explicit conservation check with a non-uniform shift.
   ! Set every interior interface to a random-ish but stable perturbation
   ! that keeps p_src monotonic and inside [p_dst(1), p_dst(nlevp)].  Then
@@ -550,6 +556,81 @@ subroutine test_column_overlap_partition(par)
       call abortmp('test_column_overlap: random sum_frac != 1.')
     endif
   enddo
+
+  ! -- Test 4: non-uniform Eulerian dp + uniform shift.  Verifies the
+  ! mass-conservation invariant of the new formula:
+  !   sum_{k_dst} dp_dst(k_dst) * q_new(k_dst)
+  !     = sum_{k_src} dp_dst(k_src) * q(k_src)
+  ! where q_new(k_dst) = sum_{k_src} dest_portions(k_src->k_dst) * q(k_src).
+  ! Uses a geometrically stretched grid so dp_dst varies smoothly across
+  ! the column, mimicking the hybrid pressure grid used in the model.
+  block
+    real(real_kind) :: dp_dst_col(nlev), q_in(nlev), q_out(nlev)
+    real(real_kind), parameter :: p_top = 1.0e3_real_kind    ! 10 hPa model top
+    real(real_kind), parameter :: p_bot = 1.0e5_real_kind    ! 1000 hPa surface
+    real(real_kind), parameter :: stretch_shift = 50.0_real_kind  ! Pa, well-subcell
+    real(real_kind) :: mass_in, mass_out, max_src_sum_dev
+    real(real_kind) :: src_sum
+    ! Build a geometric Eulerian column: log-uniform in p from p_top to p_bot.
+    do k = 1, nlevp
+      p_dst(k) = p_top * (p_bot / p_top) ** (real(k - 1, real_kind) / real(nlev, real_kind))
+    enddo
+    do k = 1, nlev
+      dp_dst_col(k) = p_dst(k+1) - p_dst(k)
+    enddo
+    ! Confirm we actually have non-uniform dp (otherwise this test is trivial).
+    if (abs(dp_dst_col(nlev) / dp_dst_col(1) - one) < 0.5_real_kind) then
+      call abortmp('test_column_overlap: test 4 grid not non-uniform enough.')
+    endif
+
+    ! Uniform downward shift of interior interfaces; walls pinned.
+    p_src(1)     = p_dst(1)
+    p_src(nlevp) = p_dst(nlevp)
+    do k = 2, nlev
+      p_src(k) = p_dst(k) + stretch_shift
+    enddo
+
+    call column_overlap_partition(nlev, p_src, p_dst, &
+        ndest_col, dest_idxs, dest_fracs)
+
+    ! Synthetic mixing-ratio field with vertical structure.
+    do k = 1, nlev
+      q_in(k) = real(k, real_kind)
+    enddo
+    q_out = zero
+    do k = 1, nlev
+      do d = 1, ndest_col(k)
+        q_out(dest_idxs(d, k)) = q_out(dest_idxs(d, k)) + &
+            dest_fracs(d, k) * q_in(k)
+      enddo
+    enddo
+
+    mass_in  = zero
+    mass_out = zero
+    do k = 1, nlev
+      mass_in  = mass_in  + dp_dst_col(k) * q_in(k)
+      mass_out = mass_out + dp_dst_col(k) * q_out(k)
+    enddo
+    if (abs(mass_out - mass_in) > tol * abs(mass_in)) then
+      write(iulog,*) 'test_column_overlap: test 4 mass_in=', mass_in, &
+          ' mass_out=', mass_out, ' rel_err=', (mass_out-mass_in)/mass_in
+      call abortmp('test_column_overlap: test 4 column tracer mass not conserved.')
+    endif
+
+    ! Sanity: confirm source-form sum is NOT identically 1 on this grid
+    ! (otherwise Test 4 reduces to the uniform-grid case and proves nothing).
+    max_src_sum_dev = zero
+    do k = 1, nlev
+      src_sum = zero
+      do d = 1, ndest_col(k)
+        src_sum = src_sum + dest_fracs(d, k)
+      enddo
+      max_src_sum_dev = max(max_src_sum_dev, abs(src_sum - one))
+    enddo
+    if (max_src_sum_dev < 1e-6_real_kind) then
+      call abortmp('test_column_overlap: test 4 source-form sum ~= 1; grid too uniform.')
+    endif
+  end block
 
   if (par%masterproc) then
     write(iulog,*) 'partmcsl_test: column_overlap_partition passed.'
@@ -1449,11 +1530,25 @@ end subroutine
   !   ndest(k_src)               number of destination levels k_dst that
   !                              source k_src spills into (>= 1)
   !   dest_lev_idxs(d, k_src)    destination level [1, nlev_col], d=1..ndest
-  !   dest_portions(d, k_src)    overlap fraction in [0, 1]; sums to 1
+  !   dest_portions(d, k_src)    mass-weighted transfer coefficient:
+  !                                (overlap / lagr_thick(k_src))
+  !                                * dp_dst(k_src) / dp_dst(k_dst)
+  !                              applied as q_new(k_dst) += portion * q(k_src)
+  !                              to give mass-conserving mixing-ratio update.
+  !
+  ! The dp_dst(k_src)/dp_dst(k_dst) factor is the air-mass weight of the
+  ! displaced Lagrangian parcel from cell k_src normalized to the fixed
+  ! Eulerian mass of dest cell k_dst.  On a uniform grid the ratio is 1 and
+  ! the portion reduces to the bare overlap fraction.
+  !
+  ! Invariant: total column tracer mass is exactly conserved by the apply
+  !   sum_{k_dst} dp_dst(k_dst) * q_new(k_dst)
+  !     = sum_{k_src} dp_dst(k_src) * q(k_src)
+  ! because sum over k_dst of overlap(k_src,k_dst) = lagr_thick(k_src).
   !
   ! Wall BC: caller pins p_src_iface(1) = p_dst_iface(1) and
   ! p_src_iface(nlev_col+1) = p_dst_iface(nlev_col+1) so no mass exits the
-  ! column.  fractions sum to exactly 1 per source.
+  ! column.
   subroutine column_overlap_partition(nlev_col, p_src_iface, p_dst_iface, &
                                        ndest, dest_lev_idxs, dest_portions)
     integer,         intent(in)  :: nlev_col
@@ -1465,6 +1560,7 @@ end subroutine
     integer :: k_src, k_dst, d
     real(real_kind) :: src_top, src_bot, src_thick
     real(real_kind) :: dst_top, dst_bot, overlap
+    real(real_kind) :: dp_src_eul, dp_dst_eul
 
     ndest         = 0
     dest_lev_idxs = -1
@@ -1477,6 +1573,8 @@ end subroutine
       if (src_thick <= zero) then
         call abortmp('partmcsl column_overlap: non-positive source cell thickness.')
       endif
+      ! Eulerian (pre-displacement) thickness of source cell k_src.
+      dp_src_eul = p_dst_iface(k_src + 1) - p_dst_iface(k_src)
 
       d = 0
       do k_dst = 1, nlev_col
@@ -1488,8 +1586,9 @@ end subroutine
           if (d > max_ndest_v) then
             call abortmp('partmcsl column_overlap: max_ndest_v exceeded; bump the parameter.')
           endif
+          dp_dst_eul = dst_bot - dst_top
           dest_lev_idxs(d, k_src) = k_dst
-          dest_portions(d, k_src) = overlap / src_thick
+          dest_portions(d, k_src) = (overlap / src_thick) * (dp_src_eul / dp_dst_eul)
         endif
       enddo
       if (d == 0) then
