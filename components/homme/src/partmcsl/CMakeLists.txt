@@ -13,6 +13,7 @@ add_definitions(-DHOMME_ENABLE_PARTMCSL)
 message(STATUS "PARTMCSL stochastic transport enabled")
 
 add_library( partmcsl
+    partmcsl.cpp
     partmcsl_sphere_geometry.cpp
 )
 

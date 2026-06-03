@@ -35,11 +35,8 @@ IF (HOMME_ENABLE_PARTMCSL)
    ${PARTMCSL_DIR}/partmcsl_mod.F90
    ${PARTMCSL_DIR}/partmcsl_advection.F90
  )
- SET(THETAL_SRCS_CXX 
-    ${THETAL_SRCS_CXX}
-    ${PARTMCSL_DIR}/partmcsl_sphere_geometry.cpp
-    ${PARTMCSL_DIR}/partmcsl.cpp
- )
+ # C++ sources are built into the partmcsl library (src/partmcsl/CMakeLists.txt)
+ # and linked into each theta-l exec by createTestExec.
  SET(EXEC_INCLUDE_DIRS
     ${EXEC_INCLUDE_DIRS}
     ${SRC_DIR}/partmcsl

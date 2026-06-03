@@ -197,6 +197,10 @@ macro(createTestExec execName execType macroNP macroNC
     TARGET_LINK_LIBRARIES(${execName} sundials_arkode)
   ENDIF ()
 
+  IF (HOMME_ENABLE_PARTMCSL AND "${execType}" STREQUAL "theta-l")
+    TARGET_LINK_LIBRARIES(${execName} partmcsl)
+  ENDIF ()
+
   INSTALL(TARGETS ${execName} RUNTIME DESTINATION tests)
 
 endmacro(createTestExec)

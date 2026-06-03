@@ -1,7 +1,6 @@
 #include "partmcsl.hpp"
 #include <iostream>
 #include <sstream>
-#include <typeinfo>
 
 namespace partmcsl {
 
@@ -38,15 +37,12 @@ void ref_coords_ab(Real& a, Real& b, const Int& subcell_idx, const Int& vert_idx
   } // ref_coords_ab
 
 void src_partition_init(const Int nelem) {
-  std::ostringstream ss;
   if (!src_partition) {
     src_partition = std::make_shared<partmcsl::SlSourcePartition>(nelem);
-//     ss << "partmcsl.cpp src_partition_init : initializing with nelem = " << nelem << ".\n";
   }
   else {
-    ss << "partmcsl.cpp : ERROR src_partition is already initialized.\n";
+    std::cout << "partmcsl.cpp : ERROR src_partition is already initialized.\n";
   }
-  std::cout << ss.str();
 }
 
 void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neighbors,
@@ -64,8 +60,6 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     slmm_assert(src_partition);
     slmm_throw_if(!src_partition, "src_partition not allocated.");
 
-    std::stringstream ss;
-
     // input views
     homme::FA5<const homme::Real> points(reinterpret_cast<const homme::Real*>(points_p),
       ndim, nverts, n_subcells_per_elem, max_num_elem_neighbors, nelemd);
@@ -79,11 +73,6 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     homme::FA3<homme::Int> ndest(ndest_p, nlev, n_subcells_per_elem, nelemd);
     homme::FA4<homme::Int> dest_idx(dest_idx_p, max_ndest_cell, nlev, n_subcells_per_elem, nelemd);
     homme::FA4<homme::Real> dest_frac(frac_p, max_ndest_cell, nlev, n_subcells_per_elem, nelemd);
-
-//     ss << "partmcsl::calc_source_partition received ie " << ie << " nelemd " << nelemd
-//        << " n_elem_neighbors " << n_elem_neighbors << " elem_self_idx " << elem_self_idx
-//        << " level " << lev_idx << " of " << nlev << "\n";
-//     std::cout << ss.str();
 
     src_partition->init_local_mesh_if_needed(ie, n_elem_neighbors, elem_self_idx, points, area);
 
@@ -100,11 +89,7 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     const auto& mesh_area = src_partition->area(ie);
 
     const Int ncells_in_mesh = mesh.e.extent(0);
-//     ss.str("");
-//     ss << "partmcsl::calc_source_partition output initialized to null for new time step; ncells = " << ncells_in_mesh << ".\n";
-//     std::cout << ss.str();
 
-    // workspace buffers will be wrapped in unmanaged views for easier indexing shortly
     Real vi_buf[3 * nverts];
     Real vo_buf[3 * max_num_intersections];
     Real wrk_buf[4 * max_num_intersections];
@@ -117,7 +102,6 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
     for (int adv_cell_idx = 0; adv_cell_idx<n_subcells_per_elem; ++adv_cell_idx) {
       // loop over advected subcells of elem(ie)
 
-//       const Real src_area = mesh_area(start_cell_idx + adv_cell_idx);
       const Real src_area = tri_area(Kokkos::subview(adv_points, Kokkos::ALL, 0, adv_cell_idx),
                                      Kokkos::subview(adv_points, Kokkos::ALL, 1, adv_cell_idx),
                                      Kokkos::subview(adv_points, Kokkos::ALL, 2, adv_cell_idx)) +
@@ -126,9 +110,6 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
                                      Kokkos::subview(adv_points, Kokkos::ALL, 3, adv_cell_idx));
 
       slmm_assert(src_area > 0);
-//       ss.str("");
-//       ss << "elem " << ie << " subcell " << adv_cell_idx << " has mesh cell idx " << start_cell_idx + adv_cell_idx << " of " << ncells_in_mesh << " area = " << src_area << "\n";
-//       std::cout << ss.str();
       int n_elem_overlap = 0;
       for (int cell_idx=0; cell_idx<ncells_in_mesh; ++cell_idx) {
         // loop over static cells in mesh
@@ -173,19 +154,14 @@ void calc_source_partition(const Int ie, const Int nelemd, const Int n_elem_neig
         total_frac += dest_frac(j, lev_idx, adv_cell_idx, ie);
       }
 
-      /**
-        assert that the sum of all overlap subregions's areas =
-        the advected cell's original area
-      */
-      std::ostringstream ss;
+      // sum of all overlap subregions' fractions must equal 1
       if (std::abs(total_frac - 1.0) > area_tol) {
-        ss.str("");
-        ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n";
-        ss << "   at ie = " << ie << " of " << nelemd << " src_area = " << src_area <<
-        " found " << n_elem_overlap << " overlap vertices in this elem" << "\n";
+        std::ostringstream ss;
+        ss << "partmcsl calc_source_partition error: total frac = " << total_frac << "\n"
+           << "   at ie = " << ie << " of " << nelemd << " src_area = " << src_area
+           << " found " << n_elem_overlap << " overlap vertices in this elem\n";
+        slmm_throw_if(true, ss.str());
       }
-      slmm_throw_if(std::abs(total_frac - 1.0) > area_tol, ss.str());
-//       slmm_assert(std::abs(total_frac - 1.0) < area_tol);
 
     } // loop over advected subcells of elem(ie)
   }
@@ -253,11 +229,5 @@ extern "C" void init_local_meshes(const homme::Int nelemd,
 extern "C" void partmcsl_init_local(const homme::Int nelemd) {
   partmcsl::src_partition_init(nelemd);
 }
-
-extern "C" void test_int_array(const homme::Int* array, const homme::Int n) {
-    partmcsl::test_int_array(homme::FA1<const homme::Int>(array,n),n) ;
-    partmcsl::test_int_array(array, n);
-}
-
 
 

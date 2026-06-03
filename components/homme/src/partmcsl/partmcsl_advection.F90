@@ -7,8 +7,8 @@ module partmcsl_advection_mod
 !   Terms such as "cell" and "fv" refer to the physics grid's finite volume cells.
 
   use bndry_mod, only          : ghost_exchangeVfull
-  use coordinate_systems_mod, only : cartesian3D_t, cartesian2D_t, &
-                  spherical_polar_t, distance, change_coordinates, sphere_tri_area
+  use coordinate_systems_mod, only : cartesian3D_t, spherical_polar_t, &
+                                     distance, change_coordinates
   use control_mod, only: cubed_sphere_map, dt_tracer_factor, dt_remap_factor, vert_remap_q_alg
   use cube_mod, only: ref2sphere
   use dimensions_mod, only     : nlev, nlevp, np, nelemd
@@ -31,36 +31,24 @@ module partmcsl_advection_mod
   public :: partmcsl_step_forward, partmcsl_vertical_step
   public :: partmcsl_exchange_source_partition
   public :: source_partition_t, src_partition
-  
-  
-                        
 
   !=====================================
   ! PartMCSL local finite volume mesh
   !
-  ! One local mesh for each element owned by this rank...
-  ! For each elem(ie), ie = 1,...,nelemd:
+  ! One local mesh for each element owned by this rank.  For each elem(ie),
+  ! ie = 1,...,nelemd:
   !
-  !  fv_mesh%points(1:4, ci, in, ie) give the coordinates of the 4 vertices of fv subcell
+  !  fv_mesh%points(1:4, ci, in, ie) gives the coordinates of the 4 vertices of fv subcell
   !     ci (in [1,4]) of element `in` (in [1, nneighbors]) in elem(ie)'s neighbor list.
-  !  fv_mesh%elem_global_id(i,ie) gives Homme's global index of the element that contains
-  !  subcell i.
-  ! 
-  !  fv_mesh%elem_ij_corners(:,1:4,ie) gives the (i,j) indices, for i,j in [1,np], of the gll nodes
-  !  at the corners of elem(ie).
-  !
+  !  fv_mesh%elem_global_id(ci, in, ie) gives Homme's global index of element `in` in
+  !     elem(ie)'s neighbor list.
   !  fv_mesh%nneighbors(ie) gives the number of neighboring elements that elem(ie) has.
-  !
-  !  fv_mesh%my_elem_local_idx(ie) gives the local index, in [1,nneighbors(ie)], of elem(ie); 
-  !  i.e., it's the index of "self" in the list of neighbors.
-  ! 
-  !  fv_mesh%subcell_idx(i, ie) gives the subcell index, in [1,4], of fv cell i relative to its
-  !     enclosing element, fv_mesh%elem_local_id(i,ie).  
+  !  fv_mesh%my_elem_local_idx(ie) gives the local index, in [1,nneighbors(ie)], of elem(ie);
+  !     i.e., it's the index of "self" in the list of neighbors.
   type :: local_fv_mesh_t
     type(cartesian3D_t), allocatable :: points(:,:,:,:) ! (nverts, nphys_cell_per_elem, max_num_neighbors, nelemd)
     real(real_kind), allocatable :: subcell_area(:,:,:) ! (nphys_cell_per_elem, max_num_neighbors, nelemd)
     integer, allocatable :: elem_global_id(:,:,:) !(nphys_cell_per_elem, max_num_neighbors, nelemd)
-!     integer, allocatable :: elem_ij_corners(:,:,:) ! (2, 4, nelemd)
     integer, allocatable :: nneighbors(:) ! (nelemd)
     integer, allocatable :: my_elem_local_idx(:) ! (nelemd)
     integer :: max_nneighbors
@@ -107,17 +95,13 @@ module partmcsl_advection_mod
     real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
-  
-!   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
-!   elem(ie)%state%v(:,:,:,:,tl%np1)stores v at t1
 
-  !=====================================
-  ! Vertical source partition (column-local, no MPI).
-  !
-  ! for testing
-  !
+  !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
+  !   elem(ie)%state%v(:,:,:,:,tl%np1) stores v at t1
+
+  ! Gate for partmcsl_test's internal checks.  Always on for now; flip to .false.
+  ! to skip the (cheap but non-trivial) self-tests at startup.
   logical :: do_checks = .true.
-  
 
   ! Constants
   real(real_kind), parameter :: zero = 0.0_real_kind, &
@@ -185,17 +169,16 @@ subroutine partmcsl_init(par, elem)
     !
     ! local variables
     !
-    integer :: ie, in, ci, vi, i, j, iloc, jloc    
-    type(cartesian3D_t) :: p_cart, elem_cart
-    real(real_kind) :: a, b, dist, elem_area, elem_area_sum, atmp
+    integer :: ie, in, ci, vi
+    type(cartesian3D_t) :: p_cart
+    real(real_kind) :: a, b
     integer :: num_neighbors, max_num_neighbors
-    logical :: error_out
     !
     ! not used, but needed for interfaces
     !
-    integer :: facenum 
+    integer :: facenum
     type(spherical_polar_t) :: p_sph
-    
+
     call t_startf('partmcsl_init')
     !--------------------------------------------
     ! make sure we're ok to get started
@@ -230,13 +213,10 @@ subroutine partmcsl_init(par, elem)
       endif
     else 
       if (max_num_neighbors /= 9) then
-        call abortmp("partmcsl does assumes regular cubed sphere meshes (no RRM).")
+        call abortmp("partmcsl assumes regular cubed sphere meshes (no RRM).")
       endif
     endif
-!     if (par%masterproc) then
-!       write(iulog,*) 'partmcsl init: ie = ', ie, ' max_num_neighbors = ', max_num_neighbors, ' nneighbors = ', fv_mesh%nneighbors
-!     endif
-    
+
     fv_mesh%max_nneighbors = max_num_neighbors
     allocate(fv_mesh%points(nverts, nphys_cell_per_elem, max_num_neighbors, nelemd))
     allocate(fv_mesh%elem_global_id(nphys_cell_per_elem, max_num_neighbors, nelemd))
@@ -274,10 +254,6 @@ subroutine partmcsl_init(par, elem)
     !--------------------------------------------
     allocate(q_halo(nphys_cell_per_elem, pmcsl_nq, nlev, fv_mesh%max_nneighbors, nelemd))
     q_halo = zero
-
-    !--------------------------------------------
-    ! allocate vertical source partition (column-local; no MPI).
-    !--------------------------------------------
 
     !--------------------------------------------
     ! Precompute Lagrange weights for GLL -> FV cell-center pointwise
@@ -332,13 +308,6 @@ subroutine partmcsl_init(par, elem)
             fv_mesh%points(vi, ci, in, ie) = p_cart
           enddo ! loop over vertices in subcell
           fv_mesh%elem_global_id(ci, in, ie) = elem(ie)%desc%globalID_neigh_corners(in)
-    !           call sphere_tri_area(fv_mesh%points(1, ci, in, ie), &
-    !                           fv_mesh%points(2, ci, in, ie), &
-    !                           fv_mesh%points(3, ci, in, ie), fv_mesh%subcell_area(ci, in, ie))
-    !           call sphere_tri_area(fv_mesh%points(1, ci, in, ie), &
-    !                           fv_mesh%points(3, ci, in, ie), &
-    !                           fv_mesh%points(4, ci, in, ie), atmp)
-    !           fv_mesh%subcell_area(ci, in, ie) = fv_mesh%subcell_area(ci, in, ie) + atmp
           fv_mesh%subcell_area(ci, in, ie) = &
               tri_area(fv_mesh%points(1, ci, in, ie), &
                        fv_mesh%points(2, ci, in, ie), &
@@ -348,12 +317,6 @@ subroutine partmcsl_init(par, elem)
                        fv_mesh%points(4, ci, in, ie))
         enddo ! loop over subcells in element
       enddo ! loop over element neighbors
-      
-!       do vi=1,4
-!         call ij_idx_from_corner_idx(iloc, jloc, vi)
-!         fv_mesh%elem_ij_corners(1, vi, ie) = iloc
-!         fv_mesh%elem_ij_corners(2, vi, ie) = jloc
-!       enddo
     enddo ! loop over elements owned by this rank
        
     !
@@ -390,16 +353,7 @@ subroutine ij_idx_from_corner_idx(iloc, jloc, corner_idx)
         case default
             call abortmp("corner_idx out of range")
     end select
-    !     if (corner_idx == 1) then
-    !         iloc = 1; jloc = 1
-    !     else if (corner_idx == 2) then
-    !         iloc = 4; jloc = 1
-    !     else if (corner_idx == 3) then
-    !         iloc = 4; jloc = 4
-    !     else if (corner_idx == 4) then
-    !         iloc = 1; jloc = 4
-    !     endif
-end subroutine 
+end subroutine
 
 subroutine partmcsl_test(par, elem)
   type(parallel_t), intent(in) :: par
@@ -697,7 +651,6 @@ subroutine check_ij_corners(par, elem)
         if (iloc == -1 .or. jloc == -1) then
           call abortmp("unable to match a corner with a gll node")
         endif
-    !         write(iulog,*) 'partmcsl init: corner ', vi, ' has (i,j) index ', fv_mesh%elem_ij_corners(:, vi, ie)
         error_out = .false.
         if (vi == 1) then
             if (iloc /= 1 .or. jloc /= 1) then
@@ -760,19 +713,15 @@ end subroutine
           call abortmp("partmcsl element area mismatch.")
         endif
     enddo
-!     write(iulog,*) "partmcsl_test: check_elem_area passed."
   end subroutine
   
   subroutine partmcsl_finalize()
     if (allocated(fv_mesh%points)) then
       deallocate(fv_mesh%points)
-!       deallocate(fv_mesh%elem_local_id)
       deallocate(fv_mesh%elem_global_id)
-!       deallocate(fv_mesh%elem_ij_corners)
       deallocate(fv_mesh%nneighbors)
       deallocate(fv_mesh%my_elem_local_idx)
       deallocate(fv_mesh%subcell_area)
-!       deallocate(fv_mesh%subcell_idx)
     endif
     if (allocated(src_partition%ndest)) then
       deallocate(src_partition%dest_cell_idxs)
@@ -1052,12 +1001,9 @@ end subroutine
   ! (per-cell mixing-ratio update using arrival_partition + halo).
   !
   ! pg_q is the partmcsl-advected tracer state on the FV grid; for dcmip 2012
-  ! test 1.1 this is pg_data%q(:, :, 5:8, :) (see plan
-  ! ~/.claude/plans/giggly-tumbling-garden.md and memory entry
-  ! partmcsl_project_interface_refactor).  Eventually this signature will
+  ! test 1.1 this is pg_data%q(:, :, 5:8, :).  Eventually this signature will
   ! change to accept a particle-payload-shaped state.
   subroutine partmcsl_step_forward(par, ithr, elem, dt, nets, nete, tl, pg_q)
-    use iso_c_binding, only: c_int
     type(parallel_t),     intent(in)    :: par
     integer,              intent(in)    :: ithr
     type (element_t)     , intent(inout) :: elem(:)
@@ -1155,7 +1101,7 @@ end subroutine
     real(kind=real_kind) :: uxyz0(3,4), uxyz1(3,4), uxyzhalf(3,4)
     type(cartesian3D_t) :: adv_corners(4)
     type(spherical_polar_t) :: p_sph
-    integer :: i, j, ci, cj, vi, pt_idx, facenum
+    integer :: i, ci, cj, vi, facenum
     real(kind=real_kind) :: a, b
     
     !--------------------------------------------
@@ -1299,9 +1245,7 @@ end subroutine
   !
   ! TODO: for non-prescribed-wind cases the vertical-velocity source
   ! becomes elem%derived%omega_p.
-  subroutine partmcsl_vertical_step(par, ithr, elem, hvcoord, dt, nets, nete, tl, pg_q)
-    type(parallel_t),  intent(in)    :: par
-    integer,           intent(in)    :: ithr
+  subroutine partmcsl_vertical_step(elem, hvcoord, dt, nets, nete, tl, pg_q)
     type(element_t),   intent(in)    :: elem(:)
     type(hvcoord_t),   intent(in)    :: hvcoord
     real(real_kind),   intent(in)    :: dt

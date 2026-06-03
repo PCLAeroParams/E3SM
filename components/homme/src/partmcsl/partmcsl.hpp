@@ -19,7 +19,6 @@ namespace partmcsl {
   using R3Array = siqk::InExeSpace<siqk::ConstVec3s, Kokkos::HostSpace>::type;
   using I2Array = siqk::InExeSpace<siqk::Idxs, Kokkos::HostSpace>::type;
   using R1Array = siqk::InExeSpace<Kokkos::View<Real*>, Kokkos::HostSpace>::type;
-  using I1Array = siqk::InExeSpace<Kokkos::View<Int*>, Kokkos::HostSpace>::type;
 
   // see siqk_intersect.hpp for details.
   using LocalMesh = siqk::sh::Mesh<Kokkos::HostSpace>;
@@ -28,8 +27,6 @@ namespace partmcsl {
   static constexpr Int max_num_intersections = 8;
   // We don't do RRM, so elements have <= 9 neighbors
   static constexpr Int max_num_elem_neighbors = 9;
-  // we use symmetric order-12 quadrature.  see siqk_quadrature.hpp for more detail.
-//   static constexpr Int tri_quadrature_order = 12;
   // computations are in R3
   static constexpr Int ndim = 3;
   // we assume pg2
@@ -84,11 +81,6 @@ namespace partmcsl {
       m.e = I2Array("e", ncells, nverts);
       a = R1Array("a", ncells);
 
-      std::stringstream ss;
-//       ss << "partmcsl::SlSourcePartition::init_local_mesh_if_needed: initializing new mesh for ie "
-//          << ie << " with " << npts << " points and " << ncells << " cells.\n";
-//       std::cout << ss.str();
-
       Int pt_idx = 0;
       Int cell_idx = 0;
       for (int nbr_idx = 0; nbr_idx < nneighbors; ++nbr_idx) {
@@ -110,12 +102,12 @@ namespace partmcsl {
           slmm_assert(area_pass);
 
           if (!area_pass) {
-            ss.str("");
+            std::stringstream ss;
             ss << "partmcsl.hpp : init_local_mesh_if_needed area mismatch error.  area = "
                << areas(subcell_idx, nbr_idx, ie) << " area_check = " << area_check
                << " at ie " << ie << " nbr " << nbr_idx << " subcell_idx " << subcell_idx
                << "\n";
-            slmm_throw_if(!area_pass, ss.str());
+            slmm_throw_if(true, ss.str());
           }
 
           a(cell_idx++) = areas(subcell_idx, nbr_idx, ie);
@@ -172,19 +164,5 @@ namespace partmcsl {
             Real* frac_p
             );
 
-  template <typename ArrayType>
-  void test_int_array(const ArrayType& arr, const homme::Int n) {
-    std::stringstream ss;
-    ss << "partmcsl: c++ received (" << n << ") = (";
-    for (int i=0; i<n; ++i) {
-      ss << arr[i] << " ";
-    }
-    ss << ")\n";
-    std::cout << ss.str();
-  }
-
-  bool areas_match();
 } // namespace partmcsl
 #endif
-
-

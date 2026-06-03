@@ -1341,8 +1341,8 @@ contains
       call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt_q, nets, nete, &
                                  tl, pg_data%q(:, :, 5:8, :))
       call t_stopf('partmcsl_step_forward')
-      call partmcsl_vertical_step(hybrid%par, hybrid%ithr, elem, hvcoord, dt_q, &
-                                  nets, nete, tl, pg_data%q(:, :, 5:8, :))
+      call partmcsl_vertical_step(elem, hvcoord, dt_q, nets, nete, tl, &
+                                  pg_data%q(:, :, 5:8, :))
 #endif
   end subroutine prim_step
 
