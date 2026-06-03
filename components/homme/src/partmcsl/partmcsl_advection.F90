@@ -15,6 +15,7 @@ module partmcsl_advection_mod
   use edge_mod, only           : initGhostBuffer3D, FreeGhostBuffer3D
   use edgetype_mod, only       : GhostBuffer3D_t
   use element_mod, only        : element_t
+  use gllfvremap_mod, only     : gfr_g2f_scalar
   use hybvcoord_mod, only      : hvcoord_t
   use kinds, only              : real_kind, iulog
   use parallel_mod, only       : parallel_t, abortmp
@@ -30,6 +31,7 @@ module partmcsl_advection_mod
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
   public :: partmcsl_step_forward, partmcsl_vertical_step
   public :: partmcsl_exchange_source_partition
+  public :: partmcsl_permute_pg_q_cells
   public :: source_partition_t, src_partition
 
   !=====================================
@@ -147,11 +149,17 @@ module partmcsl_advection_mod
   logical, private :: ghostbuf_initialized = .false.
   type(GhostBuffer3D_t), private :: partmcsl_q_ghostbuf
   logical, private :: q_ghostbuf_initialized = .false.
-  ! gll_to_fv_center_w(i, j, ci): tensor-product Lagrange weights evaluating a
-  ! scalar GLL field g(np, np) at the 4 FV cell centers in the reference quad
-  ! [-1, 1]^2.  Used for pointwise interpolation of eta_dot_dpdn_prescribed
-  ! and ps_v from GLL nodes to FV cell centers in the vertical step.
-  real(real_kind), allocatable, private :: gll_to_fv_center_w(:,:,:)
+  ! Permutation from gllfvremap's flat FV cell order (k = nphys*(j-1) + i, i.e.
+  ! SW, NW, SE, NE for pg2) to partmcsl's ref_coords_ab order (ci=1..4 = SW,
+  ! SE, NE, NW, CCW from SW).  Used to map gfr_g2f_scalar output and to
+  ! translate pg_data%q at the partmcsl/dycore boundary.
+  !
+  ! TODO (follow-up): harmonize partmcsl's internal ci convention with
+  ! gllfvremap's (option A in the convention discussion) so this permutation
+  ! and the boundary translation in partmcsl_permute_pg_q_cells can be deleted.
+  ! Touches ref_coords_ab on the C++ side and any consumer of fv_mesh that
+  ! assumes CCW-from-SW ordering.
+  integer, parameter, private :: gfr_to_partmcsl_ci(nphys_cell_per_elem) = (/ 1, 3, 4, 2 /)
   ! q_halo(ci, t, k, l_local, je) holds neighbor-q values after exchange:
   !   ci: source subcell [1..nphys_cell_per_elem]
   !   t : partmcsl tracer slot [1..pmcsl_nq]
@@ -254,13 +262,6 @@ subroutine partmcsl_init(par, elem)
     !--------------------------------------------
     allocate(q_halo(nphys_cell_per_elem, pmcsl_nq, nlev, fv_mesh%max_nneighbors, nelemd))
     q_halo = zero
-
-    !--------------------------------------------
-    ! Precompute Lagrange weights for GLL -> FV cell-center pointwise
-    ! interpolation used by the vertical step.
-    !--------------------------------------------
-    allocate(gll_to_fv_center_w(np, np, nphys_cell_per_elem))
-    call compute_gll_to_fv_center_weights()
 
     !--------------------------------------------
     ! allocate the ghost-exchange buffer used for source-partition communication
@@ -736,7 +737,6 @@ end subroutine
       deallocate(arrival_partition%src_lneighbor)
     endif
     if (allocated(q_halo)) deallocate(q_halo)
-    if (allocated(gll_to_fv_center_w)) deallocate(gll_to_fv_center_w)
     if (ghostbuf_initialized) then
       call FreeGhostBuffer3D(partmcsl_ghostbuf)
       ghostbuf_initialized = .false.
@@ -746,6 +746,40 @@ end subroutine
       q_ghostbuf_initialized = .false.
     endif
   end subroutine partmcsl_finalize
+
+  ! Translate pg_data%q's first dim between gllfvremap's flat FV cell order
+  ! (SW, NW, SE, NE for pg2 -- the order used by gfr_dyn_to_fv_phys to seed
+  ! the IC and by the NetCDF output writer) and partmcsl's CCW-from-SW order
+  ! (SW, SE, NE, NW -- the order used by ref_coords_ab and fv_mesh).
+  ! Call with to_partmcsl=.true. on entry to partmcsl's per-step routines,
+  ! and to_partmcsl=.false. before returning control to the dycore.
+  subroutine partmcsl_permute_pg_q_cells(q, to_partmcsl)
+    real(real_kind), intent(inout) :: q(:, :, :, :)
+    logical,         intent(in)    :: to_partmcsl
+    real(real_kind) :: tmp(nphys_cell_per_elem)
+    integer :: ci, k, t, ie
+
+    if (size(q, 1) /= nphys_cell_per_elem) then
+      call abortmp('partmcsl_permute_pg_q_cells: unexpected first-dim size.')
+    endif
+
+    do ie = 1, size(q, 4)
+      do t = 1, size(q, 3)
+        do k = 1, size(q, 2)
+          if (to_partmcsl) then
+            do ci = 1, nphys_cell_per_elem
+              tmp(ci) = q(gfr_to_partmcsl_ci(ci), k, t, ie)
+            enddo
+          else
+            do ci = 1, nphys_cell_per_elem
+              tmp(gfr_to_partmcsl_ci(ci)) = q(ci, k, t, ie)
+            enddo
+          endif
+          q(:, k, t, ie) = tmp
+        enddo
+      enddo
+    enddo
+  end subroutine partmcsl_permute_pg_q_cells
 
   
   
@@ -1161,75 +1195,12 @@ end subroutine
   ! since eta_dot_dpdn already has units of dp/dt along eta-following
   ! surfaces.  Top (k=1) and surface (k=nlevp) are pinned to their
   ! Eulerian values so no mass leaves the column.
+  !
+  ! ps_v and eta_dot_dpdn_prescribed are sampled at FV cell centers by
+  ! delegating to gllfvremap's gfr_g2f_scalar -- sphere-area-weighted FV
+  ! cell mean of the GLL polynomial, using the cubed-sphere Jacobian.
+  ! gfr_init must have been called upstream (dcmip12_wrapper.F90 does this).
   !=====================================================================
-
-  ! Precompute Lagrange-basis weights so that for a scalar GLL field
-  ! g_gll(np, np):
-  !   f_fv(ci) = sum_{i,j} gll_to_fv_center_w(i, j, ci) * g_gll(i, j)
-  ! evaluates g at the 4 FV cell centers in the reference quad [-1, 1]^2.
-  ! Called once in partmcsl_init.
-  subroutine compute_gll_to_fv_center_weights()
-    use quadrature_mod, only: quadrature_t, gausslobatto
-    type(quadrature_t) :: gll
-    real(real_kind) :: a_c(nphys_cell_per_elem), b_c(nphys_cell_per_elem)
-    real(real_kind) :: la(np), lb(np)
-    real(real_kind) :: xgll(np)
-    integer :: ci, i, j, k
-
-    ! Cell centers in [-1, 1]^2.  Order matches ref_coords_ab's 0-based
-    ! subcell layout (SW, SE, NE, NW) shifted to 1-based ci=1..4.
-    a_c = (/ -half,  half,  half, -half /)
-    b_c = (/ -half, -half,  half,  half /)
-
-    gll = gausslobatto(np)
-    do i = 1, np
-      xgll(i) = real(gll%points(i), real_kind)
-    enddo
-    deallocate(gll%points)
-    deallocate(gll%weights)
-
-    do ci = 1, nphys_cell_per_elem
-      do i = 1, np
-        la(i) = one
-        do k = 1, np
-          if (k /= i) then
-            la(i) = la(i) * (a_c(ci) - xgll(k)) / (xgll(i) - xgll(k))
-          endif
-        enddo
-      enddo
-      do j = 1, np
-        lb(j) = one
-        do k = 1, np
-          if (k /= j) then
-            lb(j) = lb(j) * (b_c(ci) - xgll(k)) / (xgll(j) - xgll(k))
-          endif
-        enddo
-      enddo
-      do j = 1, np
-        do i = 1, np
-          gll_to_fv_center_w(i, j, ci) = la(i) * lb(j)
-        enddo
-      enddo
-    enddo
-  end subroutine compute_gll_to_fv_center_weights
-
-  ! Pointwise tensor-product Lagrange evaluation of a scalar GLL field at
-  ! the 4 FV cell centers, using precomputed weights from
-  ! compute_gll_to_fv_center_weights.
-  subroutine interpolate_gll_to_fv_centers(g_gll, f_fv)
-    real(real_kind), intent(in)  :: g_gll(np, np)
-    real(real_kind), intent(out) :: f_fv(nphys_cell_per_elem)
-    integer :: ci, i, j
-
-    do ci = 1, nphys_cell_per_elem
-      f_fv(ci) = zero
-      do j = 1, np
-        do i = 1, np
-          f_fv(ci) = f_fv(ci) + gll_to_fv_center_w(i, j, ci) * g_gll(i, j)
-        enddo
-      enddo
-    enddo
-  end subroutine interpolate_gll_to_fv_centers
 
   ! Column-local vertical transport for the partmcsl tracers.  For each
   ! owned (ie, ci) column:
@@ -1255,6 +1226,10 @@ end subroutine
 
     real(real_kind) :: ps_fv(nphys_cell_per_elem)
     real(real_kind) :: edd_fv(nphys_cell_per_elem, nlevp)
+    ! gfr_g2f_scalar output buffers (gllfvremap flat cell order)
+    real(real_kind) :: ps_g(np, np, 1)
+    real(real_kind) :: ps_fv_gfr(nphys_cell_per_elem, 1)
+    real(real_kind) :: edd_fv_gfr(nphys_cell_per_elem, nlevp)
     real(real_kind) :: p_dst(nlevp), p_src(nlevp)
     real(real_kind) :: dp_dst(1, 1, nlev), dp_lagr(1, 1, nlev)
     real(real_kind) :: Qdp(1, 1, nlev, pmcsl_nq)
@@ -1266,10 +1241,20 @@ end subroutine
 
     call t_startf('partmcsl_vertical_step')
     do ie = nets, nete
-      call interpolate_gll_to_fv_centers(elem(ie)%state%ps_v(:,:,tl%n0), ps_fv)
+      ! ps at FV cell centers: sphere-area mean over the FV subcell.
+      ps_g(:,:,1) = elem(ie)%state%ps_v(:,:,tl%n0)
+      call gfr_g2f_scalar(ie, elem(ie)%metdet, ps_g, ps_fv_gfr)
+      do ci = 1, nphys_cell_per_elem
+        ps_fv(ci) = ps_fv_gfr(gfr_to_partmcsl_ci(ci), 1)
+      enddo
+
+      ! eta_dot_dpdn at FV cell centers, per interface.
+      call gfr_g2f_scalar(ie, elem(ie)%metdet, &
+                          elem(ie)%derived%eta_dot_dpdn_prescribed, edd_fv_gfr)
       do k = 1, nlevp
-        call interpolate_gll_to_fv_centers( &
-            elem(ie)%derived%eta_dot_dpdn_prescribed(:,:,k), edd_fv(:, k))
+        do ci = 1, nphys_cell_per_elem
+          edd_fv(ci, k) = edd_fv_gfr(gfr_to_partmcsl_ci(ci), k)
+        enddo
       enddo
 
       do ci = 1, nphys_cell_per_elem

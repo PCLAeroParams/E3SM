@@ -1267,7 +1267,8 @@ contains
     use time_mod,           only: time_at,TimeLevel_t, timelevel_update, nsplit
     use prim_state_mod,     only: prim_printstate
 #ifdef HOMME_ENABLE_PARTMCSL
-    use partmcsl_advection_mod, only: partmcsl_step_forward, partmcsl_vertical_step
+    use partmcsl_advection_mod, only: partmcsl_step_forward, partmcsl_vertical_step, &
+                                      partmcsl_permute_pg_q_cells
     use dcmip12_wrapper, only: pg_data
 #endif
 
@@ -1337,12 +1338,17 @@ contains
     call t_stopf("prim_step_advec")
     
 #ifdef HOMME_ENABLE_PARTMCSL
+      ! Translate pg_data%q's FV cell ordering at the dycore/partmcsl boundary
+      ! (gllfvremap flat order <-> partmcsl CCW order).  See
+      ! partmcsl_permute_pg_q_cells for details.
+      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:8, :), .true.)
       call t_startf('partmcsl_step_forward')
       call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt_q, nets, nete, &
                                  tl, pg_data%q(:, :, 5:8, :))
       call t_stopf('partmcsl_step_forward')
       call partmcsl_vertical_step(elem, hvcoord, dt_q, nets, nete, tl, &
                                   pg_data%q(:, :, 5:8, :))
+      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:8, :), .false.)
 #endif
   end subroutine prim_step
 
