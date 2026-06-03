@@ -10,7 +10,8 @@ wdir=/scratch/pabosle/e3sm-pclap
 # source $HOME/cee-homme-env.sh
 
 
-execName=theta-l-nlev20-native
+# execName=theta-l-nlev20-native
+execName=theta-l-nlev128-native
 namelistFile=$homme/partmcsl_dcmip12_transport.nl
 
 configFlag=
@@ -78,5 +79,9 @@ fi
 
 if [ "$runFlag" ]
 then
-mpirun --map-by core --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
+#mpirun --map-by core --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
+
+# for cee-compute005:
+ntasks=448
+mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $namelistFile 2>&1 | tee homme-out.txt
 fi

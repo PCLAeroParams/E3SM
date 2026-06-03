@@ -6,9 +6,9 @@
   partmethod        = 4                         ! mesh parition method: 4 = space filling curve
   topology          = "cube"                    ! mesh type: cubed sphere
   test_case         = "dcmip2012_test1_1"       ! test identifier
-  ne                = 4                         ! number of elements per cube face
+  ne                = 30                         ! number of elements per cube face
   qsize             = 8                         ! num tracer fields
-  ndays             = 1                         ! num simulation days: 0 = use nmax steps
+  ndays             = 12                         ! num simulation days: 0 = use nmax steps
   statefreq         = 200                       ! number of steps between screen dumps
   restartfreq       = -1                        ! don't write restart files if < 0
   runtype           = 0                         ! 0 = new run
@@ -25,7 +25,7 @@
   dt_remap_factor   = 2
   transport_alg     = 12
   semi_lagrange_cdr_alg   = 2
-  semi_lagrange_cdr_check = .true.
+  semi_lagrange_cdr_check = .false.             ! .true. does mass conservation checks at each time step
   semi_lagrange_nearest_point_lev = 100
   vert_remap_q_alg   = 10
   nu_q = 0
