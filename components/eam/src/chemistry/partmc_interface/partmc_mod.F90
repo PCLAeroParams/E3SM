@@ -211,16 +211,16 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
 
 
   ! Loop over modes to compute properties
-  geom_mean_diameter(:,:)=0.0
+  geom_mean_diameter(:,:) = 0.0d0
   do n = 1, nmodes
     ! Initialize dry volume
-    dryvol(:) = 0.0
+    dryvol(:) = 0.0d0
 
     ! Get mode properties
     call rad_cnst_get_mode_props(list_idx, n, sigmag=sigmag)
     std_mam(n) = sigmag
     alnsg = log(sigmag)
-    dumfac = exp(4.5 * alnsg**2) * pi / 6.0
+    dumfac = exp(4.5d0 * alnsg**2) * pi / 6.0d0
 
     ! Get number flux index
     call rad_cnst_get_mode_num_idx(n, num_idx)
@@ -241,9 +241,9 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
     do ispec = 1, nspec
       call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
       call rad_cnst_get_aer_props(list_idx, n, ispec, density_aer=specdens)
-      dummwdens = 1.0 / specdens
+      dummwdens = 1.0d0 / specdens
       do icol = 1,ncol
-        dryvol(icol) = dryvol(icol) + max(0.0, cflx(icol, spec_idx)) * dummwdens
+        dryvol(icol) = dryvol(icol) + max(0.0d0, cflx(icol, spec_idx)) * dummwdens
       end do
     end do
 
@@ -259,14 +259,14 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
   end do
 
   ! Compute volume fractions
-  volume_fractions(:, :, :) =0.0
-  sum_vf_per_mode(:,:) = 0.0
+  volume_fractions(:, :, :) = 0.0d0
+  sum_vf_per_mode(:,:) = 0.0d0
   do n = 1, nmodes
     call rad_cnst_get_info(list_idx, n, nspec=nspec)
     do ispec = 1, nspec
       call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
       call rad_cnst_get_aer_props(list_idx, n, ispec, density_aer=specdens)
-      dummwdens = 1.0 / specdens
+      dummwdens = 1.0d0 / specdens
       do icol = 1,ncol
         volume_fractions(icol, n, ispec) =  cflx(icol, spec_idx) * dummwdens
         sum_vf_per_mode(icol, n) = sum_vf_per_mode(icol, n) + volume_fractions(icol, n, ispec)
@@ -284,9 +284,9 @@ subroutine compute_partmc_emission_inputs(cflx, ncol, geom_mean_diameter, std_ma
       call rad_cnst_get_mam_mmr_idx(n, ispec, spec_idx)
       idx_chm = map2chm(spec_idx)
         if (idx_chm > 0) then
-          if (adv_mass(idx_chm) /= 0.0) then
+          if (adv_mass(idx_chm) /= 0.0d0) then
             do icol = 1,ncol
-              if (sum_vf_per_mode(icol, n) /= 0.0) then
+              if (sum_vf_per_mode(icol, n) /= 0.0d0) then
                 volume_fractions(icol, n, ispec) = volume_fractions(icol, n, ispec) / sum_vf_per_mode(icol, n)
               end if
             end do
