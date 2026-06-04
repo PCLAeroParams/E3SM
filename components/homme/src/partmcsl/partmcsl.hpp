@@ -132,7 +132,7 @@ namespace partmcsl {
 
   /*
     Given a subcell index, return the reference coordinates of the vertex at vert_idx,
-    in ccw order starting at SW corner.
+    in ccw order starting at the (-1, -1) corner.
 
               (0,1)
    (-1,1) o----x----o (1,1)
