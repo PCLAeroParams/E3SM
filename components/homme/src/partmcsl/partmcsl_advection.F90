@@ -15,7 +15,7 @@ module partmcsl_advection_mod
   use edge_mod, only           : initGhostBuffer3D, FreeGhostBuffer3D
   use edgetype_mod, only       : GhostBuffer3D_t
   use element_mod, only        : element_t
-  use gllfvremap_mod, only     : gfr_g2f_scalar
+  use gllfvremap_mod, only     : gfr_g2f_scalar, gfr_f_get_cartesian3d
   use hybvcoord_mod, only      : hvcoord_t
   use kinds, only              : real_kind, iulog
   use parallel_mod, only       : parallel_t, abortmp
@@ -362,6 +362,7 @@ subroutine partmcsl_test(par, elem)
 
   if (do_checks) then
       call check_ij_corners(par, elem)
+      call check_gfr_partmcsl_subcell_map(par, elem)
       call partmcsl_check_elem_area(par, elem)
       call test_identity_exchange(par, elem)
       call test_topology_coverage(par, elem)
@@ -682,8 +683,68 @@ subroutine check_ij_corners(par, elem)
     if (par%masterproc) then
         write(iulog,*) "partmcsl_test: check_ij_corners passed."
     endif
-end subroutine 
-  
+end subroutine
+
+! Verify that gfr_to_partmcsl_ci correctly maps partmcsl's ci ordering
+! (ref_coords_ab, ci=1..4, CCW from low-(a,b)) to gllfvremap's flat FV-cell
+! index k = nphys*(j-1) + i.  For each partmcsl subcell ci, take its (a,b)
+! centroid via ref_coords_ab and map to xyz via ref2sphere; compare to the
+! center xyz stored by gllfvremap at k = gfr_to_partmcsl_ci(ci).  A
+! permutation bug shows up as a chord-length mismatch O(0.1)-O(1).
+subroutine check_gfr_partmcsl_subcell_map(par, elem)
+    type(parallel_t), intent(in) :: par
+    type(element_t),  intent(in) :: elem(:)
+
+    integer :: ie, ci, vi, k, i_fv, j_fv, facenum
+    integer, parameter :: nphys_side = 2  ! pg2; gfr_to_partmcsl_ci is sized for this
+    real(real_kind) :: a, b, a_p, b_p, dist
+    ! Both paths run through ref2sphere with different vertex orderings and
+    ! averaging order, so eps-level differences accumulate; fp_tol (1e-14) is
+    ! too tight for this comparison.  A real permutation error is O(0.1)+.
+    real(real_kind), parameter :: map_tol = 1e-12_real_kind
+    type(cartesian3D_t) :: p_partmcsl_xyz, p_gfr_xyz
+    type(spherical_polar_t) :: p_sph
+    logical :: error_out
+
+    error_out = .false.
+    do ie = 1, nelemd
+      do ci = 1, nphys_cell_per_elem
+        ! Path A: partmcsl subcell centroid in (a,b), then to xyz.
+        a_p = zero; b_p = zero
+        do vi = 1, 4
+          call ref_coords_ab(a, b, ci-1, vi-1)
+          a_p = a_p + a
+          b_p = b_p + b
+        end do
+        a_p = 0.25_real_kind * a_p
+        b_p = 0.25_real_kind * b_p
+        p_sph = ref2sphere(a_p, b_p, elem(ie)%corners3D, cubed_sphere_map, &
+                           elem(ie)%corners, facenum, p_partmcsl_xyz)
+
+        ! Path B: gllfvremap's stored FV cell center at the proposed k.
+        k    = gfr_to_partmcsl_ci(ci)
+        i_fv = mod(k - 1, nphys_side) + 1
+        j_fv = (k - 1) / nphys_side + 1
+        call gfr_f_get_cartesian3d(ie, i_fv, j_fv, p_gfr_xyz)
+
+        dist = distance(p_partmcsl_xyz, p_gfr_xyz)
+        if (dist > map_tol) then
+          write(iulog,*) 'partmcsl init: subcell map mismatch ie=', ie, &
+              ' ci=', ci, ' k=', k, ' (i_fv,j_fv)=', i_fv, j_fv, &
+              ' (a_p,b_p)=', a_p, b_p, ' dist=', dist
+          error_out = .true.
+        endif
+      end do
+    end do
+
+    if (error_out) then
+      call abortmp('partmcsl_init error: gfr<->partmcsl subcell permutation mismatch.')
+    endif
+    if (par%masterproc) then
+        write(iulog,*) "partmcsl_test: check_gfr_partmcsl_subcell_map passed."
+    endif
+end subroutine check_gfr_partmcsl_subcell_map
+
   subroutine partmcsl_check_elem_area(par, elem)
     type(parallel_t), intent(in) :: par
     type(element_t), intent(in) :: elem(:)
