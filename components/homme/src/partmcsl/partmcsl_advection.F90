@@ -136,6 +136,7 @@ module partmcsl_advection_mod
   ! TODO: write the general case for PartMC 
   integer, parameter :: pmcsl_nq = 4
   integer, parameter :: pmcsl_q_payload_words = nphys_cell_per_elem * pmcsl_nq
+  ! input args for halo exchange, repurposed for dcmip2012 test here.
   ! For (4, 3): np*(nhc+1) = 4*4 = 16, exact fit for payload = 16.
   integer, parameter :: pmcsl_q_ghost_np  = 4
   integer, parameter :: pmcsl_q_ghost_nhc = 3
