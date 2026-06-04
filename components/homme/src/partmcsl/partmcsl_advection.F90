@@ -98,9 +98,6 @@ module partmcsl_advection_mod
     integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
 
-  !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
-  !   elem(ie)%state%v(:,:,:,:,tl%np1) stores v at t1
-
   ! Gate for partmcsl_test's internal checks.  Always on for now; flip to .false.
   ! to skip the (cheap but non-trivial) self-tests at startup.
   logical :: do_checks = .true.
@@ -132,9 +129,11 @@ module partmcsl_advection_mod
   !
   ! Per element, per vertical level, the packed payload is:
   !   nphys_cell_per_elem * pmcsl_nq reals -- pg_q(ci, k, t, ie) for ci=1..4, t=1..pmcsl_nq.
-  ! pmcsl_nq is the number of partmcsl-advected tracers.  For dcmip 2012 test 1.1
-  ! these are slots 5..8 of pg_data%q (Q5..Q8); see memory entry
-  ! "partmcsl_project_interface_refactor" for why this is scaffolding.
+  ! pmcsl_nq is the number of partmcsl-advected tracers.  
+  ! For dcmip 2012 test 1.1
+  ! these are slots 5..8 of pg_data%q (Q5..Q8)
+  ! TODO: isolate the hard-coded DCMIP2012 test case stuff inside an #ifdef
+  ! TODO: write the general case for PartMC 
   integer, parameter :: pmcsl_nq = 4
   integer, parameter :: pmcsl_q_payload_words = nphys_cell_per_elem * pmcsl_nq
   ! For (4, 3): np*(nhc+1) = 4*4 = 16, exact fit for payload = 16.
@@ -154,10 +153,10 @@ module partmcsl_advection_mod
   ! SE, NE, NW, CCW from SW).  Used to map gfr_g2f_scalar output and to
   ! translate pg_data%q at the partmcsl/dycore boundary.
   !
-  ! TODO (follow-up): harmonize partmcsl's internal ci convention with
-  ! gllfvremap's (option A in the convention discussion) so this permutation
+  ! TODO : match partmcsl's internal ci convention with
+  ! gllfvremap's so this permutation
   ! and the boundary translation in partmcsl_permute_pg_q_cells can be deleted.
-  ! Touches ref_coords_ab on the C++ side and any consumer of fv_mesh that
+  ! Will need to adjust ref_coords_ab on the C++ side and any client of fv_mesh that
   ! assumes CCW-from-SW ordering.
   integer, parameter, private :: gfr_to_partmcsl_ci(nphys_cell_per_elem) = (/ 1, 3, 4, 2 /)
   ! q_halo(ci, t, k, l_local, je) holds neighbor-q values after exchange:
@@ -1064,6 +1063,8 @@ end subroutine
     do ie = nets, nete
       do k = 1, nlev
         call t_startf('partmcsl_fwd_advection')
+        !   elem%derived%vstar stores the velocity at the beginning of the tracer time step, t0
+        !   elem(ie)%state%v(:,:,:,:,tl%np1) stores v at t1
         call partmcsl_fwd_advection(advected_pts, elem(ie)%derived%vstar(:,:,:,k), &
           elem(ie)%state%v(:,:,:,k,tl%np1), fv_mesh, elem, ie, dt)
         call t_stopf('partmcsl_fwd_advection')
@@ -1206,7 +1207,7 @@ end subroutine
   ! owned (ie, ci) column:
   !   1. Sample ps_v and eta_dot_dpdn_prescribed at the FV cell center.
   !   2. Build fixed Eulerian interface pressures p_dst and the displaced
-  !      Lagrangian interfaces p_src = p_dst + edd*dt (walls pinned).
+  !      Lagrangian interfaces p_src = p_dst + edd*dt (top & bottom pinned).
   !   3. Convert mixing ratio to source-cell mass Qdp = pg_q * dp_dst
   !      (Lagrangian invariant: the displaced parcel carries its original
   !      Eulerian cell mass).
