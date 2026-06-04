@@ -149,17 +149,25 @@ module partmcsl_advection_mod
   logical, private :: ghostbuf_initialized = .false.
   type(GhostBuffer3D_t), private :: partmcsl_q_ghostbuf
   logical, private :: q_ghostbuf_initialized = .false.
-  ! Permutation from gllfvremap's flat FV cell order (k = nphys*(j-1) + i, i.e.
-  ! SW, NW, SE, NE for pg2) to partmcsl's ref_coords_ab order (ci=1..4 = SW,
-  ! SE, NE, NW, CCW from SW).  Used to map gfr_g2f_scalar output and to
-  ! translate pg_data%q at the partmcsl/dycore boundary.
+  ! Permutation from gllfvremap's flat FV cell index k to partmcsl's subcell
+  ! index ci.  Both modules tile the reference element (a, b) in [-1,1]^2 but
+  ! with different orderings:
+  !   gllfvremap: k = nphys*(j-1) + i, with i <-> a (1st ref coord, fast index)
+  !               and j <-> b (2nd ref coord, slow index).
+  !   partmcsl:   ci = 1..4 walks the four (a,b) quadrants CCW from (low-a,
+  !               low-b); see ref_coords_ab.
+  ! For pg2 the mapping ci -> k is:
+  !   ci=1 (low-a, low-b)   <-> k=1
+  !   ci=2 (high-a, low-b)  <-> k=2
+  !   ci=3 (high-a, high-b) <-> k=4
+  !   ci=4 (low-a, high-b)  <-> k=3
+  ! Verified at init by check_gfr_partmcsl_subcell_map.
   !
-  ! TODO : match partmcsl's internal ci convention with
-  ! gllfvremap's so this permutation
-  ! and the boundary translation in partmcsl_permute_pg_q_cells can be deleted.
-  ! Will need to adjust ref_coords_ab on the C++ side and any client of fv_mesh that
-  ! assumes CCW-from-SW ordering.
-  integer, parameter, private :: gfr_to_partmcsl_ci(nphys_cell_per_elem) = (/ 1, 3, 4, 2 /)
+  ! TODO: match partmcsl's internal ci convention with gllfvremap's so this
+  ! permutation and the boundary translation in partmcsl_permute_pg_q_cells
+  ! can be deleted.  Will need to adjust ref_coords_ab on the C++ side and any
+  ! client of fv_mesh that assumes the partmcsl ci ordering.
+  integer, parameter, private :: gfr_to_partmcsl_ci(nphys_cell_per_elem) = (/ 1, 2, 4, 3 /)
   ! q_halo(ci, t, k, l_local, je) holds neighbor-q values after exchange:
   !   ci: source subcell [1..nphys_cell_per_elem]
   !   t : partmcsl tracer slot [1..pmcsl_nq]
@@ -698,28 +706,39 @@ subroutine check_gfr_partmcsl_subcell_map(par, elem)
     integer :: ie, ci, vi, k, i_fv, j_fv, facenum
     integer, parameter :: nphys_side = 2  ! pg2; gfr_to_partmcsl_ci is sized for this
     real(real_kind) :: a, b, a_p, b_p, dist
-    ! Both paths run through ref2sphere with different vertex orderings and
-    ! averaging order, so eps-level differences accumulate; fp_tol (1e-14) is
-    ! too tight for this comparison.  A real permutation error is O(0.1)+.
+    ! Path A mirrors gllfvremap's center construction (average of four
+    ! per-vertex ref2sphere outputs, no final sphere projection -- see the
+    ! "[Projection bug 2023/11]" comment in gllfvremap_mod's center setup), so
+    ! the only remaining disagreement is summation-order roundoff.
     real(real_kind), parameter :: map_tol = 1e-12_real_kind
-    type(cartesian3D_t) :: p_partmcsl_xyz, p_gfr_xyz
+    type(cartesian3D_t) :: p_partmcsl_xyz, p_gfr_xyz, p_vert_xyz
     type(spherical_polar_t) :: p_sph
     logical :: error_out
 
     error_out = .false.
     do ie = 1, nelemd
       do ci = 1, nphys_cell_per_elem
-        ! Path A: partmcsl subcell centroid in (a,b), then to xyz.
+        ! Path A: partmcsl subcell center as the unprojected centroid of the
+        ! four sphere-projected vertices.
+        p_partmcsl_xyz%x = zero
+        p_partmcsl_xyz%y = zero
+        p_partmcsl_xyz%z = zero
         a_p = zero; b_p = zero
         do vi = 1, 4
           call ref_coords_ab(a, b, ci-1, vi-1)
+          p_sph = ref2sphere(a, b, elem(ie)%corners3D, cubed_sphere_map, &
+                             elem(ie)%corners, facenum, p_vert_xyz)
+          p_partmcsl_xyz%x = p_partmcsl_xyz%x + p_vert_xyz%x
+          p_partmcsl_xyz%y = p_partmcsl_xyz%y + p_vert_xyz%y
+          p_partmcsl_xyz%z = p_partmcsl_xyz%z + p_vert_xyz%z
           a_p = a_p + a
           b_p = b_p + b
         end do
+        p_partmcsl_xyz%x = 0.25_real_kind * p_partmcsl_xyz%x
+        p_partmcsl_xyz%y = 0.25_real_kind * p_partmcsl_xyz%y
+        p_partmcsl_xyz%z = 0.25_real_kind * p_partmcsl_xyz%z
         a_p = 0.25_real_kind * a_p
         b_p = 0.25_real_kind * b_p
-        p_sph = ref2sphere(a_p, b_p, elem(ie)%corners3D, cubed_sphere_map, &
-                           elem(ie)%corners, facenum, p_partmcsl_xyz)
 
         ! Path B: gllfvremap's stored FV cell center at the proposed k.
         k    = gfr_to_partmcsl_ci(ci)
