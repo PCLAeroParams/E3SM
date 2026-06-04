@@ -322,7 +322,7 @@ end subroutine compute_partmc_emission_inputs
     n_part_ideal = 250.0d0
 
     env_state_init%elapsed_time = 0d0
-    
+
     ! run_part_opt general settings
     run_part_opt%output_prefix = "./partmc_output/urban_plume"
     run_part_opt%n_repeat = 1
@@ -1028,7 +1028,7 @@ end subroutine compute_partmc_emission_inputs
       end do
       do l=1,ntot_aspectype
          write(102,*) trim(specname_amode(l)), specdens_amode(l), specmw_amode(l), spechygro(l)
-      end do 
+      end do
 
     end if
 
@@ -1048,7 +1048,7 @@ end subroutine compute_partmc_emission_inputs
     allocate(unique_kappa_array(total_mam_vars))
     allocate(unique_mw_array(total_mam_vars))
 
-    i_name = 0 
+    i_name = 0
     do m = 1,n_modes
        call rad_cnst_get_info(list_idx, m, nspec=n_spec)
        do l = 1,n_spec
@@ -1058,7 +1058,7 @@ end subroutine compute_partmc_emission_inputs
                hygro_aer = hygro)
           i_name = i_name + 1
           input_array(i_name) = aername
-          density_array(i_name) = density 
+          density_array(i_name) = density
           kappa_array(i_name) =  hygro
           mw_array(i_name) = specmw_amode(lspectype_amode(l,m))
       end do
@@ -1078,7 +1078,7 @@ end subroutine compute_partmc_emission_inputs
       unique_array(unique_count) = input_array(i)
       unique_density_array(unique_count) = density_array(i)
       unique_kappa_array(unique_count) = kappa_array(i)
-      unique_mw_array(unique_count) = mw_array(i)     
+      unique_mw_array(unique_count) = mw_array(i)
     end if
   end do
 
@@ -1107,7 +1107,7 @@ end subroutine compute_partmc_emission_inputs
        aero_data%name(i_spec) = trim(unique_array(i_spec))
        aero_data%density(i_spec) = unique_density_array(i_spec)
        aero_data%kappa(i_spec) = unique_kappa_array(i_spec)
-       aero_data%molec_weight(i_spec) = unique_mw_array(i_spec) 
+       aero_data%molec_weight(i_spec) = unique_mw_array(i_spec)
 
        ! Option 2
 !       aero_data%name(i_spec) = specname_amode(i_spec)
@@ -1137,13 +1137,13 @@ end subroutine compute_partmc_emission_inputs
        do l = 1,n_spec
           call rad_cnst_get_aer_props(list_idx, m, l, aername = aername)
           ! Find the index
-          mam_spec_to_partmc_spec(m,l) = aero_data_spec_by_name(aero_data, aername) 
+          mam_spec_to_partmc_spec(m,l) = aero_data_spec_by_name(aero_data, aername)
       end do
       if (masterproc) then
          write(102,*) mam_spec_to_partmc_spec(m,:n_spec)
       end if
     end do
-    
+
     ! Print results
     if (masterproc) then
        write(102,*) 'Contents of aero_data'
