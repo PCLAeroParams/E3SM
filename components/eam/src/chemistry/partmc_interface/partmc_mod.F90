@@ -42,12 +42,13 @@ module mo_partmc_interface
     integer, parameter, public :: n_aero_sp_max = 25
 
     ! Toggle between two emission pathways:
-    !   .false. — original cflx pathway (5 generic emit modes per MAM mode)
+    !   .false. — original cflx pathway (5 generic emit modes)
     !   .true.  — sector-resolved pathway (one PartMC mode per (MAM mode, CMIP6 sector))
     logical, parameter, public :: use_sector_emissions = .true.
     ! Number of active PartMC emission modes. For the cflx pathway this stays 5;
     ! for the sector pathway it is overwritten at init from the discovered
-    ! catalog (typically 14 for MAM4 + CMIP6 anthropogenic inventory).
+    ! catalog: one mode per present (MAM-group, CMIP6 sector) pair plus the two
+    ! natural sampled modes (sea salt, dust).
     integer, public :: n_emit_mode = 5
     ! Canonical anthropogenic sector list (CMIP6 / AeroCom). The sector
     ! catalog only registers a (MAM-group, sector) pair if the inventory
@@ -77,10 +78,18 @@ module mo_partmc_interface
        integer :: sample_pmc_idx = 0                   ! single composition species index
                                                        ! (sampled modes have one vol_frac=1 species)
     end type sector_mode_t
+
     type(sector_mode_t), allocatable :: sector_modes(:)
     ! Max bins across sampled modes — used to size the per-step
-    ! sample_num_conc buffer in partmc_mam_invoke. Set at catalog build.
+    ! sample_num_conc buffer in partmc_mam_invoke.
     integer :: max_n_samples = 0
+    ! Number of PartMC sub-bins per MAM dust bin. MAM has 2 wide dust bins
+    ! (0.1-1 and 1-10 microns diameters); subdividing log-uniformly into K sub-bins
+    ! per MAM bin gives PartMC finer size resolution while keeping the total
+    ! mass per MAM bin equal to dust_emis output. Example: K=8 leads to
+    ! 10^(1/8) = 1.33, putting mass error from log-uniform sampling within
+    ! each sub-bin at the few-percent level.
+    integer, parameter :: n_dust_subbins_per_mam_bin = 8
     character, allocatable :: buffer(:)
     integer :: buffer_size, max_buffer_size
     integer :: position
@@ -406,8 +415,8 @@ end subroutine compute_partmc_emission_inputs
     allocate(q_init_saved(begchunk:endchunk))
     q_init_saved(:) = .false.
 
-    ! Get number of actual (active) gas species.
-    ! gas_pncst is "gas" species which apparently is not just gases.
+    ! Count and collect the gas-phase constituents out of the
+    ! full constituent list; gas_data/gas_state are sized to this count.
     n_gas_species = 0
     do i = 1,pcnst
        if (species_class(i) == spec_class_gas) then
@@ -417,7 +426,7 @@ end subroutine compute_partmc_emission_inputs
     end do
 
     if (masterproc) then
-       print*, 'number of active (?) gas species', n_gas_species
+       write(102,*) 'Number of active gas species:', n_gas_species
     end if
 
     call ensure_string_array_size(gas_data%name, n_gas_species)
@@ -542,13 +551,12 @@ end subroutine compute_partmc_emission_inputs
 
     type(physics_state), intent(inout):: state
     ! cam_in carries sst, ocnfrac, dstflx for the natural-source pathway
-    ! (sea salt, dust). Anthropogenic pathway uses cflx as before.
+    ! (sea salt, dust). cflx carries the emissions for MAM modes (but not sectors).
     ! TODO: once the natural-source field set is settled, decide whether to
-    ! narrow this to specific args (sst, ocnfrac, dstflx, ...) for an
-    ! explicit contract.
+    ! narrow this to specific arguments (sst, ocnfrac, dstflx, ...).
     type(cam_in_t),      intent(in) :: cam_in
-    real(kind=dp),       intent(in) :: cflx(pcols,pcnst)              ! constituent surface flux (kg/m^2/s)
-    real(kind=dp),            intent(in)    :: dt              ! time step
+    real(kind=dp),       intent(in) :: cflx(pcols,pcnst)  ! constituent surface flux (kg/m^2/s)
+    real(kind=dp),            intent(in)    :: dt         ! time step
 
     integer :: i, icol, kk, lchnk, ncol
     real(kind=dp) ::  aero_particle_mass_out(pcols, pver,  n_part_max,n_aero_sp_max)
@@ -617,8 +625,8 @@ end subroutine compute_partmc_emission_inputs
        allocate(vol_frac_sec(pcols, n_emit_mode, aero_data_n_spec(aero_data)))
        call compute_partmc_emission_inputs_sector(lchnk, ncol, &
             geom_mean_diameter_sec, sigma_emode, num_fluxes_sec, vol_frac_sec)
-       ! Natural-source pseudo-modes (SEASALT, DUST). Stub fills u10cubed
-       ! and zeros sample_num_conc — real bin-resolved emission goes here.
+       ! Natural-source pseudo-modes (SEASALT, DUST): fills u10cubed and the
+       ! bin-resolved sample_num_conc number fluxes.
        if ( max_n_samples > 0 ) then
           allocate(u10cubed(pcols))
           allocate(sample_num_conc(pcols, n_emit_mode, max_n_samples))
@@ -1254,12 +1262,17 @@ end subroutine compute_partmc_emission_inputs
 
   end subroutine build_seasalt_sector_mode
 
-  ! Populates a sector_mode_t entry for the DUST pseudo-mode.
+  ! Populates a sector_mode_t entry for the DUST pseudo-mode. Subdivides
+  ! each of MAM's dust_nbin wide bins into K = n_dust_subbins_per_mam_bin
+  ! log-spaced sub-bins. The full sample_radius edge array spans all MAM
+  ! bins and shares the inter-MAM-bin edge between adjacent sub-bins.
   subroutine build_dust_sector_mode(sm)
     use dust_model,       only : dust_nbin, dust_dmt_grd
     use modal_aero_data,  only : sigmag_amode
 
     type(sector_mode_t), intent(inout) :: sm
+    integer :: m, k, isub
+    real(kind=dp) :: r_lo, r_hi, log_ratio
 
     sm%name = 'emit_DUST'
     sm%sector = 'LAND'
@@ -1269,14 +1282,26 @@ end subroutine compute_partmc_emission_inputs
     sm%n_num  = 0 ! unused for sampled mode
 
     sm%is_sampled = .true.
-    sm%n_samples  = dust_nbin
+    sm%n_samples  = dust_nbin * n_dust_subbins_per_mam_bin
     ! Any dst constituent will work here.
     sm%sample_pmc_idx = pmc_idx_for_constituent('dst_a1')
 
-    ! The dust grid dust_dmt_grd already holds dust_nbin+1 bin edge diameters,
-    ! so sample_radius is just dust_dmt_grd / 2.
-    allocate(sm%sample_radius(dust_nbin + 1))
-    sm%sample_radius(:) = dust_dmt_grd(:) / 2.0d0
+    ! Build sub-bin edges: K-1 interior edges log-spaced within each MAM
+    ! bin, sharing edges with the next MAM bin. Total edges = n_samples + 1.
+    allocate(sm%sample_radius(sm%n_samples + 1))
+    isub = 0
+    do m = 1, dust_nbin
+       r_lo = dust_dmt_grd(m)   / 2.0d0
+       r_hi = dust_dmt_grd(m+1) / 2.0d0
+       log_ratio = log(r_hi / r_lo)
+       do k = 0, n_dust_subbins_per_mam_bin - 1
+          isub = isub + 1
+          sm%sample_radius(isub) = r_lo * exp( real(k, kind=dp) &
+               / real(n_dust_subbins_per_mam_bin, kind=dp) * log_ratio )
+       end do
+    end do
+    ! Final edge: top of last MAM bin.
+    sm%sample_radius(sm%n_samples + 1) = dust_dmt_grd(dust_nbin + 1) / 2.0d0
 
   end subroutine build_dust_sector_mode
 
@@ -1519,21 +1544,13 @@ end subroutine compute_partmc_emission_inputs
 
   ! Per-step inputs for the natural-source pseudo-modes (SEASALT, DUST).
   !
-  !   * Seasalt: fi(:ncol,:nsections) = sslt_sections::fluxes(cam_in%sst, u10cubed, ncol)
-  !              sample_num_conc(icol, seasalt_mode_idx, ibin) =
-  !                fi(icol, ibin) * cam_in%ocnfrac(icol) * seasalt_emis_scale
-  !   * Dust:    derive per-bin number from cam_in%dstflx + soil_erodibility +
-  !              dust_emis_sclfctr + dust_dmt_vwr (mass→number conversion).
-  !
-  ! TODO:The dust implementation is a first pass and needs improvement.
-  ! The bins are simply too large. The binned approach can be quite attractive when
-  ! we have many bins to resolve the size distribution in a way that we do not need to assume a
-  ! log-normal. For PartMC, we sample a diameters between bin edges uniformally.
-  ! This assumption is not ideal when the bins are large. This likely means that the smaller
-  ! particles will be oversampled in the smallest bin and the larger particles will be
-  ! oversampled in the last bin.
-  ! We may actually be best off with a log-normal approach for dust, or consider adding 
-  ! more bins to properly resolve the size and mass distribution.
+  !   * Seasalt: per-bin number flux from sslt_sections::fluxes(sst, u10cubed),
+  !              scaled by ocnfrac and seasalt_emis_scale.
+  !   * Dust:    per-MAM-bin mass from dust_model.F90:dust_emis logic
+  !              (cam_in%dstflx, dust_emis_sclfctr, soil_erodibility, soil_erod_fact),
+  !              split equally across n_dust_subbins_per_mam_bin sub-bins (uniform
+  !              mass per log(r) within each MAM bin), then converted to per-sub-bin
+  !              number via the volume-weighted moment over each sub-bin's edges.
   subroutine compute_partmc_natural_emission_inputs(state, cam_in, ncol, &
        u10cubed, sample_num_conc)
     use physics_types, only : physics_state
@@ -1541,7 +1558,7 @@ end subroutine compute_partmc_emission_inputs
     use ppgrid,        only : pver
     use sslt_sections, only : nsections, fluxes
     use aero_model,    only : seasalt_emis_scale
-    use dust_model,    only : dust_nbin, dust_emis_sclfctr, dust_dmt_vwr
+    use dust_model,    only : dust_nbin, dust_emis_sclfctr, dust_dmt_vwr, dust_indices
     use shr_dust_mod,  only : dust_emis_scheme
     use soil_erod_mod, only : soil_erodibility, soil_erod_fact
     use mo_constants,  only : dust_density
@@ -1565,8 +1582,9 @@ end subroutine compute_partmc_emission_inputs
     real(kind=dp) :: u10(pcols)
     real(kind=dp) :: fi_seasalt(pcols, nsections)
     real(kind=dp) :: soil_erod_val, mass_flux, x_mton
+    real(kind=dp) :: mass_subbin, r_lo, r_hi, r3_vw_subbin
     integer :: lchnk
-    integer :: icol, ibin, i_mode
+    integer :: icol, ibin, i_mode, isub, isub_in_bin, dust_icol
 
     sample_num_conc(:,:,:) = 0.0d0
     u10cubed(:) = 0.0d0
@@ -1615,16 +1633,21 @@ end subroutine compute_partmc_emission_inputs
           end if
        end if
        if ( trim(sector_modes(i_mode)%name) == 'emit_DUST' ) then
-          ! Per-column, per-bin dust mass and number flux. Direct port of the
-          ! per-column logic in dust_model.F90:dust_emis (lines 143-171).
-          ! Mass flux uses CLM-supplied dust_flux_in (in cam_in%dstflx),
-          ! rescaled by dust_emis_sclfctr per bin and weighted by soil
-          ! erodibility. Number is derived via x_mton = 6/(pi*rho*Dvwr^3).
+          ! Per-column dust mass per MAM bin (same scaling as dust_model.F90
+          ! dust_emis lines 143-171), then split equally across
+          ! n_dust_subbins_per_mam_bin sub-bins (uniform mass per log(r)
+          ! within each MAM bin). Per-sub-bin number is derived from
+          ! x_mton_sub = 6/(π·ρ·D_vw_sub³) where D_vw_sub³ = 8 × <r³> with
+          ! <r³>_sub = (r_hi³ - r_lo³) / (3·ln(r_hi/r_lo)) — the volume-
+          ! weighted moment for the assumed mass-per-log(r)-uniform shape.
+          ! This conserves the MAM-bin total mass exactly (the equal-mass
+          ! split summed over sub-bins recovers M_mam_bin) while letting
+          ! PartMC sample particles across the bin's full size range.
           !
           ! NOTE: aero_model.F90:2851-2868 caps total dust mass flux against
           ! dstemislimit and rescales the per-bin distribution if the cap is
-          ! hit. That cap is not applied here — for tightly comparable totals
-          ! against MAM's cflx it should be ported. Cap rarely triggers in
+          ! hit. That cap is not yet applied here but will not compare against
+          ! MAM's cflx unless added. Cap in theory rarely triggers in
           ! practice, so deferred for now.
           do icol = 1, ncol
              soil_erod_val = soil_erodibility(icol, lchnk)
@@ -1634,8 +1657,21 @@ end subroutine compute_partmc_emission_inputs
              do ibin = 1, dust_nbin
                 mass_flux = sum(-cam_in%dstflx(icol, :)) * 0.73d0 / 0.87d0 &
                      * dust_emis_sclfctr(ibin) * soil_erod_val / soil_erod_fact * 1.15d0
-                x_mton = 6.0d0 / (pi * dust_density * dust_dmt_vwr(ibin)**3)
-                sample_num_conc(icol, i_mode, ibin) = mass_flux * x_mton
+                ! TODO: switch from uniform-mass-per-log(r) to Kok11 brittle
+                ! fragmentation. Replace this equal split with
+                !     mass_subbin = mass_flux * w_kok11(isub_in_bin, ibin)
+                ! where w_kok11(:,:) is a precomputed weight array from integrate
+                ! Kok11's dV/dlogD over each sub-bin's edges, normalized so the
+                ! per-MAM-bin weights sum to 1.
+                mass_subbin = mass_flux / real(n_dust_subbins_per_mam_bin, kind=dp)
+                do isub_in_bin = 1, n_dust_subbins_per_mam_bin
+                   isub = (ibin - 1) * n_dust_subbins_per_mam_bin + isub_in_bin
+                   r_lo = sector_modes(i_mode)%sample_radius(isub)
+                   r_hi = sector_modes(i_mode)%sample_radius(isub + 1)
+                   r3_vw_subbin = (r_hi**3 - r_lo**3) / (3.0d0 * log(r_hi / r_lo))
+                   x_mton = 6.0d0 / (pi * dust_density * 8.0d0 * r3_vw_subbin)
+                   sample_num_conc(icol, i_mode, isub) = mass_subbin * x_mton
+                end do
              end do
           end do
 
@@ -1644,19 +1680,56 @@ end subroutine compute_partmc_emission_inputs
              write(102,*) 'Dust sample_num_conc (i_mode=', i_mode, ')'
              write(102,*) 'soil_erod_fact (from soil_erod_mod) = ', soil_erod_fact
              write(102,*) 'dust_emis_scheme (from shr_dust_mod) = ', dust_emis_scheme
+             write(102,*) 'n_dust_subbins_per_mam_bin = ', n_dust_subbins_per_mam_bin
              write(102,*) 'icol | soil_erod | dst_total | total num flux (m^-2 s^-1)'
              do icol = 1, ncol
                 soil_erod_val = soil_erodibility(icol, lchnk)
                 if ( dust_emis_scheme == 2 ) soil_erod_val = 1.0d0
                 if ( soil_erod_val < soil_erod_threshold ) soil_erod_val = 0.0d0
                 write(102,*) icol, soil_erod_val, sum(-cam_in%dstflx(icol, :)), &
-                     sum(sample_num_conc(icol, i_mode, 1:dust_nbin))
+                     sum(sample_num_conc(icol, i_mode, 1:sector_modes(i_mode)%n_samples))
              end do
-             write(102,*) 'Per-bin breakdown (icol = 1):'
-             write(102,*) 'ibin | radius edge low (m) | dmt_vwr (m) | num_conc (m^-2 s^-1)'
+             ! Pick a column that actually has dust emissions for the per-bin
+             ! breakdown — column 1 is often ocean/non-erodible, giving zeros.
+             dust_icol = 1
+             do icol = 1, ncol
+                if ( sum(sample_num_conc(icol, i_mode, &
+                         1:sector_modes(i_mode)%n_samples)) > 0.0d0 ) then
+                   dust_icol = icol
+                   exit
+                end if
+             end do
+
+             write(102,*) 'Per-MAM-bin aggregate (icol = ', dust_icol, '):'
+             write(102,*) 'ibin | mass PartMC | mass cflx(dst_aN) | num PartMC | num MAM-eqv | num cflx(num_aN)'
+             soil_erod_val = soil_erodibility(dust_icol, lchnk)
+             if ( dust_emis_scheme == 2 ) soil_erod_val = 1.0d0
+             if ( soil_erod_val < soil_erod_threshold ) soil_erod_val = 0.0d0
              do ibin = 1, dust_nbin
-                write(102,*) ibin, sector_modes(i_mode)%sample_radius(ibin), &
-                     dust_dmt_vwr(ibin), sample_num_conc(1, i_mode, ibin)
+                ! Mass flux for this MAM bin (same formula as the per-step compute above).
+                mass_flux = sum(-cam_in%dstflx(dust_icol, :)) * 0.73d0 / 0.87d0 &
+                     * dust_emis_sclfctr(ibin) * soil_erod_val / soil_erod_fact * 1.15d0
+                ! cflx(dst_aN) is natural-only (anthro doesn't write to dst slots),
+                ! so the mass comparison is clean. cflx(num_aN) mixes natural dust +
+                ! anthropogenic + seasalt by the time partmc_mam_invoke runs, so the
+                ! "num cflx" column won't match "num MAM-eqv" unless this is a pure
+                ! dust-only column.
+                x_mton = 6.0d0 / (pi * dust_density * dust_dmt_vwr(ibin)**3)
+                write(102,*) ibin, mass_flux, &
+                     cam_in%cflx(dust_icol, dust_indices(ibin)), &
+                     sum(sample_num_conc(dust_icol, i_mode, &
+                         (ibin-1)*n_dust_subbins_per_mam_bin + 1 : &
+                         ibin*n_dust_subbins_per_mam_bin)), &
+                     mass_flux * x_mton, &
+                     cam_in%cflx(dust_icol, dust_indices(ibin + dust_nbin))
+             end do
+
+             write(102,*) 'Per-sub-bin breakdown (icol = ', dust_icol, '):'
+             write(102,*) 'isub | r_lo (m) | r_hi (m) | num_conc (m^-2 s^-1)'
+             do isub = 1, sector_modes(i_mode)%n_samples
+                write(102,*) isub, sector_modes(i_mode)%sample_radius(isub), &
+                     sector_modes(i_mode)%sample_radius(isub + 1), &
+                     sample_num_conc(dust_icol, i_mode, isub)
              end do
              write(102,*) '-----------------------------------------'
           end if
