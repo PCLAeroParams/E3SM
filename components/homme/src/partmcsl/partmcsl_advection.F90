@@ -828,9 +828,10 @@ end subroutine check_gfr_partmcsl_subcell_map
   end subroutine partmcsl_finalize
 
   ! Translate pg_data%q's first dim between gllfvremap's flat FV cell order
-  ! (SW, NW, SE, NE for pg2 -- the order used by gfr_dyn_to_fv_phys to seed
-  ! the IC and by the NetCDF output writer) and partmcsl's CCW-from-SW order
-  ! (SW, SE, NE, NW -- the order used by ref_coords_ab and fv_mesh).
+  ! (used by gfr_dyn_to_fv_phys to seed the IC and by the NetCDF output
+  ! writer) and partmcsl's CCW-from-low-(a,b) ci order (used by
+  ! ref_coords_ab and fv_mesh).  See gfr_to_partmcsl_ci for the mapping
+  ! table and the (a, b) convention shared by both modules.
   ! Call with to_partmcsl=.true. on entry to partmcsl's per-step routines,
   ! and to_partmcsl=.false. before returning control to the dycore.
   subroutine partmcsl_permute_pg_q_cells(q, to_partmcsl)
