@@ -1336,7 +1336,7 @@ end subroutine compute_partmc_emission_inputs
           have_so4a1 = species_has_sector('so4_a1', trim(sector))
           have_so4a2 = species_has_sector('so4_a2', trim(sector))
 
-          ! Handle Hydrophobic BCPOM sectors in a4 (Accumulation) mode.
+          ! Handle hydrophobic BCPOM sectors -> MAM mode 4 (primary carbon; accumulation-sized).
           if (have_bcpom) then
              i_out = i_out + 1
              if (i_pass == 2) then
@@ -1591,16 +1591,14 @@ end subroutine compute_partmc_emission_inputs
     lchnk = state%lchnk
 
     ! Wind at 10 m, raised to the 3.41 power per Gong et al. (1997).
-    ! Same code path as aero_model.F90:2880-2887.
     do icol = 1,ncol
        u10(icol) = sqrt(state%u(icol,pver)**2 + state%v(icol,pver)**2)
        u10cubed(icol) = u10(icol) * log(10.0d0 / z0) / log(state%zm(icol,pver) / z0)
        u10cubed(icol) = u10cubed(icol)**3.41d0
     end do
 
-    ! Sea salt: bin-resolved number flux density (m^-2 s^-1) per column from
-    ! Martensson/Monahan-style polynomials in sslt_sections. Multiplied by
-    ! ocean fraction so over-land columns (ocnfrac=0) emit zero naturally.
+    ! Sea salt: bin-resolved number flux density (m^-2 s^-1) per column.
+    ! Multiplied by ocean fraction so over-land columns (ocnfrac=0) emit zero naturally.
     fi_seasalt(:ncol, :) = fluxes(cam_in%sst(:ncol), u10cubed(:ncol), ncol)
 
     do i_mode = 1, n_emit_mode
@@ -1633,22 +1631,16 @@ end subroutine compute_partmc_emission_inputs
           end if
        end if
        if ( trim(sector_modes(i_mode)%name) == 'emit_DUST' ) then
-          ! Per-column dust mass per MAM bin (same scaling as dust_model.F90
-          ! dust_emis lines 143-171), then split equally across
-          ! n_dust_subbins_per_mam_bin sub-bins (uniform mass per log(r)
-          ! within each MAM bin). Per-sub-bin number is derived from
-          ! x_mton_sub = 6/(π·ρ·D_vw_sub³) where D_vw_sub³ = 8 × <r³> with
-          ! <r³>_sub = (r_hi³ - r_lo³) / (3·ln(r_hi/r_lo)) — the volume-
-          ! weighted moment for the assumed mass-per-log(r)-uniform shape.
-          ! This conserves the MAM-bin total mass exactly (the equal-mass
-          ! split summed over sub-bins recovers M_mam_bin) while letting
-          ! PartMC sample particles across the bin's full size range.
+          ! Dust mass per MAM bin uses the same scaling as dust_model.F90's
+          ! dust_emis, then is split equally across n_dust_subbins_per_mam_bin
+          ! sub-bins (uniform mass per log(r)). Each sub-bin's mass is converted
+          ! to a number flux via its volume-weighted mean radius (the
+          ! r3_vw_subbin / x_mton math below). The equal split conserves the
+          ! MAM-bin total mass while giving PartMC finer size resolution.
           !
-          ! NOTE: aero_model.F90:2851-2868 caps total dust mass flux against
-          ! dstemislimit and rescales the per-bin distribution if the cap is
-          ! hit. That cap is not yet applied here but will not compare against
-          ! MAM's cflx unless added. Cap in theory rarely triggers in
-          ! practice, so deferred for now.
+          ! NOTE: aero_model.F90 caps total dust flux against dstemislimit and
+          ! rescales the per-bin distribution; that cap is not applied here, so
+          ! this won't match MAM cflx until it is. It rarely triggers in practice.
           do icol = 1, ncol
              soil_erod_val = soil_erodibility(icol, lchnk)
              if ( dust_emis_scheme == 2 ) soil_erod_val = 1.0d0
@@ -1657,12 +1649,10 @@ end subroutine compute_partmc_emission_inputs
              do ibin = 1, dust_nbin
                 mass_flux = sum(-cam_in%dstflx(icol, :)) * 0.73d0 / 0.87d0 &
                      * dust_emis_sclfctr(ibin) * soil_erod_val / soil_erod_fact * 1.15d0
-                ! TODO: switch from uniform-mass-per-log(r) to Kok11 brittle
-                ! fragmentation. Replace this equal split with
-                !     mass_subbin = mass_flux * w_kok11(isub_in_bin, ibin)
-                ! where w_kok11(:,:) is a precomputed weight array from integrate
-                ! Kok11's dV/dlogD over each sub-bin's edges, normalized so the
-                ! per-MAM-bin weights sum to 1.
+                ! TODO: replace this equal split with Kok11 brittle-fragmentation
+                ! weights — mass_subbin = mass_flux * w_kok11(isub_in_bin, ibin),
+                ! where w_kok11 integrates Kok11's dV/dlogD over each sub-bin,
+                ! normalized to sum to 1 per MAM bin.
                 mass_subbin = mass_flux / real(n_dust_subbins_per_mam_bin, kind=dp)
                 do isub_in_bin = 1, n_dust_subbins_per_mam_bin
                    isub = (ibin - 1) * n_dust_subbins_per_mam_bin + isub_in_bin
