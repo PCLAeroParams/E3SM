@@ -1336,6 +1336,14 @@ end subroutine compute_partmc_emission_inputs
           have_so4a1 = species_has_sector('so4_a1', trim(sector))
           have_so4a2 = species_has_sector('so4_a2', trim(sector))
 
+          ! NOTE: the three have_* blocks below are near-identical boilerplate
+          ! (set name/parent/sigma, allocate + fill mass and num arrays).
+          ! This should be refactored into an add_sector_mode helper
+          ! so adding a group is one data-driven call instead of a copied block.
+          ! However for readability, we will keep it explicit for now since we have
+          ! few groups and want the logic to be transparent especially for the primary
+          ! carbon mode.
+
           ! Handle hydrophobic BCPOM sectors -> MAM mode 4 (primary carbon; accumulation-sized).
           if (have_bcpom) then
              i_out = i_out + 1
