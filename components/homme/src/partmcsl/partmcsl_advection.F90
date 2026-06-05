@@ -1265,40 +1265,52 @@ end subroutine check_gfr_partmcsl_subcell_map
   !=====================================================================
   ! Vertical transport step (column-local; PPM remap via vertremap_base).
   !
-  ! Lagrangian-advect Eulerian interface pressures by the prescribed
-  ! vertical mass flux eta_dot_dpdn (Pa/s) over dt, giving a per-column
-  ! Lagrangian thickness dp_lagr.  Then remap from the Lagrangian grid
-  ! back to the Eulerian grid using HOMME's remap1 (algorithm chosen by
-  ! the namelist parameter vert_remap_q_alg), i.e. the same kernel the SL
-  ! tracer path uses.  No MPI: each FV cell column is independent.
+  ! For prescribed-wind tests (currently dcmip2012_test1_1) with the
+  ! midpoint_eta_dot_dpdn flag enabled in test_mod, the dynamics has
+  ! already constructed the midpoint-Lagrangian floating-level thickness
+  ! in elem%state%dp3d(:,:,:,tl%np1) via set_prescribed_wind's
+  ! Lagrangian branch (test_mod.F90:336-343).  We consume that dp
+  ! directly here, the same way the SL tracer path consumes
+  ! elem%derived%divdp (= dp_star from calc_vertically_lagrangian_levels)
+  ! in sl_vertically_remap_tracers (sl_advection.F90:1241).  This makes
+  ! the vertical step 2nd-order in time when the flag is on, with no
+  ! partmcsl-local eta_dot caching needed.
   !
-  ! Working coord is interface pressure p_i = hyai(i)*p0 + hybi(i)*ps.
-  ! Lagrangian motion is then simply
-  !   p_new = p_old + eta_dot_dpdn * dt
-  ! since eta_dot_dpdn already has units of dp/dt along eta-following
-  ! surfaces.  Top (k=1) and surface (k=nlevp) are pinned to their
-  ! Eulerian values so no mass leaves the column.
+  ! No MPI: each FV cell column is independent.
   !
-  ! ps_v and eta_dot_dpdn_prescribed are sampled at FV cell centers by
-  ! delegating to gllfvremap's gfr_g2f_scalar -- sphere-area-weighted FV
-  ! cell mean of the GLL polynomial, using the cubed-sphere Jacobian.
-  ! gfr_init must have been called upstream (dcmip12_wrapper.F90 does this).
+  ! ps_v and dp3d are sampled at FV cell centers by delegating to
+  ! gllfvremap's gfr_g2f_scalar -- sphere-area-weighted FV cell mean of
+  ! the GLL polynomial, using the cubed-sphere Jacobian.  Because dp is
+  ! a density (mass per unit area), the sphere-area mean preserves
+  ! per-column mass on the FV grid.  gfr_init must have been called
+  ! upstream (dcmip12_wrapper.F90 does this).
   !=====================================================================
 
   ! Column-local vertical transport for the partmcsl tracers.  For each
   ! owned (ie, ci) column:
-  !   1. Sample ps_v and eta_dot_dpdn_prescribed at the FV cell center.
-  !   2. Build fixed Eulerian interface pressures p_dst and the displaced
-  !      Lagrangian interfaces p_src = p_dst + edd*dt (top & bottom pinned).
+  !   1. Sample ps_v at the FV cell center to build the Eulerian
+  !      destination thickness dp_dst from analytic hybrid coords.
+  !   2. Sample dp3d(:,:,:,tl%np1) directly at the FV cell center as
+  !      the Lagrangian source thickness dp_lagr.
   !   3. Convert mixing ratio to source-cell mass Qdp = pg_q * dp_dst
-  !      (Lagrangian invariant: the displaced parcel carries its original
-  !      Eulerian cell mass).
-  !   4. Call remap1 with dp1=dp_lagr, dp2=dp_dst, alg=vert_remap_q_alg --
-  !      same kernel and algorithm choice as the SL tracer path.
+  !      (Lagrangian invariant: the displaced parcel carries its
+  !      original Eulerian cell mass).
+  !   4. Call remap1 with dp1=dp_lagr, dp2=dp_dst, alg=vert_remap_q_alg
+  !      -- same kernel and algorithm choice as the SL tracer path.
   !   5. Convert back to mixing ratio: pg_q = Qdp / dp_dst.
   !
-  ! TODO: for non-prescribed-wind cases the vertical-velocity source
-  ! becomes elem%derived%omega_p.
+  ! TODO: when the dcmip2012_test1_1 hard-coding is removed and partmcsl
+  ! runs against real dynamics, the source of dp_lagr must change:
+  !   - Lagrangian dynamics, general case: sl_advection's
+  !     calc_vertically_lagrangian_levels writes dp_star to
+  !     elem%derived%divdp (sl_advection.F90:506-507); consume it from
+  !     there, as sl_vertically_remap_tracers does (sl_advection.F90:1241).
+  !   - Eulerian dynamics (dt_remap_factor == 0): dp3d does not evolve
+  !     and there is no analog dp_star.  A different source is needed
+  !     -- either elem%derived%eta_dot_dpdn (after the dynamics
+  !     inner-loop eta_ave_w accumulation completes) or a local
+  !     midpoint cache of eta_dot_dpdn_prescribed.  See
+  !     partmcsl_vertical_midpoint_handoff.md Appendix A.
   subroutine partmcsl_vertical_step(elem, hvcoord, dt, nets, nete, tl, pg_q)
     type(element_t),   intent(in)    :: elem(:)
     type(hvcoord_t),   intent(in)    :: hvcoord
@@ -1308,12 +1320,11 @@ end subroutine check_gfr_partmcsl_subcell_map
     real(real_kind),   intent(inout) :: pg_q(:, :, :, :)
 
     real(real_kind) :: ps_fv(nphys_cell_per_elem)
-    real(real_kind) :: edd_fv(nphys_cell_per_elem, nlevp)
     ! gfr_g2f_scalar output buffers (gllfvremap flat cell order)
     real(real_kind) :: ps_g(np, np, 1)
     real(real_kind) :: ps_fv_gfr(nphys_cell_per_elem, 1)
-    real(real_kind) :: edd_fv_gfr(nphys_cell_per_elem, nlevp)
-    real(real_kind) :: p_dst(nlevp), p_src(nlevp)
+    real(real_kind) :: dp_lagr_fv_gfr(nphys_cell_per_elem, nlev)
+    real(real_kind) :: p_dst(nlevp)
     real(real_kind) :: dp_dst(1, 1, nlev), dp_lagr(1, 1, nlev)
     real(real_kind) :: Qdp(1, 1, nlev, pmcsl_nq)
     integer :: ie, ci, k, t
@@ -1331,33 +1342,23 @@ end subroutine check_gfr_partmcsl_subcell_map
         ps_fv(ci) = ps_fv_gfr(gfr_to_partmcsl_ci(ci), 1)
       enddo
 
-      ! eta_dot_dpdn at FV cell centers, per interface.
+      ! Lagrangian dp at FV cell centers, per level.  dp3d(:,:,:,tl%np1)
+      ! is the floating-level thickness written by set_prescribed_wind
+      ! (test_mod.F90:340-343); with midpoint_eta_dot_dpdn = .true. it
+      ! carries the time-midpoint eta_dot, giving a 2nd-order dp_lagr.
       call gfr_g2f_scalar(ie, elem(ie)%metdet, &
-                          elem(ie)%derived%eta_dot_dpdn_prescribed, edd_fv_gfr)
-      do k = 1, nlevp
-        do ci = 1, nphys_cell_per_elem
-          edd_fv(ci, k) = edd_fv_gfr(gfr_to_partmcsl_ci(ci), k)
-        enddo
-      enddo
+                          elem(ie)%state%dp3d(:,:,:,tl%np1), dp_lagr_fv_gfr)
 
       do ci = 1, nphys_cell_per_elem
         do k = 1, nlevp
           p_dst(k) = hvcoord%hyai(k) * hvcoord%ps0 + hvcoord%hybi(k) * ps_fv(ci)
         enddo
-        p_src(1)     = p_dst(1)
-        p_src(nlevp) = p_dst(nlevp)
-        do k = 2, nlev
-          p_src(k) = p_dst(k) + edd_fv(ci, k) * dt
-        enddo
-        do k = 1, nlev
-          if (p_src(k+1) <= p_src(k)) then
-            call abortmp('partmcsl vertical: advected interfaces not monotonic; reduce dt or check eta_dot_dpdn.')
-          endif
-        enddo
-
         do k = 1, nlev
           dp_dst (1, 1, k) = p_dst(k+1) - p_dst(k)
-          dp_lagr(1, 1, k) = p_src(k+1) - p_src(k)
+          dp_lagr(1, 1, k) = dp_lagr_fv_gfr(gfr_to_partmcsl_ci(ci), k)
+          if (dp_lagr(1, 1, k) <= 0) then
+            call abortmp('partmcsl vertical: nonpositive dp_lagr; reduce dt or check dp3d.')
+          endif
         enddo
         do t = 1, pmcsl_nq
           do k = 1, nlev

@@ -118,7 +118,9 @@ subroutine set_test_initial_conditions(elem, deriv, hybrid, hvcoord, tl, nets, n
       case('asp_rossby');         call asp_rossby       (elem,hybrid,hvcoord,nets,nete)
       case('asp_tracer');         call asp_tracer       (elem,hybrid,hvcoord,nets,nete)
       case('baroclinic');         call binst_init_state (elem,hybrid, nets, nete, hvcoord)
-      case('dcmip2012_test1_1');  call dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,0.0d0,1,timelevels)
+      case('dcmip2012_test1_1')
+         midpoint_eta_dot_dpdn = .true.
+         call dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,0.0d0,1,timelevels)
       case('dcmip2012_test1_3a_conv', 'dcmip2012_test1_3b_conv', 'dcmip2012_test1_3c_conv', &
            'dcmip2012_test1_3d_conv', 'dcmip2012_test1_3e_conv', 'dcmip2012_test1_3f_conv')
          midpoint_eta_dot_dpdn = .true.

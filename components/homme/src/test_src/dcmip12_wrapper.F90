@@ -130,7 +130,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
        pg_zero_uv = 0.0_rl
     endif
     !$omp barrier
-#endif    
+#endif    ! HOMME_ENABLE_PARTMCSL
     initialized = .true.
   endif
 
