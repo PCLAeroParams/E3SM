@@ -6,7 +6,7 @@ avgflag_pertape = 'A','A','A','A','I','I'
 nhtfrq = -24,-24,-6,-3,-1,-24
 mfilt  = 1,30,120,240,720,1
 
-fincl5 = 'aero_particle_mass_SO4','aero_particle_mass_BC','aero_num_conc','number_concentration'
+fincl5 = 'aero_num_conc','number_concentration', 'aero_particle_mass_BCPHO', 'aero_particle_mass_SSAM", "O3", 'aero_particle_mass_SULFATE', 'aero_particle_mass_OCPHO', 'aero_particle_mass_DUST4'
 
 ! -- chemUCI settings ------------------
 history_chemdyg_summary = .true.

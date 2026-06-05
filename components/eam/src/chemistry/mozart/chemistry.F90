@@ -1102,7 +1102,7 @@ end function chem_is_active
 
         ! FIXME: it will not compile if partmc is off.
     !call partmc_inti()
-    call partmc_mam_inti()
+    call partmc_mam_inti(phys_state, species_class)
 
   end subroutine chem_init
 
@@ -1697,7 +1697,7 @@ end function chem_is_active
 
     call t_startf( 'partmc' )
     ! FIXME: It will not compile if PartMC is off.
-    call partmc_mam_invoke(state, cam_in%cflx, dt)
+    call partmc_mam_invoke(state, cam_in, cam_in%cflx, dt)
     call t_stopf( 'partmc' )
 
     call t_startf( 'chemdr' )

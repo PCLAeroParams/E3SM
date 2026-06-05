@@ -44,6 +44,9 @@ module aero_model
   public :: nimptblgrow_maxd
   public :: scavimptblnum
   public :: scavimptblvol
+  ! Exposed for the PartMC sector pathway to apply the same scale as
+  ! aero_model_emissions when computing sampled-mode sea salt fluxes.
+  public :: seasalt_emis_scale
 
  ! Misc private data 
 
