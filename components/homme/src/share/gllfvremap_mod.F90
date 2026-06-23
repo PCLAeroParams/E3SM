@@ -489,8 +489,13 @@ contains
              gfr%qmin(k,qi,ie) = min(minval(elem(ie)%state%Q(:,:,k,qi)), gfr%qmin(k,qi,ie))
              gfr%qmax(k,qi,ie) = max(maxval(elem(ie)%state%Q(:,:,k,qi)), gfr%qmax(k,qi,ie))
              ! Final GLL Q1, except for DSS, which is not done in this routine.
-             call limiter_clip_and_sum(elem(ie)%spheremp, gfr%qmin(k,qi,ie), &
-                  gfr%qmax(k,qi,ie), dp(:,:,k), elem(ie)%derived%FQ(:,:,k,qi))
+             !! DIAGNOSTIC ONLY (partmcsl Test L, vivid-napping-lighthouse):
+             !! limiter disabled to test whether the clip-and-sum is the source
+             !! of the half-order ||Q5-Q||_L2 convergence rate.  Revert before
+             !! shipping.  Run state is unaffected; this is invoked only at
+             !! output snapshots via dcmip2012_test1_1_phys_to_dyn.
+             ! call limiter_clip_and_sum(elem(ie)%spheremp, gfr%qmin(k,qi,ie), &
+             !      gfr%qmax(k,qi,ie), dp(:,:,k), elem(ie)%derived%FQ(:,:,k,qi))
           end do
           if (gfr%check > 1) then
              nerr = check_f2g_mixing_ratio(gfr, hybrid, ie, qi, elem, gfr%qmin(:,qi,ie), &
