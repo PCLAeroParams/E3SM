@@ -107,6 +107,14 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   real(rl):: q(4) ! pointwise field values
 #endif
 
+  ! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): solid-body wind
+  ! override.  Williamson SW1 axis tilt (alpha = pi/4); one full
+  ! revolution per 12-day test period (tau = 12 d, so u0 ~ 38.6 m/s,
+  ! matching dcmip 1.1's max wind for tstep-policy compatibility).
+  real(rl), parameter :: sbr_tau   = 12.0_rl * 86400.0_rl
+  real(rl), parameter :: sbr_alpha = pi / 4.0_rl
+  real(rl), parameter :: sbr_u0    = 2.0_rl * pi * a / sbr_tau
+
   ! set analytic vertical coordinates at t=0
   if(.not. initialized) then
     if (hybrid%masterthread) write(iulog,*) 'initializing dcmip2012 test 1-1: 3d deformational flow'
@@ -140,6 +148,16 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       z = H * log(1.0d0/hvcoord%etam(k))
       p = p0 * hvcoord%etam(k)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
+      !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse):
+      !! Override the deformational (u,v) with Williamson SW1 solid-body
+      !! rotation.  Bells (q1..q4) returned by test1_advection_deformation
+      !! are kept as the IC; only the wind is replaced so partmcsl's
+      !! 4-corner GLL sample + bilinear (a,b) interp captures the
+      !! velocity exactly up to O(h^2) chord-vs-arc per step.  Revert
+      !! before shipping.
+      u = sbr_u0 * (cos(lat)*cos(sbr_alpha) + sin(lat)*cos(lon)*sin(sbr_alpha))
+      v = -sbr_u0 * sin(lon) * sin(sbr_alpha)
+      w = 0.0_rl
 
       dp = pressure_thickness(ps,k,hvcoord)
       call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
@@ -173,6 +191,11 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       z = H  * log(1.0d0/hvcoord%etai(k))
       p = p0 * hvcoord%etai(k)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
+      !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): zero w so
+      !! theta-l's set_state_i writes state%w_i = 0 (consistent with the
+      !! midpoint-loop solid-body override; see vivid-napping-lighthouse.md
+      !! Step 3 notes).
+      w = 0.0_rl
       call set_state_i(u,v,w,T,ps,phis,p,zi(k),g, i,j,k,elem(ie),n0,n1)
 
       ! get vertical derivative of p at point i,j,k
