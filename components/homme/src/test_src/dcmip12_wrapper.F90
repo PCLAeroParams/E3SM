@@ -186,6 +186,14 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 
   enddo; enddo; enddo; enddo
 
+  !! DIAGNOSTIC ONLY (partmcsl Test W, vivid-napping-lighthouse):
+  !! zero the prescribed vertical eta-velocity so the V step (both partmcsl
+  !! and SL vertical remap) becomes the identity, isolating the H step in
+  !! the ||Q5-Q||_L2 convergence rate.  Revert before shipping.
+  do ie = nets, nete
+    elem(ie)%derived%eta_dot_dpdn_prescribed(:,:,:) = 0.0_rl
+  end do
+
 end subroutine
 
 !_____________________________________________________________________
