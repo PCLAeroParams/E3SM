@@ -50,6 +50,14 @@ real(rl):: ddn_hyai(nlevp), ddn_hybi(nlevp)                             ! vertic
 real(rl):: tau
 real(rl):: ztop
 
+!! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): SBR wind override
+!! parameters, promoted to module scope so set_pg_q7_analytic_exact below can
+!! use the same axis/tau as the Test S override at dcmip2012_test1_1.
+!! Williamson SW1 axis tilt alpha = pi/4; one full revolution per 12 days.
+real(rl), parameter :: sbr_tau   = 12.0_rl * 86400.0_rl
+real(rl), parameter :: sbr_alpha = pi / 4.0_rl
+real(rl), parameter :: sbr_u0    = 2.0_rl * pi * a / sbr_tau
+
 #ifdef HOMME_ENABLE_PARTMCSL
 !
 ! PhysgridData_t is copied from dcmip16_wrapper.F90,
@@ -107,13 +115,9 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   real(rl):: q(4) ! pointwise field values
 #endif
 
-  ! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): solid-body wind
-  ! override.  Williamson SW1 axis tilt (alpha = pi/4); one full
-  ! revolution per 12-day test period (tau = 12 d, so u0 ~ 38.6 m/s,
-  ! matching dcmip 1.1's max wind for tstep-policy compatibility).
-  real(rl), parameter :: sbr_tau   = 12.0_rl * 86400.0_rl
-  real(rl), parameter :: sbr_alpha = pi / 4.0_rl
-  real(rl), parameter :: sbr_u0    = 2.0_rl * pi * a / sbr_tau
+  ! Test S, vivid-napping-lighthouse: SBR wind override.  Constants sbr_tau,
+  ! sbr_alpha, sbr_u0 are now declared at module scope (top of file) so
+  ! set_pg_q7_analytic_exact can reuse them.
 
   ! set analytic vertical coordinates at t=0
   if(.not. initialized) then
@@ -173,6 +177,14 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         !! quads (as opposed to the synthetic uniform partition tested by
         !! test_sum_to_one).  Revert before shipping.
         q(6) = 1.0_rl
+        !! DIAGNOSTIC ONLY (Q7 analytic-exact): seed Q7 with Q1 (cosine bells)
+        !! instead of Q3 (slotted cylinder).  At subsequent snapshots Q7 is
+        !! overwritten in set_pg_q7_analytic_exact with the analytically
+        !! SBR-rotated IC evaluated at FV cell centroids; the ||Q5 - Q7|| diff
+        !! in the NetCDF then measures partmcsl's true error against the
+        !! analytic exact (no dependence on SL Q as a reference).  Revert
+        !! before shipping.
+        q(7) = q(1)
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
 #else
@@ -965,7 +977,7 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   ! emit Q5..Q8.  No-op if pg_data%q has not been allocated -- i.e. this
   ! test was not the active one.
   use gllfvremap_mod, only: gfr_fv_phys_to_dyn, gfr_f2g_dss
-  use time_mod,       only: TimeLevel_t
+  use time_mod,       only: TimeLevel_t, tstep
   use perf_mod,       only: t_startf, t_stopf
 
   type(element_t),   intent(inout) :: elem(:)
@@ -974,11 +986,19 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   type(TimeLevel_t), intent(in)    :: tl
   integer,           intent(in)    :: nets, nete
 
-  integer :: ie, qi
+  integer  :: ie, qi
+  real(rl) :: elapsed_time
 
   if (.not. allocated(pg_data%q)) return
 
   call t_startf('partmcsl_phys_to_dyn')
+  !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
+  !! analytic SBR-rotated IC at FV centroids before the fv->gll projection.  See
+  !! set_pg_q7_analytic_exact below for the rotation-axis derivation.  Revert
+  !! before shipping.
+  elapsed_time = real(tl%nstep, rl) * tstep
+  call set_pg_q7_analytic_exact(elem, hvcoord, elapsed_time, nets, nete)
+
   ! gfr_fv_phys_to_dyn writes the new state into derived%FQ.  T and uv are
   ! treated as tendencies; we pass zero buffers so FT and FM are unchanged
   ! in any meaningful sense for this prescribed-wind test.
@@ -996,6 +1016,108 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   end do
   call t_stopf('partmcsl_phys_to_dyn')
 end subroutine dcmip2012_test1_1_phys_to_dyn
+
+subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
+  !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
+  !! analytic SBR-rotated Q1 IC (cosine bells) evaluated at FV cell centroids.
+  !! At the next output snapshot, Q7 in the NetCDF is the analytic exact
+  !! solution and ||Q5 - Q7|| is partmcsl's true convergence error against
+  !! that analytic exact -- independent of the SL Q reference (which was
+  !! shown to be unreliable under the Test S SBR override; see
+  !! partmcsl_half_order_sbr_handoff.md §6a.3).
+  !!
+  !! Rotation axis n = (-sin(sbr_alpha), 0, cos(sbr_alpha)), angular velocity
+  !! omega = 2*pi / sbr_tau.  Derived by matching u,v in the Test S override at
+  !! dcmip2012_test1_1 (this file) to omega x r; see
+  !! partmcsl_half_order_sbr_handoff.md §6a.2 for the term-by-term derivation.
+  !! To rotate a point at (lat, lon) at time t BACK to its t=0 origin, apply
+  !! the Rodrigues formula with angle = -omega*t (both u_east and v_north
+  !! signs verified against the override formulae).
+  !!
+  !! FV centroid (lat, lon) obtained from gfr_f_get_latlon; matches the
+  !! centroid gllfvremap uses so gfr_fv_phys_to_dyn's projection back to GLL
+  !! is self-consistent.  Partmcsl's ci ordering
+  !! (low-a low-b, high-a low-b, high-a high-b, low-a high-b) maps to
+  !! gllfvremap's flat k = nphys_side*(j-1) + i via the same (1,2,4,3)
+  !! permutation used in partmcsl_advection.F90:170.
+  !!
+  !! Cell centroid vs cell mean: pg_data%q stores FV cell-mean tracer values,
+  !! but this routine samples the analytic exact at the centroid.  For a
+  !! smooth field the centroid-vs-mean offset is O(h^2*|∇^2 q|) per cell -- an
+  !! order below partmcsl's O(h) target rate, so it does not corrupt the
+  !! measured rate.  Revert before shipping.
+  use gllfvremap_mod, only: gfr_f_get_latlon
+
+  type(element_t),   intent(in)    :: elem(:)
+  type(hvcoord_t),   intent(in)    :: hvcoord
+  real(rl),          intent(in)    :: time   ! elapsed simulation time (s)
+  integer,           intent(in)    :: nets, nete
+
+  ! Q1 IC constants copied from test1_advection_deformation
+  ! (dcmip2012_test1_2_3.F90:118-131, 214-225).
+  real(rl), parameter :: lam0 = 5.0_rl*pi/6.0_rl,  phi0_ic = 0.0_rl
+  real(rl), parameter :: lam1 = 7.0_rl*pi/6.0_rl,  phi1_ic = 0.0_rl
+  real(rl), parameter :: RR   = 0.5_rl
+  real(rl), parameter :: ZZ   = 1000.0_rl
+  real(rl), parameter :: z_c0 = 5000.0_rl
+  real(rl), parameter :: T0_h = 300.0_rl
+  real(rl), parameter :: H_h  = Rd * T0_h / g
+  ! FV subcell layout for pg2 (nphys=2).
+  integer,  parameter :: nphys_side_l = 2
+  integer,  parameter :: nphys_cell_l = 4
+  integer,  parameter :: pmcsl_ci_to_gfr_k(nphys_cell_l) = (/1, 2, 4, 3/)
+
+  real(rl) :: omega_sbr, nx_axis, nz_axis, angle, cos_a, sin_a
+  real(rl) :: lat_c, lon_c, x, y, z, dot, xr, yr, zr, rnorm
+  real(rl) :: lat0, lon0, p_mid, height
+  real(rl) :: arg1, arg2, r_gc1, r_gc2, d1, d2
+  integer  :: ie, ci, k, kk, i_fv, j_fv
+
+  if (.not. allocated(pg_data%q)) return
+
+  omega_sbr = 2.0_rl * pi / sbr_tau
+  nx_axis   = -sin(sbr_alpha)
+  nz_axis   =  cos(sbr_alpha)
+  angle     = -omega_sbr * time
+  cos_a     = cos(angle)
+  sin_a     = sin(angle)
+
+  do ie = nets, nete
+    do ci = 1, nphys_cell_l
+      kk   = pmcsl_ci_to_gfr_k(ci)
+      i_fv = mod(kk - 1, nphys_side_l) + 1
+      j_fv = (kk - 1) / nphys_side_l + 1
+      call gfr_f_get_latlon(ie, i_fv, j_fv, lat_c, lon_c)
+
+      ! Rodrigues rotation about n = (nx_axis, 0, nz_axis) by `angle`.
+      x = cos(lat_c)*cos(lon_c)
+      y = cos(lat_c)*sin(lon_c)
+      z = sin(lat_c)
+      dot = nx_axis*x + nz_axis*z
+      xr = x*cos_a + (-nz_axis*y)*sin_a          + nx_axis*dot*(1.0_rl - cos_a)
+      yr = y*cos_a + ( nz_axis*x - nx_axis*z)*sin_a
+      zr = z*cos_a + ( nx_axis*y)*sin_a          + nz_axis*dot*(1.0_rl - cos_a)
+      rnorm = sqrt(xr*xr + yr*yr + zr*zr)
+      xr = xr/rnorm; yr = yr/rnorm; zr = zr/rnorm
+      lat0 = asin(max(-1.0_rl, min(1.0_rl, zr)))
+      lon0 = atan2(yr, xr)
+
+      do k = 1, nlev
+        p_mid  = hvcoord%hyam(k)*p0 + hvcoord%hybm(k)*p0   ! ps = p0 for SBR
+        height = H_h * log(p0 / p_mid)
+
+        arg1 = sin(lat0)*sin(phi0_ic) + cos(lat0)*cos(phi0_ic)*cos(lon0 - lam0)
+        arg2 = sin(lat0)*sin(phi1_ic) + cos(lat0)*cos(phi1_ic)*cos(lon0 - lam1)
+        r_gc1 = acos(max(-1.0_rl, min(1.0_rl, arg1)))
+        r_gc2 = acos(max(-1.0_rl, min(1.0_rl, arg2)))
+        d1 = min(1.0_rl, (r_gc1/RR)**2 + ((height - z_c0)/ZZ)**2)
+        d2 = min(1.0_rl, (r_gc2/RR)**2 + ((height - z_c0)/ZZ)**2)
+        pg_data%q(ci, k, 7, ie) = 0.5_rl*(1.0_rl + cos(pi*d1)) &
+                                + 0.5_rl*(1.0_rl + cos(pi*d2))
+      end do
+    end do
+  end do
+end subroutine set_pg_q7_analytic_exact
 #endif
 
 end module dcmip12_wrapper
