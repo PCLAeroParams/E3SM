@@ -108,7 +108,7 @@ if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument('files', nargs='+')
-    p.add_argument('--reference', choices=('Q', 'ic'), default='Q')
+    p.add_argument('--reference', choices=('Q', 'ic'), default='ic')
     p.add_argument('--output', default='horizontal_convergence.pdf')
     args = p.parse_args()
     out = horizontal_convergence(args.files, reference=args.reference,
