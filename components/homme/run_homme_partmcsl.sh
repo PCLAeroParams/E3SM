@@ -12,7 +12,8 @@ wdir=/scratch/pabosle/e3sm-pclap
 
 # execName=theta-l-nlev20-native
 execName=theta-l-nlev128-native
-namelistFile=$homme/partmcsl_dcmip12_transport.nl
+# namelistFile=$homme/partmcsl_dcmip12_transport.nl
+namelistFile=$homme/partmcsl_sbr_3h.nl
 
 configFlag=
 buildFlag=

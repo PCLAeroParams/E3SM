@@ -167,6 +167,12 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         ! Mirror q1..q4 into q5..q8 so the partmcsl-advected physgrid tracers
         ! share the IC of the dynamics-grid tracers.
         q(5:8) = q(1:4)
+        !! DIAGNOSTIC ONLY (Q6 constant-tracer): overwrite Q6 with a spatial
+        !! constant so any drift of Q6 during transport diagnoses whether the
+        !! arrival-side Σ frac = 1 invariant holds on the live departure
+        !! quads (as opposed to the synthetic uniform partition tested by
+        !! test_sum_to_one).  Revert before shipping.
+        q(6) = 1.0_rl
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
 #else
