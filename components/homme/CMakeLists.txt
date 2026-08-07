@@ -127,6 +127,7 @@ OPTION(BUILD_HOMME_TOOL  "Offline tool" ON)
 OPTION(HOMME_ENABLE_COMPOSE "Build COMPOSE semi-Lagrangian tracer transport code" ON)
 OPTION(HOMME_USE_SCORPIO  "Use Scorpio as the I/O library (Disable to use Scorpio classic)" ON)
 OPTION(HOMME_ENABLE_PARTMCSL "stochastic semi-Lagrangian transport for use with PartMC aerosol code" ON) # this requires Compose
+OPTION(PARTMCSL_SBR_DIAG "Enable Test S SBR wind override + Q7 analytic-exact diagnostic in dcmip12_wrapper.F90" OFF)
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)

@@ -82,3 +82,7 @@
 
 /* Detect whether PartMC stochastic transport is enabled */
 #cmakedefine HOMME_ENABLE_PARTMCSL
+
+/* Enable Test S SBR wind override + Q7 analytic-exact diagnostic in
+   src/test_src/dcmip12_wrapper.F90; off by default. */
+#cmakedefine PARTMCSL_SBR_DIAG
