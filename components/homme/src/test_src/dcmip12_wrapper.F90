@@ -50,6 +50,7 @@ real(rl):: ddn_hyai(nlevp), ddn_hybi(nlevp)                             ! vertic
 real(rl):: tau
 real(rl):: ztop
 
+#ifdef PARTMCSL_SBR_DIAG
 !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): SBR wind override
 !! parameters, promoted to module scope so set_pg_q7_analytic_exact below can
 !! use the same axis/tau as the Test S override at dcmip2012_test1_1.
@@ -57,6 +58,21 @@ real(rl):: ztop
 real(rl), parameter :: sbr_tau   = 12.0_rl * 86400.0_rl
 real(rl), parameter :: sbr_alpha = pi / 4.0_rl
 real(rl), parameter :: sbr_u0    = 2.0_rl * pi * a / sbr_tau
+#endif
+
+!! DCMIP 2012 Gaussian-hills parameters for the Q1 override in
+!! dcmip2012_test1_1 (and the matching analytic exact in
+!! set_pg_q7_analytic_exact).  Bell centers coincide with the cosine-bell
+!! centers in test1_advection_deformation (dcmip2012_test1_2_3.F90:128-131).
+!! h_max and b match the standard DCMIP 2012 Gaussian-hills prescription.
+!! Vertical modulation is a Gaussian in (z-gh_z0)/gh_zz so Q1 is C^infinity
+!! and avoids the C^0 kink of the cosine-bell + min(1,.) cutoff, which was
+!! the source of CEDR-clipping mass loss under the SL scheme
+!! (see partmcsl_half_order_sbr_handoff.md §7c).
+real(rl), parameter :: gh_lam0 = 5.0_rl*pi/6.0_rl, gh_phi0 = 0.0_rl
+real(rl), parameter :: gh_lam1 = 7.0_rl*pi/6.0_rl, gh_phi1 = 0.0_rl
+real(rl), parameter :: gh_hmax = 0.95_rl, gh_b = 5.0_rl
+real(rl), parameter :: gh_z0   = 5000.0_rl, gh_zz = 1000.0_rl
 
 #ifdef HOMME_ENABLE_PARTMCSL
 !
@@ -152,6 +168,12 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       z = H * log(1.0d0/hvcoord%etam(k))
       p = p0 * hvcoord%etam(k)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
+      !! Replace the DCMIP cosine-bell Q1 with the DCMIP Gaussian-hills
+      !! variant (C^infinity, no bell-edge kink).  Q2..Q4 stay on their
+      !! upstream definitions; note Q2 = 0.9 - 0.8*q1^2 and Q4 = 1 - 0.3*(q1+q2+q3)
+      !! inherit the smoother q1 while Q3 (slotted ellipse) is unaffected.
+      q(1) = q1_gaussian_hills(lat, lon, z)
+#ifdef PARTMCSL_SBR_DIAG
       !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse):
       !! Override the deformational (u,v) with Williamson SW1 solid-body
       !! rotation.  Bells (q1..q4) returned by test1_advection_deformation
@@ -162,6 +184,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       u = sbr_u0 * (cos(lat)*cos(sbr_alpha) + sin(lat)*cos(lon)*sin(sbr_alpha))
       v = -sbr_u0 * sin(lon) * sin(sbr_alpha)
       w = 0.0_rl
+#endif
 
       dp = pressure_thickness(ps,k,hvcoord)
       call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
@@ -177,6 +200,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         !! quads (as opposed to the synthetic uniform partition tested by
         !! test_sum_to_one).  Revert before shipping.
         q(6) = 1.0_rl
+#ifdef PARTMCSL_SBR_DIAG
         !! DIAGNOSTIC ONLY (Q7 analytic-exact): seed Q7 with Q1 (cosine bells)
         !! instead of Q3 (slotted cylinder).  At subsequent snapshots Q7 is
         !! overwritten in set_pg_q7_analytic_exact with the analytically
@@ -185,6 +209,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         !! analytic exact (no dependence on SL Q as a reference).  Revert
         !! before shipping.
         q(7) = q(1)
+#endif
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
 #else
@@ -209,11 +234,13 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       z = H  * log(1.0d0/hvcoord%etai(k))
       p = p0 * hvcoord%etai(k)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
+#ifdef PARTMCSL_SBR_DIAG
       !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): zero w so
       !! theta-l's set_state_i writes state%w_i = 0 (consistent with the
       !! midpoint-loop solid-body override; see vivid-napping-lighthouse.md
       !! Step 3 notes).
       w = 0.0_rl
+#endif
       call set_state_i(u,v,w,T,ps,phis,p,zi(k),g, i,j,k,elem(ie),n0,n1)
 
       ! get vertical derivative of p at point i,j,k
@@ -927,6 +954,35 @@ real(rl) function pressure_thickness(ps,k,hv)
 
 end function
 
+!_____________________________________________________________________
+real(rl) function q1_gaussian_hills(lat, lon, height) result(q1)
+  !! DCMIP 2012 Gaussian-hills tracer used as Q1 in dcmip2012_test1_1
+  !! (replaces the cosine-bell Q1 from test1_advection_deformation to eliminate
+  !! the bell-edge first-derivative kink; see comment on gh_* parameters
+  !! at module scope for context).  Sum of two Gaussians centered at
+  !! (gh_lam0, gh_phi0) and (gh_lam1, gh_phi1) with a Gaussian vertical
+  !! modulation about gh_z0.  Chord-distance-squared on the unit sphere
+  !! matches the DCMIP q_gh formula in dcmip2012_test1_conv_mod.F90:133-142.
+  real(rl), intent(in) :: lat, lon, height
+
+  real(rl) :: xp, yp, zp, xc1, yc1, zc1, xc2, yc2, zc2
+  real(rl) :: r2_1, r2_2, zshape
+
+  xp  = cos(lat)*cos(lon)
+  yp  = cos(lat)*sin(lon)
+  zp  = sin(lat)
+  xc1 = cos(gh_phi0)*cos(gh_lam0)
+  yc1 = cos(gh_phi0)*sin(gh_lam0)
+  zc1 = sin(gh_phi0)
+  xc2 = cos(gh_phi1)*cos(gh_lam1)
+  yc2 = cos(gh_phi1)*sin(gh_lam1)
+  zc2 = sin(gh_phi1)
+  r2_1 = (xp - xc1)**2 + (yp - yc1)**2 + (zp - zc1)**2
+  r2_2 = (xp - xc2)**2 + (yp - yc2)**2 + (zp - zc2)**2
+  zshape = exp(-((height - gh_z0)/gh_zz)**2)
+  q1 = gh_hmax * zshape * (exp(-gh_b*r2_1) + exp(-gh_b*r2_2))
+end function
+
 
 !_____________________________________________________________________
 subroutine set_tracers(q,nq, dp,i,j,k,lat,lon,elem)
@@ -992,12 +1048,14 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   if (.not. allocated(pg_data%q)) return
 
   call t_startf('partmcsl_phys_to_dyn')
+#ifdef PARTMCSL_SBR_DIAG
   !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
   !! analytic SBR-rotated IC at FV centroids before the fv->gll projection.  See
   !! set_pg_q7_analytic_exact below for the rotation-axis derivation.  Revert
   !! before shipping.
   elapsed_time = real(tl%nstep, rl) * tstep
   call set_pg_q7_analytic_exact(elem, hvcoord, elapsed_time, nets, nete)
+#endif
 
   ! gfr_fv_phys_to_dyn writes the new state into derived%FQ.  T and uv are
   ! treated as tendencies; we pass zero buffers so FT and FM are unchanged
@@ -1017,13 +1075,16 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   call t_stopf('partmcsl_phys_to_dyn')
 end subroutine dcmip2012_test1_1_phys_to_dyn
 
+#ifdef PARTMCSL_SBR_DIAG
 subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
-  !! analytic SBR-rotated Q1 IC (cosine bells) evaluated at FV cell centroids.
-  !! At the next output snapshot, Q7 in the NetCDF is the analytic exact
-  !! solution and ||Q5 - Q7|| is partmcsl's true convergence error against
-  !! that analytic exact -- independent of the SL Q reference (which was
-  !! shown to be unreliable under the Test S SBR override; see
+  !! analytic SBR-rotated Q1 IC evaluated at FV cell centroids.  Q1 is
+  !! the Gaussian-hills tracer defined by q1_gaussian_hills; see comment
+  !! on the gh_* module parameters for the formula and rationale.  At the
+  !! next output snapshot, Q7 in the NetCDF is the analytic exact solution
+  !! and ||Q5 - Q7|| is partmcsl's true convergence error against that
+  !! analytic exact -- independent of the SL Q reference (which was shown
+  !! to be unreliable under the Test S SBR override; see
   !! partmcsl_half_order_sbr_handoff.md §6a.3).
   !!
   !! Rotation axis n = (-sin(sbr_alpha), 0, cos(sbr_alpha)), angular velocity
@@ -1053,13 +1114,8 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   real(rl),          intent(in)    :: time   ! elapsed simulation time (s)
   integer,           intent(in)    :: nets, nete
 
-  ! Q1 IC constants copied from test1_advection_deformation
-  ! (dcmip2012_test1_2_3.F90:118-131, 214-225).
-  real(rl), parameter :: lam0 = 5.0_rl*pi/6.0_rl,  phi0_ic = 0.0_rl
-  real(rl), parameter :: lam1 = 7.0_rl*pi/6.0_rl,  phi1_ic = 0.0_rl
-  real(rl), parameter :: RR   = 0.5_rl
-  real(rl), parameter :: ZZ   = 1000.0_rl
-  real(rl), parameter :: z_c0 = 5000.0_rl
+  ! Vertical geometry constant for pressure -> height (matches
+  ! test1_advection_deformation's H = Rd*T0/g with T0 = 300 K).
   real(rl), parameter :: T0_h = 300.0_rl
   real(rl), parameter :: H_h  = Rd * T0_h / g
   ! FV subcell layout for pg2 (nphys=2).
@@ -1070,7 +1126,6 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   real(rl) :: omega_sbr, nx_axis, nz_axis, angle, cos_a, sin_a
   real(rl) :: lat_c, lon_c, x, y, z, dot, xr, yr, zr, rnorm
   real(rl) :: lat0, lon0, p_mid, height
-  real(rl) :: arg1, arg2, r_gc1, r_gc2, d1, d2
   integer  :: ie, ci, k, kk, i_fv, j_fv
 
   if (.not. allocated(pg_data%q)) return
@@ -1105,19 +1160,12 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
       do k = 1, nlev
         p_mid  = hvcoord%hyam(k)*p0 + hvcoord%hybm(k)*p0   ! ps = p0 for SBR
         height = H_h * log(p0 / p_mid)
-
-        arg1 = sin(lat0)*sin(phi0_ic) + cos(lat0)*cos(phi0_ic)*cos(lon0 - lam0)
-        arg2 = sin(lat0)*sin(phi1_ic) + cos(lat0)*cos(phi1_ic)*cos(lon0 - lam1)
-        r_gc1 = acos(max(-1.0_rl, min(1.0_rl, arg1)))
-        r_gc2 = acos(max(-1.0_rl, min(1.0_rl, arg2)))
-        d1 = min(1.0_rl, (r_gc1/RR)**2 + ((height - z_c0)/ZZ)**2)
-        d2 = min(1.0_rl, (r_gc2/RR)**2 + ((height - z_c0)/ZZ)**2)
-        pg_data%q(ci, k, 7, ie) = 0.5_rl*(1.0_rl + cos(pi*d1)) &
-                                + 0.5_rl*(1.0_rl + cos(pi*d2))
+        pg_data%q(ci, k, 7, ie) = q1_gaussian_hills(lat0, lon0, height)
       end do
     end do
   end do
 end subroutine set_pg_q7_analytic_exact
+#endif
 #endif
 
 end module dcmip12_wrapper

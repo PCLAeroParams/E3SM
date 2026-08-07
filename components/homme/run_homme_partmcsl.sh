@@ -10,10 +10,13 @@ wdir=/scratch/pabosle/e3sm-pclap
 # source $HOME/cee-homme-env.sh
 
 
-# execName=theta-l-nlev20-native
-execName=theta-l-nlev128-native
-# namelistFile=$homme/partmcsl_dcmip12_transport.nl
-namelistFile=$homme/partmcsl_sbr_3h.nl
+# execName=theta-l-nlev128-native
+execName=theta-l-nlev20-native
+# SBR path requires -DPARTMCSL_SBR_DIAG at build (guards enable Test S wind
+# override + Q7 analytic-exact); deformational path builds without it.
+# namelistFile=$homme/partmcsl_dcmip12_transport.nl   # full 12-day deformational sweep
+# namelistFile=$homme/partmcsl_dcmip12_shakedown.nl   # 3-day deformational-flow shakedown
+namelistFile=$homme/partmcsl_sbr_3h.nl                # SBR shakedown (requires -DPARTMCSL_SBR_DIAG)
 
 configFlag=
 buildFlag=
@@ -51,7 +54,7 @@ then
   printf "Configuring standalone Homme\n"
 # configure Homme with CMake
   cd $wdir
-  cmake -B $wdir -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHOMME_USE_MKL=FALSE $homme
+  cmake -B $wdir -Wno-dev -C $mach -DQSIZE_D=9 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHOMME_USE_MKL=FALSE -DPARTMCSL_SBR_DIAG $homme
 fi
 
 if [ "$buildFlag" ]
