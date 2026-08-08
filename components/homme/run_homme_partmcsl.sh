@@ -15,7 +15,6 @@ execName=theta-l-nlev20-native
 # SBR path requires -DPARTMCSL_SBR_DIAG at build (guards enable Test S wind
 # override + Q7 analytic-exact); deformational path builds without it.
 # namelistFile=$homme/partmcsl_dcmip12_transport.nl   # full 12-day deformational sweep
-# namelistFile=$homme/partmcsl_dcmip12_shakedown.nl   # 3-day deformational-flow shakedown
 namelistFile=$homme/partmcsl_sbr_3h.nl                # SBR shakedown (requires -DPARTMCSL_SBR_DIAG)
 
 configFlag=
@@ -48,6 +47,12 @@ do
   esac
 done
 shift $(($OPTIND -1))
+
+# Optional positional argument: override namelistFile with $homme/$1.
+# Usage: ./run_homme_partmcsl.sh -r partmcsl_sbr_sweep_ne60.nl
+if [ -n "$1" ]; then
+  namelistFile=$homme/$1
+fi
 
 if [ "$configFlag" ]
 then
