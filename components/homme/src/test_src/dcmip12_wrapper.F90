@@ -1095,12 +1095,10 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   !! the Rodrigues formula with angle = -omega*t (both u_east and v_north
   !! signs verified against the override formulae).
   !!
-  !! FV centroid (lat, lon) obtained from gfr_f_get_latlon; matches the
-  !! centroid gllfvremap uses so gfr_fv_phys_to_dyn's projection back to GLL
-  !! is self-consistent.  Partmcsl's ci ordering
-  !! (low-a low-b, high-a low-b, high-a high-b, low-a high-b) maps to
-  !! gllfvremap's flat k = nphys_side*(j-1) + i via the same (1,2,4,3)
-  !! permutation used in partmcsl_advection.F90:170.
+  !! FV centroid (lat, lon) obtained from gfr_f_get_latlon.  pg_data%q at this
+  !! call site is in gllfvremap's flat k ordering (k = nphys_side*(j-1) + i),
+  !! matching what gfr_fv_phys_to_dyn expects downstream; store directly at
+  !! index k so no partmcsl<->gfr permutation is needed here.
   !!
   !! Cell centroid vs cell mean: pg_data%q stores FV cell-mean tracer values,
   !! but this routine samples the analytic exact at the centroid.  For a
@@ -1121,12 +1119,11 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   ! FV subcell layout for pg2 (nphys=2).
   integer,  parameter :: nphys_side_l = 2
   integer,  parameter :: nphys_cell_l = 4
-  integer,  parameter :: pmcsl_ci_to_gfr_k(nphys_cell_l) = (/1, 2, 4, 3/)
 
   real(rl) :: omega_sbr, nx_axis, nz_axis, angle, cos_a, sin_a
   real(rl) :: lat_c, lon_c, x, y, z, dot, xr, yr, zr, rnorm
   real(rl) :: lat0, lon0, p_mid, height
-  integer  :: ie, ci, k, kk, i_fv, j_fv
+  integer  :: ie, k, kk, i_fv, j_fv
 
   if (.not. allocated(pg_data%q)) return
 
@@ -1138,8 +1135,7 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   sin_a     = sin(angle)
 
   do ie = nets, nete
-    do ci = 1, nphys_cell_l
-      kk   = pmcsl_ci_to_gfr_k(ci)
+    do kk = 1, nphys_cell_l
       i_fv = mod(kk - 1, nphys_side_l) + 1
       j_fv = (kk - 1) / nphys_side_l + 1
       call gfr_f_get_latlon(ie, i_fv, j_fv, lat_c, lon_c)
@@ -1160,7 +1156,7 @@ subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
       do k = 1, nlev
         p_mid  = hvcoord%hyam(k)*p0 + hvcoord%hybm(k)*p0   ! ps = p0 for SBR
         height = H_h * log(p0 / p_mid)
-        pg_data%q(ci, k, 7, ie) = q1_gaussian_hills(lat0, lon0, height)
+        pg_data%q(kk, k, 7, ie) = q1_gaussian_hills(lat0, lon0, height)
       end do
     end do
   end do
