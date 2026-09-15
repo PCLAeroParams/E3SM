@@ -37,6 +37,11 @@ res=flight-cldera
 acct=fy210162
 # ne=2 gives nelemd = 6*4 = 24; keep ntasks small so no ranks sit idle.
 ntasks=24
+# HOMME/SLMM's ~g_csl_mpi destructor hangs during finalize (documented in
+# partmcsl_compose_hang_handoff.md).  Outputs are already flushed by then,
+# so we bound each run with timeout and continue the loop regardless of
+# exit status.  Bump if a fine-nlev run legitimately needs more time.
+runTimeout="300s"
 
 while getopts 'cbrsn:' OPTION
 do
@@ -106,8 +111,13 @@ EOF
     cd $wdir
     # ne=2 -> nelemd=24; oversubscribing wastes ranks.  Match SBR run
     # style but with reduced task count for the small VT mesh.
-    mpirun --map-by ppr:12:socket:PE=1 --bind-to core --n $ntasks \
-      $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
-      | tee homme-out-vt-nlev${nlev}.txt
+    # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang so the
+    # loop continues to the next nlev.  --kill-after sends SIGKILL 10s
+    # after the SIGTERM if the process is still stuck.
+    timeout --kill-after=10s $runTimeout \
+      mpirun --map-by ppr:12:socket:PE=1 --bind-to core --n $ntasks \
+        $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
+      | tee homme-out-vt-nlev${nlev}.txt || true
+    printf "Finished (or timed out) nlev=${nlev}; continuing.\n"
   fi
 done
