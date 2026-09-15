@@ -8,9 +8,14 @@
 !
 ! Small grid (ne=2): every column evolves identically since the flow
 ! and IC are horizontally uniform, so ne=2 is enough to exercise the
-! partmcsl vertical step.  qsize=2: Q1 rides the standard SL path,
-! Q2 mirrors it and is what the partmcsl vertical step transports on
-! the FV grid.  Compare Q2 vs a Python analytic-exact reference.
+! partmcsl vertical step.
+!
+! qsize=8: partmcsl transports slots 5:8 hard-coded (pmcsl_nq=4 in
+! partmcsl_advection.F90), so we can't shrink below 8 without touching
+! the partmcsl signature.  Q1 rides the standard SL path (reference),
+! Q5 mirrors Q1 at t=0 and is what the partmcsl vertical step
+! transports on the FV grid.  Q2..Q4 / Q6..Q8 are inert padding.
+! Compare Q5 vs a Python analytic-exact reference.
 !
 ! nlev sweep uses separate builds:
 !   theta-l-nlev20-native
@@ -28,7 +33,7 @@
   topology          = "cube"
   test_case         = "dcmip2012_test1_vt"
   ne                = 2
-  qsize             = 2
+  qsize             = 8
   ndays             = 0
   nmax              = 240                       ! 240 steps * 15 s = 1 hour
   statefreq         = 60                        ! screen dump every 60 steps (15 min)
@@ -66,7 +71,7 @@
   output_dir        = "./movies_vt/"
   output_timeunits  = 1,                        ! 1 = minutes
   output_frequency  = 15,                       ! output every 15 min => t = 0,15,30,45,60
-  output_varnames1  = 'Q','Q2'
+  output_varnames1  = 'Q','Q5'
   interp_type       = 0
   output_type       = 'netcdf'
   num_io_procs      = 16

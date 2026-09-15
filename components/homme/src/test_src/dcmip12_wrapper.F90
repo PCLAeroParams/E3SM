@@ -352,6 +352,9 @@ end subroutine
 #ifdef HOMME_ENABLE_PARTMCSL
 !_____________________________________________________________________
 subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
+  use gllfvremap_mod
+  use perf_mod, only: t_startf, t_stopf
+  use partmcsl_advection_mod, only : src_partition
 
   !  Vertical Translation Test — smooth Gaussian tracer transported by a
   !  prescribed two-lobe vertical wind with a converging mid-column
@@ -359,6 +362,11 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   !  partmcsl vertical step in isolation from horizontal transport.  See
   !  parameter block near top of module for the flow definition and
   !  analytic trajectory used by the Python reference.
+  !
+  !  qsize=8 required: partmcsl transports slots 5:8 hard-coded
+  !  (pmcsl_nq=4 in partmcsl_advection.F90).  We seed the Gaussian in Q1
+  !  (SL-transported reference) and mirror to Q5 (partmcsl-transported).
+  !  Q2..Q4 / Q6..Q8 are inert padding.
 
   type(element_t),    intent(inout), target :: elem(:)                  ! element array
   type(hybrid_t),     intent(in)            :: hybrid                   ! hybrid parallel structure
@@ -373,11 +381,12 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       T0      = 300.d0,       &                                         ! temperature (K)
       ztop_vt = 12000.d0,     &                                         ! model top (m)
       H       = Rd * T0 / g                                             ! scale height
+  integer,  parameter :: nphys = 2, ncol = 4
 
   integer  :: i,j,k,ie                                                  ! loop indices
   real(rl) :: lon,lat                                                   ! pointwise coordinates
   real(rl) :: p,z,phis,u,v,w,T,ps,rho,dp,eta_dot,dp_dn,omega            ! pointwise field values
-  real(rl) :: eta_top, eta_norm, q(2)
+  real(rl) :: eta_top, eta_norm, q(8)
 
   ! set analytic vertical coordinates at t=0 (same construction as Hadley)
   if(.not. initialized) then
@@ -386,6 +395,24 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     hvcoord%etai  = exp(-zi/H)                                          ! eta = exp(-z/H)
     call set_hybrid_coefficients(hvcoord,hybrid, hvcoord%etai(1),1.0_rl)! c=1 so p = eta*ps when ps=p0
     call set_layer_locations(hvcoord, .true., hybrid%masterthread)
+
+    if (qsize < 8) then
+      if (hybrid%masterthread) write(iulog,*) &
+           'partmcsl dcmip2012 vertical translation test requires qsize >= 8'
+      call abortmp('qsize set too small for dcmip test case')
+    endif
+    if (hybrid%ithr == 0) then
+       pg_data%nphys = nphys
+       call gfr_init(hybrid%par, elem, nphys)
+       allocate(pg_data%ps(ncol,nelemd), pg_data%zs(ncol,nelemd), pg_data%T(ncol,nlev,nelemd), &
+            pg_data%omega_p(ncol,nlev,nelemd), pg_data%uv(ncol,2,nlev,nelemd), &
+            pg_data%q(ncol,nlev,qsize,nelemd))
+       allocate(pg_zero_T(ncol,nlev,nelemd), pg_zero_uv(ncol,2,nlev,nelemd))
+       pg_zero_T = 0.0_rl
+       pg_zero_uv = 0.0_rl
+    endif
+    !$omp barrier
+
     initialized = .true.
   endif
 
@@ -413,11 +440,21 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
 
       if (time == 0.0_rl) then
+        q(:) = 0.0_rl
         q(1) = exp(-((eta_norm - eta_norm0_vt)/gauss_width_vt)**2)
-        q(2) = q(1)                                                     ! Q2 mirrors Q1 for the partmcsl-side tracer
-        call set_tracers(q,2,dp,i,j,k,lat,lon,elem(ie))
+        q(5) = q(1)                                                     ! Q5 = partmcsl-side mirror of Q1
+        call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
   enddo; enddo; enddo; enddo
+
+  ! Seed pg_data (FV-grid physgrid state) from GLL once at t=0.  Subsequent
+  ! updates to pg_data%q come from partmcsl_step_forward + vertical step.
+  if (time == 0.0_rl) then
+    call t_startf('gfr_dyn_to_fv_phys')
+    call gfr_dyn_to_fv_phys(hybrid, n0, hvcoord, elem, nets, nete, &
+         pg_data%ps, pg_data%zs, pg_data%T, pg_data%uv, pg_data%omega_p, pg_data%q)
+    call t_stopf('gfr_dyn_to_fv_phys')
+  endif
 
   ! prescribed state at level interfaces
   do ie = nets,nete; do k=1,nlevp; do j=1,np; do i=1,np
