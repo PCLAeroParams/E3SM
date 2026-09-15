@@ -383,6 +383,16 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       H       = Rd * T0 / g                                             ! scale height
   integer,  parameter :: nphys = 2, ncol = 4
 
+  !! Small solid-body rotation to keep the partmcsl horizontal step's
+  !! departure quads non-degenerate.  u=v=0 causes the intersection
+  !! kernel to see advected ~= source with epsilon-drift, producing
+  !! total-frac ~ 0 in calc_source_partition (crash at ne>=16).  SBR
+  !! rigidly rotates the sphere so a horizontally-uniform tracer stays
+  !! horizontally uniform, physical setup preserved.  alpha=0 (rotation
+  !! about the poles), tau=12 days as in the SBR sweep.
+  real(rl), parameter :: sbr_tau_vt = 12.0_rl * 86400.0_rl              ! period (s)
+  real(rl), parameter :: sbr_u0_vt  = 2.0_rl * pi * a / sbr_tau_vt      ! peak zonal wind (m/s)
+
   integer  :: i,j,k,ie                                                  ! loop indices
   real(rl) :: lon,lat                                                   ! pointwise coordinates
   real(rl) :: p,z,phis,u,v,w,T,ps,rho,dp,eta_dot,dp_dn,omega            ! pointwise field values
@@ -424,7 +434,7 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       ps   = p0
       phis = 0.0_rl
       T    = T0
-      u    = 0.0_rl
+      u    = sbr_u0_vt * cos(lat)                                        ! SBR (alpha=0): rigid rotation about poles
       v    = 0.0_rl
       z    = H * log(1.0_rl/hvcoord%etam(k))
       p    = p0 * hvcoord%etam(k)
@@ -462,7 +472,7 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       ps   = p0
       phis = 0.0_rl
       T    = T0
-      u    = 0.0_rl
+      u    = sbr_u0_vt * cos(lat)                                        ! SBR (alpha=0): rigid rotation about poles
       v    = 0.0_rl
       z    = H * log(1.0_rl/hvcoord%etai(k))
       p    = p0 * hvcoord%etai(k)
