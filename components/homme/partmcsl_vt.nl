@@ -6,9 +6,10 @@
 ! (w_amp_vt, eta_norm0_vt, gauss_width_vt) live in
 ! src/test_src/dcmip12_wrapper.F90 near the top of the module.
 !
-! Small grid (ne=2): every column evolves identically since the flow
-! and IC are horizontally uniform, so ne=2 is enough to exercise the
-! partmcsl vertical step.
+! ne=16 grid: physical flow is horizontally uniform, so ne=2 would
+! suffice in principle, but ne=2 stresses gfr_fv_phys_to_dyn in a
+! corner case that appears to produce horizontal artifacts in Q5.
+! ne=16 matches the horizontal SBR sweep and gfr is well-vetted there.
 !
 ! qsize=8: partmcsl transports slots 5:8 hard-coded (pmcsl_nq=4 in
 ! partmcsl_advection.F90), so we can't shrink below 8 without touching
@@ -32,7 +33,7 @@
   partmethod        = 4
   topology          = "cube"
   test_case         = "dcmip2012_test1_vt"
-  ne                = 2
+  ne                = 16
   qsize             = 8
   ndays             = 0
   nmax              = 240                       ! 240 steps * 15 s = 1 hour
