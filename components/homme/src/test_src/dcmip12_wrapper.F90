@@ -91,6 +91,22 @@ type (PhysgridData_t) :: pg_data
 ! the remap-back affects only Q (the partmcsl-advected tracers).
 real(rl), allocatable :: pg_zero_T(:,:,:)        ! (ncol, nlev, nelemd)
 real(rl), allocatable :: pg_zero_uv(:,:,:,:)     ! (ncol, 2, nlev, nelemd)
+
+!! Vertical Translation Test (dcmip2012_test1_vt) parameters.
+!! Two-lobe prescribed vertical wind in a hybrid-coord column with
+!! ps held constant at p0, eta aligned with pressure (hyai=0, hybi=eta
+!! when eta > eta_top).  eta_dot = w_amp_vt * sin(2*pi*eta_norm) so the
+!! flow has zeros at eta_norm in {0, 1/2, 1} — top wall, mid-column
+!! stagnation, and bottom wall.  Sign convention: eta_dot > 0 (descend)
+!! in upper lobe (0 < eta_norm < 1/2), eta_dot < 0 (ascend) in lower
+!! lobe, so mid-column is a converging stagnation surface.  IC is a
+!! Gaussian in eta_norm centered in the lower lobe, off the stagnation.
+!! Analytic Lagrangian trajectory:
+!!   eta_norm(t; eta_norm_0) = 1 + arctan(tan(pi*eta_norm_0)*exp(alpha*t))/pi
+!! where alpha = 2*pi*w_amp_vt/(1 - eta_top).  Reversible (dt -> -dt).
+real(rl), parameter :: w_amp_vt       = 2.0e-5_rl  ! peak deta/dt (1/s)
+real(rl), parameter :: eta_norm0_vt   = 0.75_rl    ! IC center in eta_norm
+real(rl), parameter :: gauss_width_vt = 0.06_rl    ! sigma in eta_norm
 #endif
 
 contains
@@ -332,6 +348,105 @@ subroutine dcmip2012_test1_2(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   enddo; enddo; enddo; enddo
 
 end subroutine
+
+#ifdef HOMME_ENABLE_PARTMCSL
+!_____________________________________________________________________
+subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
+
+  !  Vertical Translation Test — smooth Gaussian tracer transported by a
+  !  prescribed two-lobe vertical wind with a converging mid-column
+  !  stagnation.  Designed as a nlev-refinement convergence probe for the
+  !  partmcsl vertical step in isolation from horizontal transport.  See
+  !  parameter block near top of module for the flow definition and
+  !  analytic trajectory used by the Python reference.
+
+  type(element_t),    intent(inout), target :: elem(:)                  ! element array
+  type(hybrid_t),     intent(in)            :: hybrid                   ! hybrid parallel structure
+  type(hvcoord_t),    intent(inout)         :: hvcoord                  ! hybrid vertical coordinates
+  integer,            intent(in)            :: nets,nete                ! start, end element index
+  real(rl),           intent(in)            :: time                     ! current time
+  integer,            intent(in)            :: n0,n1                    ! time level indices
+
+  logical ::  initialized = .false.
+
+  real(rl), parameter ::      &
+      T0      = 300.d0,       &                                         ! temperature (K)
+      ztop_vt = 12000.d0,     &                                         ! model top (m)
+      H       = Rd * T0 / g                                             ! scale height
+
+  integer  :: i,j,k,ie                                                  ! loop indices
+  real(rl) :: lon,lat                                                   ! pointwise coordinates
+  real(rl) :: p,z,phis,u,v,w,T,ps,rho,dp,eta_dot,dp_dn,omega            ! pointwise field values
+  real(rl) :: eta_top, eta_norm, q(2)
+
+  ! set analytic vertical coordinates at t=0 (same construction as Hadley)
+  if(.not. initialized) then
+    if (hybrid%masterthread) write(iulog,*) 'initializing dcmip2012 vertical translation test'
+    call get_evenly_spaced_z(zi,zm, 0.0_rl,ztop_vt)                     ! evenly spaced z levels
+    hvcoord%etai  = exp(-zi/H)                                          ! eta = exp(-z/H)
+    call set_hybrid_coefficients(hvcoord,hybrid, hvcoord%etai(1),1.0_rl)! c=1 so p = eta*ps when ps=p0
+    call set_layer_locations(hvcoord, .true., hybrid%masterthread)
+    initialized = .true.
+  endif
+
+  eta_top = hvcoord%etai(1)
+
+  ! prescribed state at level midpoints
+  do ie = nets,nete; do k=1,nlev; do j=1,np; do i=1,np
+      lon  = elem(ie)%spherep(i,j)%lon; lat  = elem(ie)%spherep(i,j)%lat
+      ps   = p0
+      phis = 0.0_rl
+      T    = T0
+      u    = 0.0_rl
+      v    = 0.0_rl
+      z    = H * log(1.0_rl/hvcoord%etam(k))
+      p    = p0 * hvcoord%etam(k)
+      rho  = p / (Rd * T)
+      dp   = pressure_thickness(ps,k,hvcoord)
+
+      ! w consistent with omega = eta_dot_dpdn under hydrostatic balance:
+      !   omega = -g*rho*w, so w = -omega/(g*rho).
+      eta_norm = (hvcoord%etam(k) - eta_top) / (1.0_rl - eta_top)
+      omega    = w_amp_vt * sin(2.0_rl*pi*eta_norm) * ps                ! dp/deta = ps under this setup
+      w        = -omega / (g * rho)
+
+      call set_state(u,v,w,T,ps,phis,p,dp,zm(k),g, i,j,k,elem(ie),n0,n1)
+
+      if (time == 0.0_rl) then
+        q(1) = exp(-((eta_norm - eta_norm0_vt)/gauss_width_vt)**2)
+        q(2) = q(1)                                                     ! Q2 mirrors Q1 for the partmcsl-side tracer
+        call set_tracers(q,2,dp,i,j,k,lat,lon,elem(ie))
+      endif
+  enddo; enddo; enddo; enddo
+
+  ! prescribed state at level interfaces
+  do ie = nets,nete; do k=1,nlevp; do j=1,np; do i=1,np
+      lon  = elem(ie)%spherep(i,j)%lon; lat  = elem(ie)%spherep(i,j)%lat
+      ps   = p0
+      phis = 0.0_rl
+      T    = T0
+      u    = 0.0_rl
+      v    = 0.0_rl
+      z    = H * log(1.0_rl/hvcoord%etai(k))
+      p    = p0 * hvcoord%etai(k)
+      rho  = p / (Rd * T)
+
+      ! Two-lobe eta_dot: sin(2*pi*eta_norm), zeros at both walls and at
+      ! mid-column stagnation.  Multiplied by dp/deta to land in the Pa/s
+      ! eta_dot_dpdn convention that partmcsl reads.  w derived from the
+      ! same omega for consistency.
+      eta_norm = (hvcoord%etai(k) - eta_top) / (1.0_rl - eta_top)
+      dp_dn    = ddn_hyai(k)*p0 + ddn_hybi(k)*ps
+      eta_dot  = w_amp_vt * sin(2.0_rl*pi*eta_norm)
+      omega    = eta_dot * dp_dn
+      w        = -omega / (g * rho)
+
+      call set_state_i(u,v,w,T,ps,phis,p,zi(k),g, i,j,k,elem(ie),n0,n1)
+      elem(ie)%derived%eta_dot_dpdn_prescribed(i,j,k) = omega
+  enddo; enddo; enddo; enddo
+
+end subroutine
+#endif
 
 !_____________________________________________________________________
 subroutine dcmip2012_test1_3(elem,hybrid,hvcoord,nets,nete,time,n0,n1,deriv)
