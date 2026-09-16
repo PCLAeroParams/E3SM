@@ -184,19 +184,18 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       z = H * log(1.0d0/hvcoord%etam(k))
       p = p0 * hvcoord%etam(k)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
-      !! Replace the DCMIP cosine-bell Q1 with the DCMIP Gaussian-hills
-      !! variant (C^infinity, no bell-edge kink).  Q2..Q4 stay on their
-      !! upstream definitions; note Q2 = 0.9 - 0.8*q1^2 and Q4 = 1 - 0.3*(q1+q2+q3)
-      !! inherit the smoother q1 while Q3 (slotted ellipse) is unaffected.
-      q(1) = q1_gaussian_hills(lat, lon, z)
 #ifdef PARTMCSL_SBR_DIAG
-      !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse):
-      !! Override the deformational (u,v) with Williamson SW1 solid-body
-      !! rotation.  Bells (q1..q4) returned by test1_advection_deformation
-      !! are kept as the IC; only the wind is replaced so partmcsl's
-      !! 4-corner GLL sample + bilinear (a,b) interp captures the
-      !! velocity exactly up to O(h^2) chord-vs-arc per step.  Revert
-      !! before shipping.
+      !! DIAGNOSTIC ONLY: Replace the DCMIP cosine-bell Q1 with the
+      !! DCMIP Gaussian-hills variant (C^infinity, no bell-edge kink)
+      !! so CEDR clipping doesn't confound the SBR convergence sweep.
+      !! Q2..Q4 stay on their upstream definitions; note Q2 = 0.9 -
+      !! 0.8*q1^2 and Q4 = 1 - 0.3*(q1+q2+q3) inherit the smoother q1
+      !! while Q3 (slotted ellipse) is unaffected.
+      q(1) = q1_gaussian_hills(lat, lon, z)
+      !! DIAGNOSTIC ONLY (Test S): override the deformational (u,v) with
+      !! Williamson SW1 solid-body rotation so PartMCSL's 4-corner GLL
+      !! sample + bilinear (a,b) interp captures the velocity exactly up
+      !! to O(h^2) chord-vs-arc per step.
       u = sbr_u0 * (cos(lat)*cos(sbr_alpha) + sin(lat)*cos(lon)*sin(sbr_alpha))
       v = -sbr_u0 * sin(lon) * sin(sbr_alpha)
       w = 0.0_rl
@@ -210,20 +209,19 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         ! Mirror q1..q4 into q5..q8 so the partmcsl-advected physgrid tracers
         ! share the IC of the dynamics-grid tracers.
         q(5:8) = q(1:4)
-        !! DIAGNOSTIC ONLY (Q6 constant-tracer): overwrite Q6 with a spatial
-        !! constant so any drift of Q6 during transport diagnoses whether the
-        !! arrival-side Σ frac = 1 invariant holds on the live departure
-        !! quads (as opposed to the synthetic uniform partition tested by
-        !! test_sum_to_one).  Revert before shipping.
-        q(6) = 1.0_rl
 #ifdef PARTMCSL_SBR_DIAG
-        !! DIAGNOSTIC ONLY (Q7 analytic-exact): seed Q7 with Q1 (cosine bells)
-        !! instead of Q3 (slotted cylinder).  At subsequent snapshots Q7 is
-        !! overwritten in set_pg_q7_analytic_exact with the analytically
-        !! SBR-rotated IC evaluated at FV cell centroids; the ||Q5 - Q7|| diff
-        !! in the NetCDF then measures partmcsl's true error against the
-        !! analytic exact (no dependence on SL Q as a reference).  Revert
-        !! before shipping.
+        !! DIAGNOSTIC ONLY (Q6 constant-tracer): overwrite Q6 with a
+        !! spatial constant so any drift of Q6 during transport diagnoses
+        !! whether the arrival-side Σ frac = 1 invariant holds on the
+        !! live departure quads (as opposed to the synthetic uniform
+        !! partition tested by test_sum_to_one).
+        q(6) = 1.0_rl
+        !! DIAGNOSTIC ONLY (Q7 analytic-exact): seed Q7 with Q1
+        !! (Gaussian hills) instead of Q3 (slotted cylinder).  At later
+        !! snapshots Q7 is overwritten in set_pg_q7_analytic_exact with
+        !! the analytically SBR-rotated IC evaluated at FV cell centroids;
+        !! the ||Q5 - Q7|| diff in the NetCDF then measures partmcsl's
+        !! true error against the analytic exact.
         q(7) = q(1)
 #endif
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
@@ -270,13 +268,16 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 
   enddo; enddo; enddo; enddo
 
-  !! DIAGNOSTIC ONLY (partmcsl Test W, vivid-napping-lighthouse):
-  !! zero the prescribed vertical eta-velocity so the V step (both partmcsl
-  !! and SL vertical remap) becomes the identity, isolating the H step in
-  !! the ||Q5-Q||_L2 convergence rate.  Revert before shipping.
+#ifdef PARTMCSL_SBR_DIAG
+  !! DIAGNOSTIC ONLY (Test S): zero the prescribed vertical eta-velocity
+  !! so the V step (both partmcsl and SL vertical remap) becomes the
+  !! identity, isolating the H step in the ||Q5-Q||_L2 convergence rate.
+  !! The Vertical Translation Test (dcmip2012_test1_vt) exercises the V
+  !! step separately with its own prescribed eta_dot.
   do ie = nets, nete
     elem(ie)%derived%eta_dot_dpdn_prescribed(:,:,:) = 0.0_rl
   end do
+#endif
 
 end subroutine
 
