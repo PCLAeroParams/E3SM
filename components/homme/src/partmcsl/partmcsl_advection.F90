@@ -1384,9 +1384,12 @@ end subroutine check_gfr_partmcsl_subcell_map
   !      destination thickness dp_dst from analytic hybrid coords.
   !   2. Sample dp3d(:,:,:,tl%np1) directly at the FV cell center as
   !      the Lagrangian source thickness dp_lagr.
-  !   3. Convert mixing ratio to source-cell mass Qdp = pg_q * dp_dst
-  !      (Lagrangian invariant: the displaced parcel carries its
-  !      original Eulerian cell mass).
+  !   3. Convert mixing ratio to source-cell mass Qdp = pg_q * dp_lagr.
+  !      pg_q is the Lagrangian-preserved mixing ratio; its physical
+  !      mass in the Lagrangian cell is pg_q * dp_lagr (compressed
+  !      cells carry proportionally less mass at the same q).  Using
+  !      dp_dst here would inflate mass at compression zones and
+  !      produce unphysical peak overshoots.
   !   4. Call remap1 with dp1=dp_lagr, dp2=dp_dst, alg=vert_remap_q_alg
   !      -- same kernel and algorithm choice as the SL tracer path.
   !   5. Convert back to mixing ratio: pg_q = Qdp / dp_dst.
@@ -1454,7 +1457,14 @@ end subroutine check_gfr_partmcsl_subcell_map
         enddo
         do t = 1, pmcsl_nq
           do k = 1, nlev
-            Qdp(1, 1, k, t) = pg_q(ci, k, t, ie) * dp_dst(1, 1, k)
+            ! Physical mass in Lagrangian cell = mixing ratio * Lagrangian
+            ! thickness.  pg_q is Lagrangian-preserved (the parcel carries
+            ! its mixing ratio unchanged under the wind), so its mass in
+            ! the cell of thickness dp_lagr is pg_q * dp_lagr.  Using
+            ! dp_dst here inflated mass in compression zones (Q5 peak
+            ! overshoot ~1.19 in the VT test); this matches
+            ! sl_advection.F90:448 (Qdp = Q * dp3d[np1]=dp_lagr).
+            Qdp(1, 1, k, t) = pg_q(ci, k, t, ie) * dp_lagr(1, 1, k)
           enddo
         enddo
 
