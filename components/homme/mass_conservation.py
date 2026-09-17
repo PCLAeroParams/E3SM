@@ -40,32 +40,69 @@ def _time_seconds(ds):
     return ds['time'].values
 
 
-def _weight_2d(ds):
-    """Vertical dp weight (lev,) * horizontal area weight (ncol,)."""
-    dp = np.diff(ds['hyai'].values) + np.diff(ds['hybi'].values)
-    if 'area' in ds.variables:
-        area = ds['area'].values
+P0 = 1.0e5     # HOMME reference pressure (Pa); ties dp to (dhyai*p0 + dhybi*ps)
+
+
+def _weight_time(ds, it):
+    """Time-dependent horizontal-x-vertical weight for the mass integral.
+
+    Prefers ``dp3d(t)`` if the file has it (direct, no reconstruction).
+    Falls back to ``dhyai*p0 + dhybi*ps(t)`` when ``ps`` is available
+    (reconstructs true dp3d from the surface pressure).  Falls back one
+    more step to the fixed weight ``dhyai + dhybi`` (equivalent to
+    ``dp3d/p0`` at ``ps = p0``) if neither ``ps`` nor ``dp3d`` was
+    written -- a warning is printed the first time.
+
+    Returns a (lev, ncol) array with an implicit ``1/p0`` factor absorbed
+    so relative drifts are unchanged regardless of the fallback chosen.
+    """
+    area = ds['area'].values if 'area' in ds.variables \
+        else np.ones(ds.sizes['ncol'])
+    dhyai = np.diff(ds['hyai'].values)
+    dhybi = np.diff(ds['hybi'].values)
+    if 'dp3d' in ds.variables:
+        dp = ds['dp3d'].isel(time=it).values / P0            # (lev, ncol)
+    elif 'ps' in ds.variables:
+        ps = ds['ps'].isel(time=it).values                    # (ncol,)
+        dp = (dhyai[:, None] * P0
+              + dhybi[:, None] * ps[None, :]) / P0            # (lev, ncol)
     else:
-        area = np.ones(ds.sizes['ncol'])
-    return dp[:, None] * area[None, :]                       # (lev, ncol)
+        if not getattr(_weight_time, '_warned', False):
+            print('WARNING: neither ps nor dp3d in output; falling back '
+                  'to fixed (dhyai + dhybi) weight.  '
+                  'Reported drifts include the dp3d(t) evolution artifact.')
+            _weight_time._warned = True
+        dp = (dhyai + dhybi)[:, None] * np.ones((1, ds.sizes['ncol']))
+    return dp * area[None, :]                                 # (lev, ncol)
+
+
+def _mass_series(ds, varname):
+    """M(t) = sum_{k,c} q(k,c,t) * area(c) * dp3d(k,c,t) / p0.
+
+    Sums with the time-appropriate weight; automatic fallback in
+    ``_weight_time`` if the file was written without ``ps`` or ``dp3d``.
+    """
+    nt = ds.sizes['time']
+    out = np.empty(nt)
+    for i in range(nt):
+        w = _weight_time(ds, i)
+        out[i] = float(np.sum(w * ds[varname].isel(time=i).values))
+    return out
 
 
 def horizontal_mass(files, output='mass_conservation_horiz.pdf'):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
-    print('Horizontal SBR (rel drift of sum q * area * (dhyai + dhybi))')
+    print('Horizontal SBR (rel drift of sum q * area * dp3d(t) / p0)')
     print(f'{"ne":>4}  {"t (h)":>6}  {"drift_Q":>12}  {"drift_Q5":>12}  '
           f'{"Q5-Q gap":>10}')
     colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(files)))
     for fn, c in zip(files, colors):
         with xr.open_dataset(fn, decode_timedelta=False) as ds:
             ne = int(ds.attrs['ne'])
-            w2 = _weight_2d(ds)
             t_sec = _time_seconds(ds)
             t_h = t_sec / 3600.0
-            m_Q  = np.array([float(np.sum(w2 * ds['Q' ].isel(time=i).values))
-                             for i in range(len(t_sec))])
-            m_Q5 = np.array([float(np.sum(w2 * ds['Q5'].isel(time=i).values))
-                             for i in range(len(t_sec))])
+            m_Q  = _mass_series(ds, 'Q')
+            m_Q5 = _mass_series(ds, 'Q5')
             drift_Q  = (m_Q  - m_Q [0]) / m_Q [0]
             drift_Q5 = (m_Q5 - m_Q5[0]) / m_Q5[0]
             gap      = drift_Q5 - drift_Q
@@ -89,8 +126,8 @@ def horizontal_mass(files, output='mass_conservation_horiz.pdf'):
     ax2.grid(True, which='both', alpha=0.3)
     ax2.legend(fontsize=8)
     fig.suptitle('SBR horizontal test — mass conservation '
-                 '(both schemes track together; ps/dp3d evolution '
-                 'is the common drift)', fontsize=10)
+                 '(dp3d(t)-weighted; SL/PMCSL both drift only from the '
+                 'partmcsl-specific gap)', fontsize=10)
     fig.tight_layout()
     fig.savefig(output, dpi=150)
     plt.close(fig)

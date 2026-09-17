@@ -72,7 +72,7 @@
   output_dir        = "./movies_vt/"
   output_timeunits  = 0,                        ! 0 = timesteps
   output_frequency  = 60,                       ! every 60 timesteps = 15 min at tstep=15 => t = 0,15,30,45,60 min
-  output_varnames1  = 'Q','Q5'
+  output_varnames1  = 'ps','Q','Q5'
   interp_type       = 0
   output_type       = 'netcdf'
   num_io_procs      = 16
