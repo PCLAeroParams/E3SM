@@ -102,11 +102,16 @@ then
   printf "Running ${execName} (ne=30) -> ${outDir}\n"
   mkdir -p $wdir/$outDir
   cd $wdir
+  # cee-compute046: 8-socket Xeon Platinum 8490H = 8 * 60 phys cores = 480
+  # phys (960 logical w/ SMT).  Good-neighbor cap = half the hyperthreaded
+  # total = 480 hardware threads => use all 480 physical cores, one rank
+  # per phys core, SMT siblings idle.  Ranks distributed 60 per socket
+  # across all eight sockets for full memory bandwidth.
   # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang at finalize
   # (documented in partmcsl_compose_hang_handoff.md).  Outputs are already
   # flushed by then.
   timeout --kill-after=10s $runTimeout \
-    mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n $ntasks \
+    mpirun --map-by ppr:60:socket:PE=1 --bind-to core --n 480 \
       $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
     | tee homme-out-dcmip-ne30.txt || true
   printf "Finished (or timed out) ne=30.\n"
