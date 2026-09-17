@@ -110,8 +110,13 @@ EOF
     printf "Running ${execName} (ne=${ne}) -> ${outDir}\n"
     mkdir -p $wdir/$outDir
     cd $wdir
+    # Local box: quad Xeon 8176 = 4 sockets * 28 phys cores = 112 phys,
+    # 224 logical w/ SMT.  Good-neighbor cap = half the hyperthreaded
+    # total = 112 hardware threads => use all 112 physical cores (one
+    # rank per phys core, SMT siblings left idle).  Ranks distributed
+    # 28 per socket across all four sockets for full memory bandwidth.
     timeout --kill-after=10s $runTimeout \
-      mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n $ntasks \
+      mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n 112 \
         $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
       | tee homme-out-sbr-ne${ne}.txt || true
     printf "Finished (or timed out) ne=${ne}; continuing.\n"
