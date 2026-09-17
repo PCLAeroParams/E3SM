@@ -37,11 +37,13 @@ submitFlag=
 
 jobFile=batch_run_dcmip.cmd
 nnodes=1
-wtime="03:00:00"
+# 12-day run at ne=30, nlev=64, tstep=10 s -> ~1.04e5 dyn steps.  3.3x more
+# steps than tstep=33 s; wall time budgeted at ~10 h with headroom.
+wtime="10:00:00"
 res=flight-cldera
 acct=fy210162
 ntasks=448
-runTimeout="10800s"
+runTimeout="36000s"
 
 while getopts 'cbrs' OPTION
 do

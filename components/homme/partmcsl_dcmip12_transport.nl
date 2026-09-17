@@ -12,7 +12,8 @@
   statefreq         = 200                       ! number of steps between screen dumps
   restartfreq       = -1                        ! don't write restart files if < 0
   runtype           = 0                         ! 0 = new run
-  tstep             = 33                        ! largest timestep in seconds
+  tstep             = 10                        ! s; dropped from 33 for stability at nlev=64
+                                                ! (dz ~ 187 m tightens the explicit-acoustics margin)
   integration       = 'explicit'                ! explicit time integration
   tstep_type        = 1                         ! 1 => default method
   smooth            = 0                         ! timestep smooting
