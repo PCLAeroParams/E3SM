@@ -39,6 +39,8 @@
   hypervis_order    = 2
   hypervis_subcycle = 1
   prescribed_wind   = 1
+  ftype             = -1                        ! stops applyCAMforcing_tracers from folding the stale derived%FQ
+                                                ! that dcmip2012_test1_1_phys_to_dyn writes at output time back into Qdp
   dt_tracer_factor  = 2
   dt_remap_factor   = 2
   transport_alg     = 12

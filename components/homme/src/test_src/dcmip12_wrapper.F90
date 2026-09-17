@@ -1229,11 +1229,16 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
 
   ! Copy the partmcsl-advected slots back into state%Q so the NetCDF writer
   ! sees them.  Slots 1..4 are the dynamics-grid tracers; we leave those as
-  ! the SL transport produced them.
+  ! the SL transport produced them.  Then zero derived%FQ everywhere so
+  ! applyCAMforcing_tracers on the next subcycle does not fold this
+  ! output-time scratch tendency back into Qdp (see run notes: with the
+  ! default ftype=0, non-zero FQ silently poisons SL's Q1 slot; the
+  ! namelists also set ftype=-1 as a belt-and-braces guard).
   do ie = nets, nete
     do qi = 5, qsize
       elem(ie)%state%Q(:,:,:,qi) = elem(ie)%derived%FQ(:,:,:,qi)
     end do
+    elem(ie)%derived%FQ(:,:,:,:) = 0.0_rl
   end do
   call t_stopf('partmcsl_phys_to_dyn')
 end subroutine dcmip2012_test1_1_phys_to_dyn
