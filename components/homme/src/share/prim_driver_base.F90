@@ -669,14 +669,16 @@ contains
     use control_mod,  only : transport_alg
 #ifdef HOMME_ENABLE_PARTMCSL
     use partmcsl_advection_mod, only:  partmcsl_init
-    
+#endif
+
     type (parallel_t), intent(in) :: par
     type (element_t), pointer, intent(in) :: elem(:)
 
+#ifdef HOMME_ENABLE_PARTMCSL
     if (transport_alg <= 0) then
         call abortmp("PARTMCSL requires COMPOSE and semi-Lagrangian transport for deterministic tracers.")
     endif
-    
+
     call partmcsl_init(par, elem)
 #endif
   end subroutine prim_init1_partmcsl
