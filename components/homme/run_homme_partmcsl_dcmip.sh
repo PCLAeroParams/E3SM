@@ -107,6 +107,15 @@ then
   # total = 480 hardware threads => use all 480 physical cores, one rank
   # per phys core, SMT siblings idle.  Ranks distributed 60 per socket
   # across all eight sockets for full memory bandwidth.
+  #
+  # OpenMPI opens ~3 pipes per rank for stdout/stderr forwarding, so 480
+  # ranks want ~1500+ file descriptors; the RHEL default soft limit of
+  # 1024 trips iof_base_setup.c:116 ("system limit on number of pipes ...
+  # was reached").  Raise soft to the shell's hard limit (usually 1M on
+  # RHEL8) before launching; belt-and-braces env var asks Open MPI to
+  # push limits up too.
+  ulimit -n $(ulimit -n -H)
+  export OMPI_MCA_opal_set_max_sys_limits=1
   # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang at finalize
   # (documented in partmcsl_compose_hang_handoff.md).  Outputs are already
   # flushed by then.
