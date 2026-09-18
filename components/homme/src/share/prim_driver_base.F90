@@ -1339,10 +1339,13 @@ contains
     end if
     call t_stopf("prim_step_advec")
     
-#ifdef HOMME_ENABLE_PARTMCSL
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(PARTMCSL_SKIP_STEP_FORWARD)
       ! Translate pg_data%q's FV cell ordering at the dycore/partmcsl boundary
       ! (gllfvremap flat order <-> partmcsl CCW order).  See
       ! partmcsl_permute_pg_q_cells for details.
+      ! PARTMCSL_SKIP_STEP_FORWARD (compile-time) removes this whole runtime
+      ! transport block for A/B diagnostics; partmcsl_init still runs and
+      ! pg_data stays at its t=0 IC.
       call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:8, :), .true.)
       call t_startf('partmcsl_step_forward')
       call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt_q, nets, nete, &

@@ -129,6 +129,7 @@ OPTION(HOMME_USE_SCORPIO  "Use Scorpio as the I/O library (Disable to use Scorpi
 OPTION(HOMME_ENABLE_PARTMCSL "stochastic semi-Lagrangian transport for use with PartMC aerosol code" ON) # this requires Compose
 OPTION(PARTMCSL_SBR_DIAG "Enable Test S SBR wind override + Q7 analytic-exact diagnostic in dcmip12_wrapper.F90" OFF)
 OPTION(PARTMCSL_SKIP_PHYS_TO_DYN "Skip the dcmip2012_test1_1_phys_to_dyn call in prim_main so the Q5..Q8 copy-back does not run; A/B-only, leaves Q5..Q8 stale in output" OFF)
+OPTION(PARTMCSL_SKIP_STEP_FORWARD "Skip partmcsl_permute/step_forward/vertical_step calls in prim_step; A/B-only, partmcsl code still compiles/initializes but does nothing during timestepping" OFF)
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)

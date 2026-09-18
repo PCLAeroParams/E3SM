@@ -88,3 +88,6 @@
 
 /* Skip dcmip2012_test1_1_phys_to_dyn A/B-only build guard (off by default) */
 #cmakedefine PARTMCSL_SKIP_PHYS_TO_DYN
+
+/* Skip partmcsl runtime transport calls in prim_step A/B-only build guard */
+#cmakedefine PARTMCSL_SKIP_STEP_FORWARD
