@@ -85,3 +85,6 @@
 
 /* Enable Test S SBR wind override + Q7 analytic-exact diagnostic (off by default) */
 #cmakedefine PARTMCSL_SBR_DIAG
+
+/* Skip dcmip2012_test1_1_phys_to_dyn A/B-only build guard (off by default) */
+#cmakedefine PARTMCSL_SKIP_PHYS_TO_DYN
