@@ -113,7 +113,7 @@ EOF
     # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang so the
     # loop continues to the next nlev.  --kill-after sends SIGKILL 10s
     # after the SIGTERM if the process is still stuck.
-    timeout --kill-after=10s $runTimeout \
+    timeout --foreground --kill-after=10s $runTimeout \
       mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n $ntasks \
         $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
       | tee homme-out-vt-nlev${nlev}.txt || true

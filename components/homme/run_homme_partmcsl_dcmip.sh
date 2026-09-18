@@ -110,7 +110,7 @@ then
   # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang at finalize
   # (documented in partmcsl_compose_hang_handoff.md).  Outputs are already
   # flushed by then.
-  timeout --kill-after=10s $runTimeout \
+  timeout --foreground --kill-after=10s $runTimeout \
     mpirun --map-by ppr:60:socket:PE=1 --bind-to core --n 480 \
       $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
     | tee homme-out-dcmip-ne30.txt || true

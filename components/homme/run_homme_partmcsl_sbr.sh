@@ -115,7 +115,7 @@ EOF
     # total = 112 hardware threads => use all 112 physical cores (one
     # rank per phys core, SMT siblings left idle).  Ranks distributed
     # 28 per socket across all four sockets for full memory bandwidth.
-    timeout --kill-after=10s $runTimeout \
+    timeout --foreground --kill-after=10s $runTimeout \
       mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n 112 \
         $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
       | tee homme-out-sbr-ne${ne}.txt || true
