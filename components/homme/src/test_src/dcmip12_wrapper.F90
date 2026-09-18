@@ -144,7 +144,10 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   real(rl):: q(8)
   integer, parameter :: nphys = 2, ncol=4
 #else
-  real(rl):: q(4) ! pointwise field values
+  ! Size to 8 so an sl-only build can still run qsize>4 (up to 8) without
+  ! set_tracers reading past the end of q; slots 5..8 are mirrored from
+  ! 1..4 at init time below, matching what the partmcsl branch does.
+  real(rl):: q(8)
 #endif
 
   ! Test S, vivid-napping-lighthouse: SBR wind override.  Constants sbr_tau,
@@ -227,7 +230,13 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
 #else
-      if(time==0) call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
+      if(time==0) then
+        ! Mirror q1..q4 into q5..q8 so an sl-only build with qsize>4 has a
+        ! well-defined IC in the upper slots (fair A/B against the
+        ! partmcsl branch, which does the same mirror at line 211).
+        q(5:8) = q(1:4)
+        call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
+      endif
 #endif
   enddo; enddo; enddo; enddo
 
