@@ -98,6 +98,5 @@
 /* Skip dcmip12_wrapper HOMME_ENABLE_PARTMCSL init block A/B-only build guard */
 #cmakedefine PARTMCSL_SKIP_WRAPPER_INIT
 
-/* Perturb q(5:8)=q(1:4)*0.99999 instead of exact mirror; A/B for CEDR
-   robustness to bit-duplicate tracers */
+/* Perturb q(5:8)=q(1:4)*0.99999 instead of exact mirror; A/B for CEDR robustness to bit-duplicate tracers */
 #cmakedefine PARTMCSL_PERTURB_MIRROR
