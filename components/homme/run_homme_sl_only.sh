@@ -72,14 +72,17 @@ then
   printf "Running ${execName} (ne=30, no partmcsl) -> ${outDir}\n"
   mkdir -p $wdir/$outDir
   cd $wdir
-  # cee-compute046: 8 sockets * 60 phys cores = 480 phys, all in use one
-  # rank per phys core (SMT siblings idle).  Bump fd cap for OpenMPI's
+  # cee-compute005: 16 sockets * 28 phys cores = 448 phys (896 logical
+  # w/ SMT).  Good-neighbor cap = half the hyperthreaded total = 448
+  # hardware threads => use all 448 physical cores, one rank per phys
+  # core, SMT siblings idle.  Ranks distributed 28 per socket across all
+  # sixteen sockets for full memory bandwidth.  Bump fd cap for OpenMPI's
   # per-rank pipes; belt-and-braces env var also asks Open MPI to raise
   # limits itself.
   ulimit -n $(ulimit -n -H)
   export OMPI_MCA_opal_set_max_sys_limits=1
   timeout --foreground --kill-after=10s $runTimeout \
-    mpirun --map-by ppr:60:socket:PE=1 --bind-to core --n 480 \
+    mpirun --map-by ppr:28:socket:PE=1 --bind-to core --n 448 \
       $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
     | tee homme-out-sl-only.txt || true
   printf "Finished (or timed out) SL-only diagnostic.\n"
