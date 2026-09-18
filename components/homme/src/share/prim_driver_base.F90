@@ -134,9 +134,13 @@ contains
     ! ==================================
     call prim_init1_buffers(elem,par)
 
-#ifdef HOMME_ENABLE_PARTMCSL
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(PARTMCSL_SKIP_INIT)
+    ! PARTMCSL_SKIP_INIT (compile-time) removes partmcsl_init entirely so
+    ! no fv_mesh / src_partition / ghost buffers / C++ state get set up.
+    ! Only sensible with PARTMCSL_SKIP_STEP_FORWARD + PARTMCSL_SKIP_PHYS_TO_DYN
+    ! also ON -- otherwise the runtime calls will trip null-pointer aborts.
     call prim_init1_partmcsl(par, elem)
-#endif    
+#endif
 
     ! Initialize the time levels
     call TimeLevel_init(tl)

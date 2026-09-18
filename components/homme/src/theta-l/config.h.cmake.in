@@ -91,3 +91,6 @@
 
 /* Skip partmcsl runtime transport calls in prim_step A/B-only build guard */
 #cmakedefine PARTMCSL_SKIP_STEP_FORWARD
+
+/* Skip prim_init1_partmcsl A/B-only build guard */
+#cmakedefine PARTMCSL_SKIP_INIT
