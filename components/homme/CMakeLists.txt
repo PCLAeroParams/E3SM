@@ -131,6 +131,7 @@ OPTION(PARTMCSL_SBR_DIAG "Enable Test S SBR wind override + Q7 analytic-exact di
 OPTION(PARTMCSL_SKIP_PHYS_TO_DYN "Skip the dcmip2012_test1_1_phys_to_dyn call in prim_main so the Q5..Q8 copy-back does not run; A/B-only, leaves Q5..Q8 stale in output" OFF)
 OPTION(PARTMCSL_SKIP_STEP_FORWARD "Skip partmcsl_permute/step_forward/vertical_step calls in prim_step; A/B-only, partmcsl code still compiles/initializes but does nothing during timestepping" OFF)
 OPTION(PARTMCSL_SKIP_INIT "Skip prim_init1_partmcsl (no fv_mesh alloc, no ghost buffers, no C++ src_partition_init); A/B-only, meant to isolate init-time leaks" OFF)
+OPTION(PARTMCSL_SKIP_WRAPPER_INIT "Skip the dcmip12_wrapper HOMME_ENABLE_PARTMCSL-guarded init (gfr_init, pg_data alloc, gfr_dyn_to_fv_phys seed at t=0); A/B-only, use with the other three SKIP flags" OFF)
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)

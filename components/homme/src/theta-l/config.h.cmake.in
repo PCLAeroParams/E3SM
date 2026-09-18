@@ -94,3 +94,6 @@
 
 /* Skip prim_init1_partmcsl A/B-only build guard */
 #cmakedefine PARTMCSL_SKIP_INIT
+
+/* Skip dcmip12_wrapper HOMME_ENABLE_PARTMCSL init block A/B-only build guard */
+#cmakedefine PARTMCSL_SKIP_WRAPPER_INIT

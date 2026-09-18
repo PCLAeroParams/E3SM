@@ -161,7 +161,11 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     hvcoord%etai  = exp(-zi/H)                                          ! set eta levels from z
     call set_hybrid_coefficients(hvcoord,hybrid, hvcoord%etai(1),1.0_rl)! set hybrid A and B from eta levels
     call set_layer_locations(hvcoord, .true., hybrid%masterthread)
-#ifdef HOMME_ENABLE_PARTMCSL
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(PARTMCSL_SKIP_WRAPPER_INIT)
+    ! PARTMCSL_SKIP_WRAPPER_INIT (compile-time) removes this whole partmcsl
+    ! wrapper init block so no gfr_init runs, no pg_data allocation, no
+    ! pg_zero_* setup.  Only sensible when SKIP_STEP_FORWARD, SKIP_PHYS_TO_DYN,
+    ! and SKIP_INIT are also ON so nothing later tries to touch pg_data.
     if (qsize < 8) then
       if (hybrid%masterthread) write(iulog,*) 'partmcsl dcmip2012 test 1-1: 3d deformational flow requires qsize >= 8'
       call abortmp('qsize set too small for dcmip test case')
@@ -177,7 +181,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
        pg_zero_uv = 0.0_rl
     endif
     !$omp barrier
-#endif    ! HOMME_ENABLE_PARTMCSL
+#endif    ! HOMME_ENABLE_PARTMCSL && !PARTMCSL_SKIP_WRAPPER_INIT
     initialized = .true.
   endif
 
@@ -240,7 +244,10 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 #endif
   enddo; enddo; enddo; enddo
 
-#ifdef HOMME_ENABLE_PARTMCSL
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(PARTMCSL_SKIP_WRAPPER_INIT)
+  ! Also guarded by PARTMCSL_SKIP_WRAPPER_INIT: gfr_dyn_to_fv_phys depends
+  ! on pg_data being allocated by the earlier init block, so both stand or
+  ! fall together.
   if (time == 0) then
     ! Initialize physgrid tracer state once from the GLL IC.  Subsequent
     ! evolution of pg_data%q will be done by partmcsl (TODO).
