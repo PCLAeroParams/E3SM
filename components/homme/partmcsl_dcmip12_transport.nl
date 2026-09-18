@@ -12,8 +12,9 @@
   statefreq         = 200                       ! number of steps between screen dumps
   restartfreq       = -1                        ! don't write restart files if < 0
   runtype           = 0                         ! 0 = new run
-  tstep             = 10                        ! s; dropped from 33 for stability at nlev=64
-                                                ! (dz ~ 187 m tightens the explicit-acoustics margin)
+  tstep             = 33                        ! matches dcmip_tests/dcmip2012_test1.1/preqx/namelist-default.nl
+                                                ! (the earlier 10 s was chasing noise that turned out to be the FQ bug,
+                                                !  now fixed via se_ftype=-1 + derived%FQ zeroing in phys_to_dyn)
   integration       = 'explicit'                ! explicit time integration
   tstep_type        = 1                         ! 1 => default method
   smooth            = 0                         ! timestep smooting
