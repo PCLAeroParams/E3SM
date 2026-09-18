@@ -214,8 +214,14 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 #ifdef HOMME_ENABLE_PARTMCSL
       if (time == 0) then
         ! Mirror q1..q4 into q5..q8 so the partmcsl-advected physgrid tracers
-        ! share the IC of the dynamics-grid tracers.
+        ! share the IC of the dynamics-grid tracers.  PARTMCSL_PERTURB_MIRROR
+        ! (compile-time) breaks bit-identity via a 1e-5 relative perturbation
+        ! so CEDR's mass-consistency solve doesn't see rank-deficient rows.
+#ifdef PARTMCSL_PERTURB_MIRROR
+        q(5:8) = q(1:4) * 0.99999_rl
+#else
         q(5:8) = q(1:4)
+#endif
 #ifdef PARTMCSL_SBR_DIAG
         !! DIAGNOSTIC ONLY (Q6 constant-tracer): overwrite Q6 with a
         !! spatial constant so any drift of Q6 during transport diagnoses
@@ -237,8 +243,13 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       if(time==0) then
         ! Mirror q1..q4 into q5..q8 so an sl-only build with qsize>4 has a
         ! well-defined IC in the upper slots (fair A/B against the
-        ! partmcsl branch, which does the same mirror at line 211).
+        ! partmcsl branch, which does the same mirror at line 214).
+        ! PARTMCSL_PERTURB_MIRROR breaks bit-identity for the CEDR test.
+#ifdef PARTMCSL_PERTURB_MIRROR
+        q(5:8) = q(1:4) * 0.99999_rl
+#else
         q(5:8) = q(1:4)
+#endif
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
 #endif
