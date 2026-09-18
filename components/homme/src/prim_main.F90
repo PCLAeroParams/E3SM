@@ -235,7 +235,9 @@ program prim_main
   call compose_test(par, hvcoord, dom_mt, elem)
 #endif
 
-#ifdef HOMME_ENABLE_PARTMCSL
+#if defined(HOMME_ENABLE_PARTMCSL) && !defined(PARTMCSL_SKIP_INIT)
+  ! partmcsl_test dereferences fv_mesh and src_partition allocated by
+  ! partmcsl_init, so it must be skipped whenever init is skipped.
   call partmcsl_test(par, elem)
 #endif
 
