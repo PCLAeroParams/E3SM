@@ -100,3 +100,6 @@
 
 /* Perturb the tracer mirror by a factor of 0.99999 instead of exact copy. A/B for CEDR robustness to bit-duplicate tracers. */
 #cmakedefine PARTMCSL_PERTURB_MIRROR
+
+/* Overwrite q slots 5 to 8 with spatial constants at t=0 instead of mirroring q 1 to 4. A/B to distinguish qsize count from duplicate content as fragmentation trigger. */
+#cmakedefine PARTMCSL_CONST_MIRROR

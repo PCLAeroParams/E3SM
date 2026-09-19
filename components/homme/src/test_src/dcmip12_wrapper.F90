@@ -217,7 +217,16 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         ! share the IC of the dynamics-grid tracers.  PARTMCSL_PERTURB_MIRROR
         ! (compile-time) breaks bit-identity via a 1e-5 relative perturbation
         ! so CEDR's mass-consistency solve doesn't see rank-deficient rows.
-#ifdef PARTMCSL_PERTURB_MIRROR
+        ! PARTMCSL_CONST_MIRROR (compile-time) overrides both and seeds q5..q8
+        ! with spatial constants; used to test whether qsize=8 alone triggers
+        ! the Q1 fragmentation seen in sl-only q8 runs, or whether specifically
+        ! having duplicate DCMIP tracer content in the upper slots is required.
+#if defined(PARTMCSL_CONST_MIRROR)
+        q(5) = 0.1_rl
+        q(6) = 0.3_rl
+        q(7) = 0.5_rl
+        q(8) = 0.7_rl
+#elif defined(PARTMCSL_PERTURB_MIRROR)
         q(5:8) = q(1:4) * 0.99999_rl
 #else
         q(5:8) = q(1:4)
@@ -245,7 +254,14 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         ! well-defined IC in the upper slots (fair A/B against the
         ! partmcsl branch, which does the same mirror at line 214).
         ! PARTMCSL_PERTURB_MIRROR breaks bit-identity for the CEDR test.
-#ifdef PARTMCSL_PERTURB_MIRROR
+        ! PARTMCSL_CONST_MIRROR seeds q5..q8 with spatial constants so
+        ! qsize=8 is exercised without duplicating DCMIP tracer content.
+#if defined(PARTMCSL_CONST_MIRROR)
+        q(5) = 0.1_rl
+        q(6) = 0.3_rl
+        q(7) = 0.5_rl
+        q(8) = 0.7_rl
+#elif defined(PARTMCSL_PERTURB_MIRROR)
         q(5:8) = q(1:4) * 0.99999_rl
 #else
         q(5:8) = q(1:4)
