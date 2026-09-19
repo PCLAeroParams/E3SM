@@ -102,25 +102,30 @@ then
   printf "Running ${execName} (ne=30) -> ${outDir}\n"
   mkdir -p $wdir/$outDir
   cd $wdir
-  # cee-compute046: 8-socket Xeon Platinum 8490H = 8 * 60 phys cores = 480
-  # phys (960 logical w/ SMT).  Good-neighbor cap = half the hyperthreaded
-  # total = 480 hardware threads => use all 480 physical cores, one rank
-  # per phys core, SMT siblings idle.  Ranks distributed 60 per socket
-  # across all eight sockets for full memory bandwidth.
+  # Machine-specific mpirun layout.  Detect host and pick the right sizing:
+  #   cee-compute046: 8 * 60 phys cores = 480 total (Xeon Platinum 8490H)
+  #   cee-compute005: 16 * 28 phys cores = 448 total (Xeon Platinum 8180)
+  # One rank per physical core, SMT siblings idle, ranks distributed across
+  # sockets for full memory bandwidth.
   #
-  # OpenMPI opens ~3 pipes per rank for stdout/stderr forwarding, so 480
+  # OpenMPI opens ~3 pipes per rank for stdout/stderr forwarding, so 448/480
   # ranks want ~1500+ file descriptors; the RHEL default soft limit of
-  # 1024 trips iof_base_setup.c:116 ("system limit on number of pipes ...
-  # was reached").  Raise soft to the shell's hard limit (usually 1M on
-  # RHEL8) before launching; belt-and-braces env var asks Open MPI to
-  # push limits up too.
+  # 1024 trips iof_base_setup.c:116.  Raise soft to hard, plus env var.
   ulimit -n $(ulimit -n -H)
   export OMPI_MCA_opal_set_max_sys_limits=1
+  host=$(hostname -s)
+  case $host in
+    cee-compute046*) mpi_map='ppr:60:socket:PE=1'; mpi_n=480 ;;
+    cee-compute005*) mpi_map='ppr:28:socket:PE=1'; mpi_n=448 ;;
+    *)               mpi_map='ppr:28:socket:PE=1'; mpi_n=448
+                     printf "WARN: unknown host %s, defaulting to cee-compute005 layout (28x16=448)\n" "$host" ;;
+  esac
+  printf "Launching on %s: --map-by %s --n %d\n" "$host" "$mpi_map" "$mpi_n"
   # timeout + `|| true` guards against the SLMM ~g_csl_mpi hang at finalize
   # (documented in partmcsl_compose_hang_handoff.md).  Outputs are already
   # flushed by then.
   timeout --foreground --kill-after=10s $runTimeout \
-    mpirun --map-by ppr:60:socket:PE=1 --bind-to core --n 480 \
+    mpirun --map-by $mpi_map --bind-to core --n $mpi_n \
       $wdir/test_execs/$execName/$execName < $nlFile 2>&1 \
     | tee homme-out-dcmip-ne30.txt || true
   printf "Finished (or timed out) ne=30.\n"
