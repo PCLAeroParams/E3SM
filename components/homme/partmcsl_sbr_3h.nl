@@ -24,7 +24,7 @@
   topology          = "cube"                    ! mesh type: cubed sphere
   test_case         = "dcmip2012_test1_1"       ! test identifier (SBR + zero-eta_dot overrides hardcoded)
   ne                = 30                        ! elements per cube face
-  qsize             = 8                         ! num tracer fields
+  qsize             = 7                         ! num tracer fields
   ndays             = 0                         ! 0 => use nmax directly
   nmax              = 360                       ! 360 steps * 30 s = 3 hours
   statefreq         = 60                        ! screen dump every 60 steps (=30 min at ne=30)
@@ -64,7 +64,7 @@
   output_dir        = "./movies_sbr_3h/"        ! destination dir for netcdf (change per ne)
   output_timeunits  = 2,                        ! 2 = hours
   output_frequency  = 1,                        ! output every 1 hour => t=0,1,2,3
-  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7','Q8'
+  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7'
   interp_type       = 0
   output_type       ='netcdf'
   num_io_procs      = 16

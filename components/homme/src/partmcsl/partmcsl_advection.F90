@@ -154,12 +154,14 @@ module partmcsl_advection_mod
   !
   ! Per element, per vertical level, the packed payload is:
   !   nphys_cell_per_elem * pmcsl_nq reals -- pg_q(ci, k, t, ie) for ci=1..4, t=1..pmcsl_nq.
-  ! pmcsl_nq is the number of partmcsl-advected tracers.  
-  ! For dcmip 2012 test 1.1
-  ! these are slots 5..8 of pg_data%q (Q5..Q8)
+  ! pmcsl_nq is the number of partmcsl-advected tracers.
+  ! For dcmip 2012 test 1.1 these are slots 5..7 of pg_data%q (Q5..Q7),
+  ! mirroring the DCMIP Q1..Q3 tracers.  Q4 (SL, 1 - 0.3*(q1+q2+q3)) has no
+  ! partmcsl companion.  qsize=7 chosen to avoid the compose SL blocksize=8
+  ! auto-vectorization branch, which corrupts the SL reference at qsize=8.
   ! TODO: isolate the hard-coded DCMIP2012 test case stuff inside an #ifdef
-  ! TODO: write the general case for PartMC 
-  integer, parameter :: pmcsl_nq = 4
+  ! TODO: write the general case for PartMC
+  integer, parameter :: pmcsl_nq = 3
   integer, parameter :: pmcsl_q_payload_words = nphys_cell_per_elem * pmcsl_nq
   ! input args for halo exchange, repurposed for dcmip2012 test here.
   ! For (4, 3): np*(nhc+1) = 4*4 = 16, exact fit for payload = 16.
@@ -1174,7 +1176,7 @@ end subroutine check_gfr_partmcsl_subcell_map
   ! (per-cell mixing-ratio update using arrival_partition + halo).
   !
   ! pg_q is the partmcsl-advected tracer state on the FV grid; for dcmip 2012
-  ! test 1.1 this is pg_data%q(:, :, 5:8, :).  Eventually this signature will
+  ! test 1.1 this is pg_data%q(:, :, 5:7, :).  Eventually this signature will
   ! change to accept a particle-payload-shaped state.
   subroutine partmcsl_step_forward(par, ithr, elem, dt, nets, nete, tl, pg_q)
     type(parallel_t),     intent(in)    :: par

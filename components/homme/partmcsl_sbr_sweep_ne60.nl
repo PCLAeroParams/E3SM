@@ -14,7 +14,7 @@
   topology          = "cube"                    ! mesh type: cubed sphere
   test_case         = "dcmip2012_test1_1"       ! test identifier
   ne                = 60                      ! number of elements per cube face
-  qsize             = 8                         ! num tracer fields
+  qsize             = 7                         ! num tracer fields
   ndays             = 0                         ! use nmax steps
   nmax              = 1440                    ! total number of dynamics steps (6 h / tstep)
   statefreq         = 200                       ! number of steps between screen dumps
@@ -54,7 +54,7 @@
   output_dir        = "./movies_sbr_sweep_ne60/"            ! destination dir for netcdf file
   output_timeunits  = 2,                        ! 1=days, 2=hours, 0=timesteps
   output_frequency  = 1,                        ! output every hour
-  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7','Q8'
+  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7'
   interp_type       = 0                         ! 0=native grid, 1=bilinear
   output_type       ='netcdf'                   ! netcdf or pnetcdf
   num_io_procs      = 16

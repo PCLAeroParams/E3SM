@@ -11,11 +11,12 @@
 ! corner case that appears to produce horizontal artifacts in Q5.
 ! ne=16 matches the horizontal SBR sweep and gfr is well-vetted there.
 !
-! qsize=8: partmcsl transports slots 5:8 hard-coded (pmcsl_nq=4 in
-! partmcsl_advection.F90), so we can't shrink below 8 without touching
-! the partmcsl signature.  Q1 rides the standard SL path (reference),
+! qsize=7: partmcsl transports slots 5:7 hard-coded (pmcsl_nq=3 in
+! partmcsl_advection.F90).  Q1 rides the standard SL path (reference),
 ! Q5 mirrors Q1 at t=0 and is what the partmcsl vertical step
-! transports on the FV grid.  Q2..Q4 / Q6..Q8 are inert padding.
+! transports on the FV grid.  Q2..Q4 / Q6..Q7 are inert padding.
+! qsize=7 (not 8) to avoid the compose SL blocksize=8 auto-vectorization
+! branch that biases the SL reference at qsize=8.
 ! Compare Q5 vs a Python analytic-exact reference.
 !
 ! nlev sweep uses separate builds:
@@ -34,7 +35,7 @@
   topology          = "cube"
   test_case         = "dcmip2012_test1_vt"
   ne                = 16
-  qsize             = 8
+  qsize             = 7
   ndays             = 0
   nmax              = 240                       ! 240 steps * 15 s = 1 hour
   statefreq         = 60                        ! screen dump every 60 steps (15 min)

@@ -7,7 +7,7 @@
   topology          = "cube"                    ! mesh type: cubed sphere
   test_case         = "dcmip2012_test1_1"       ! test identifier
   ne                = 30                         ! number of elements per cube face
-  qsize             = 8                         ! num tracer fields
+  qsize             = 7                         ! num tracer fields (7 not 8 to avoid compose SL blocksize=8 bug)
   ndays             = 12                         ! num simulation days: 0 = use nmax steps
   statefreq         = 200                       ! number of steps between screen dumps
   restartfreq       = -1                        ! don't write restart files if < 0
@@ -48,7 +48,7 @@
   output_dir        = "./movies/"              ! destination dir for netcdf file
   output_timeunits  = 1,                        ! 1=days, 2=hours, 0=timesteps
   output_frequency  = 1,                        ! output every 4 hours
-  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7','Q8' ! variables to write to file
+  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7' ! variables to write to file
   interp_type       = 0                         ! 0=native grid, 1=bilinear
   output_type       ='netcdf'                   ! netcdf or pnetcdf
   num_io_procs      = 16         

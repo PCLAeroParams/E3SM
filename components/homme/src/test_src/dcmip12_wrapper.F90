@@ -141,13 +141,13 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   real(rl):: lon,lat                                                    ! pointwise coordiantes
   real(rl):: p,z,phis,u,v,w,T,phis_ps,ps,rho,dp,eta_dot,dp_dn
 #ifdef HOMME_ENABLE_PARTMCSL
-  real(rl):: q(8)
+  real(rl):: q(7)
   integer, parameter :: nphys = 2, ncol=4
 #else
-  ! Size to 8 so an sl-only build can still run qsize>4 (up to 8) without
-  ! set_tracers reading past the end of q; slots 5..8 are mirrored from
-  ! 1..4 at init time below, matching what the partmcsl branch does.
-  real(rl):: q(8)
+  ! Size to 7 so an sl-only build with qsize=7 mirrors the partmcsl setup
+  ! without set_tracers reading past the end of q.  Slots 5..7 are mirrored
+  ! from 1..3 at init time below, matching what the partmcsl branch does.
+  real(rl):: q(7)
 #endif
 
   ! Test S, vivid-napping-lighthouse: SBR wind override.  Constants sbr_tau,
@@ -166,8 +166,8 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     ! wrapper init block so no gfr_init runs, no pg_data allocation, no
     ! pg_zero_* setup.  Only sensible when SKIP_STEP_FORWARD, SKIP_PHYS_TO_DYN,
     ! and SKIP_INIT are also ON so nothing later tries to touch pg_data.
-    if (qsize < 8) then
-      if (hybrid%masterthread) write(iulog,*) 'partmcsl dcmip2012 test 1-1: 3d deformational flow requires qsize >= 8'
+    if (qsize < 7) then
+      if (hybrid%masterthread) write(iulog,*) 'partmcsl dcmip2012 test 1-1: 3d deformational flow requires qsize >= 7'
       call abortmp('qsize set too small for dcmip test case')
     endif
     if (hybrid%ithr == 0) then
@@ -213,23 +213,22 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
 
 #ifdef HOMME_ENABLE_PARTMCSL
       if (time == 0) then
-        ! Mirror q1..q4 into q5..q8 so the partmcsl-advected physgrid tracers
-        ! share the IC of the dynamics-grid tracers.  PARTMCSL_PERTURB_MIRROR
-        ! (compile-time) breaks bit-identity via a 1e-5 relative perturbation
-        ! so CEDR's mass-consistency solve doesn't see rank-deficient rows.
-        ! PARTMCSL_CONST_MIRROR (compile-time) overrides both and seeds q5..q8
-        ! with spatial constants; used to test whether qsize=8 alone triggers
-        ! the Q1 fragmentation seen in sl-only q8 runs, or whether specifically
-        ! having duplicate DCMIP tracer content in the upper slots is required.
+        ! Mirror q1..q3 into q5..q7 so the partmcsl-advected physgrid tracers
+        ! share the IC of the first three DCMIP dynamics-grid tracers.  Q4
+        ! (SL, 1 - 0.3*(q1+q2+q3)) has no partmcsl companion.  qsize=7 (not 8)
+        ! to avoid the compose SL blocksize=8 auto-vectorization branch, which
+        ! biases the SL reference at qsize=8 via CEDR-clipped Q1 undershoots.
+        ! PARTMCSL_PERTURB_MIRROR (compile-time) breaks bit-identity via a 1e-5
+        ! relative perturbation.  PARTMCSL_CONST_MIRROR (compile-time) overrides
+        ! both and seeds q5..q7 with spatial constants.
 #if defined(PARTMCSL_CONST_MIRROR)
         q(5) = 0.1_rl
         q(6) = 0.3_rl
         q(7) = 0.5_rl
-        q(8) = 0.7_rl
 #elif defined(PARTMCSL_PERTURB_MIRROR)
-        q(5:8) = q(1:4) * 0.99999_rl
+        q(5:7) = q(1:3) * 0.99999_rl
 #else
-        q(5:8) = q(1:4)
+        q(5:7) = q(1:3)
 #endif
 #ifdef PARTMCSL_SBR_DIAG
         !! DIAGNOSTIC ONLY (Q6 constant-tracer): overwrite Q6 with a
@@ -250,21 +249,20 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       endif
 #else
       if(time==0) then
-        ! Mirror q1..q4 into q5..q8 so an sl-only build with qsize>4 has a
+        ! Mirror q1..q3 into q5..q7 so an sl-only build with qsize>=7 has a
         ! well-defined IC in the upper slots (fair A/B against the
-        ! partmcsl branch, which does the same mirror at line 214).
+        ! partmcsl branch, which does the same mirror above).
         ! PARTMCSL_PERTURB_MIRROR breaks bit-identity for the CEDR test.
-        ! PARTMCSL_CONST_MIRROR seeds q5..q8 with spatial constants so
-        ! qsize=8 is exercised without duplicating DCMIP tracer content.
+        ! PARTMCSL_CONST_MIRROR seeds q5..q7 with spatial constants so the
+        ! qsize=7 tracer count is exercised without duplicating DCMIP content.
 #if defined(PARTMCSL_CONST_MIRROR)
         q(5) = 0.1_rl
         q(6) = 0.3_rl
         q(7) = 0.5_rl
-        q(8) = 0.7_rl
 #elif defined(PARTMCSL_PERTURB_MIRROR)
-        q(5:8) = q(1:4) * 0.99999_rl
+        q(5:7) = q(1:3) * 0.99999_rl
 #else
-        q(5:8) = q(1:4)
+        q(5:7) = q(1:3)
 #endif
         call set_tracers(q,qsize,dp,i,j,k,lat,lon,elem(ie))
       endif
@@ -407,10 +405,10 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   !  parameter block near top of module for the flow definition and
   !  analytic trajectory used by the Python reference.
   !
-  !  qsize=8 required: partmcsl transports slots 5:8 hard-coded
-  !  (pmcsl_nq=4 in partmcsl_advection.F90).  We seed the Gaussian in Q1
+  !  qsize>=7 required: partmcsl transports slots 5..7 hard-coded
+  !  (pmcsl_nq=3 in partmcsl_advection.F90).  We seed the Gaussian in Q1
   !  (SL-transported reference) and mirror to Q5 (partmcsl-transported).
-  !  Q2..Q4 / Q6..Q8 are inert padding.
+  !  Q2..Q4 / Q6..Q7 are inert padding.
 
   type(element_t),    intent(inout), target :: elem(:)                  ! element array
   type(hybrid_t),     intent(in)            :: hybrid                   ! hybrid parallel structure
@@ -440,7 +438,7 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   integer  :: i,j,k,ie                                                  ! loop indices
   real(rl) :: lon,lat                                                   ! pointwise coordinates
   real(rl) :: p,z,phis,u,v,w,T,ps,rho,dp,eta_dot,dp_dn,omega            ! pointwise field values
-  real(rl) :: eta_top, eta_norm, q(8)
+  real(rl) :: eta_top, eta_norm, q(7)
 
   ! set analytic vertical coordinates at t=0 (same construction as Hadley)
   if(.not. initialized) then
@@ -450,9 +448,9 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     call set_hybrid_coefficients(hvcoord,hybrid, hvcoord%etai(1),1.0_rl)! c=1 so p = eta*ps when ps=p0
     call set_layer_locations(hvcoord, .true., hybrid%masterthread)
 
-    if (qsize < 8) then
+    if (qsize < 7) then
       if (hybrid%masterthread) write(iulog,*) &
-           'partmcsl dcmip2012 vertical translation test requires qsize >= 8'
+           'partmcsl dcmip2012 vertical translation test requires qsize >= 7'
       call abortmp('qsize set too small for dcmip test case')
     endif
     if (hybrid%ithr == 0) then

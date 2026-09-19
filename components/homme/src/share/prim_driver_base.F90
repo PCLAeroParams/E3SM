@@ -1350,14 +1350,14 @@ contains
       ! PARTMCSL_SKIP_STEP_FORWARD (compile-time) removes this whole runtime
       ! transport block for A/B diagnostics; partmcsl_init still runs and
       ! pg_data stays at its t=0 IC.
-      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:8, :), .true.)
+      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:7, :), .true.)
       call t_startf('partmcsl_step_forward')
       call partmcsl_step_forward(hybrid%par, hybrid%ithr, elem, dt_q, nets, nete, &
-                                 tl, pg_data%q(:, :, 5:8, :))
+                                 tl, pg_data%q(:, :, 5:7, :))
       call t_stopf('partmcsl_step_forward')
       call partmcsl_vertical_step(elem, hvcoord, dt_q, nets, nete, tl, &
-                                  pg_data%q(:, :, 5:8, :))
-      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:8, :), .false.)
+                                  pg_data%q(:, :, 5:7, :))
+      call partmcsl_permute_pg_q_cells(pg_data%q(:, :, 5:7, :), .false.)
 #endif
   end subroutine prim_step
 
