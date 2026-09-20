@@ -64,7 +64,7 @@
   output_dir        = "./movies_sbr_3h/"        ! destination dir for netcdf (change per ne)
   output_timeunits  = 2,                        ! 2 = hours
   output_frequency  = 1,                        ! output every 1 hour => t=0,1,2,3
-  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7'
+  output_varnames1  ='u','geo','ps','area','Q','Q2','Q3','Q4','Q5','Q6','Q7'
   interp_type       = 0
   output_type       ='netcdf'
   num_io_procs      = 16

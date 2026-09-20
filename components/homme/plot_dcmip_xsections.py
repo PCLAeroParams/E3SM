@@ -33,7 +33,8 @@ def _fmt_day(d):
 
 def plot_xsections(fn, output=None, times=None,
                    nlon=360, lat_strip=6.0, cmap='viridis',
-                   ncontour=21, per_page_scale=True):
+                   ncontour=21, per_page_scale=True,
+                   sl_var='Q', pmcsl_var='Q5'):
     with xr.open_dataset(fn, decode_timedelta=False) as ds:
         nlev = ds.sizes['lev']
         ne   = int(ds.attrs.get('ne', -1))
@@ -66,8 +67,8 @@ def plot_xsections(fn, output=None, times=None,
                     out[it, k] = R.interp(V[k])[eq_row]
             return out
 
-        Q_all  = _stack_eq('Q')
-        Q5_all = _stack_eq('Q5')
+        Q_all  = _stack_eq(sl_var)
+        Q5_all = _stack_eq(pmcsl_var)
 
         vmin_g = float(np.nanmin([Q_all.min(), Q5_all.min()]))
         vmax_g = float(np.nanmax([Q_all.max(), Q5_all.max()]))
@@ -104,7 +105,7 @@ def plot_xsections(fn, output=None, times=None,
                 axes[1].contour(LON2D, ETA2D, Q5_all[it],
                                 levels=contour_levels,
                                 colors='k', linewidths=0.3, alpha=0.3)
-                for ax, name in zip(axes, ('Q (SL)', r'$Q_5$ (partmcsl)')):
+                for ax, name in zip(axes, (f'{sl_var} (SL)', f'{pmcsl_var} (partmcsl)')):
                     ax.set_xlim(0, 360)
                     ax.set_xticks([0, 60, 120, 180, 240, 300, 360])
                     ax.set_ylim(etam.max(), etam.min())     # eta increases downward
@@ -135,12 +136,17 @@ def main():
     ap.add_argument('--shared-scale', action='store_true',
                     help='use one color scale across all pages (default: '
                          'per-page scale, so decaying peaks stay visible)')
+    ap.add_argument('--sl-var', default='Q',
+                    help='SL-transported tracer variable name (default: Q)')
+    ap.add_argument('--pmcsl-var', default='Q5',
+                    help='PartMCSL-transported tracer variable name (default: Q5)')
     args = ap.parse_args()
     for fn in args.files:
         out = args.out if len(args.files) == 1 else None
         plot_xsections(fn, output=out, nlon=args.nlon,
                        lat_strip=args.lat_strip,
-                       per_page_scale=not args.shared_scale)
+                       per_page_scale=not args.shared_scale,
+                       sl_var=args.sl_var, pmcsl_var=args.pmcsl_var)
 
 
 if __name__ == '__main__':

@@ -54,7 +54,7 @@
   output_dir        = "./movies_sbr_sweep_ne120/"            ! destination dir for netcdf file
   output_timeunits  = 2,                        ! 1=days, 2=hours, 0=timesteps
   output_frequency  = 1,                        ! output every hour
-  output_varnames1  ='u','geo','ps','Q','Q2','Q3','Q4','Q5','Q6','Q7'
+  output_varnames1  ='u','geo','ps','area','Q','Q2','Q3','Q4','Q5','Q6','Q7'
   interp_type       = 0                         ! 0=native grid, 1=bilinear
   output_type       ='netcdf'                   ! netcdf or pnetcdf
   num_io_procs      = 16

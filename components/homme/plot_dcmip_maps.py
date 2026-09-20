@@ -30,7 +30,8 @@ def _fmt_day(d):
 
 def plot_maps(fn, level=None, output=None, times=None,
               nlon=360, nlat=181, cmap='viridis', ncontour=21,
-              per_page_scale=True, per_panel_scale=False):
+              per_page_scale=True, per_panel_scale=False,
+              sl_var='Q', pmcsl_var='Q5'):
     with xr.open_dataset(fn, decode_timedelta=False) as ds:
         nlev = ds.sizes['lev']
         ne   = int(ds.attrs.get('ne', -1))
@@ -38,7 +39,7 @@ def plot_maps(fn, level=None, output=None, times=None,
         # nlev//2, which for the DCMIP test can sit above the tracer's
         # vertical envelope and give an empty-looking slice).
         if level is None:
-            Q0 = ds['Q'].isel(time=0).values
+            Q0 = ds[sl_var].isel(time=0).values
             lev_k = int(np.argmax(Q0.max(axis=1)))
         else:
             lev_k = int(level)
@@ -59,13 +60,13 @@ def plot_maps(fn, level=None, output=None, times=None,
             times = [float(all_times[np.argmin(np.abs(all_times - t))])
                      for t in keep]
 
-        has_q5 = 'Q5' in ds.variables
+        has_q5 = pmcsl_var in ds.variables
         Q_all = R.interp_many(np.stack([
-            ds['Q' ].sel(time=t, method='nearest').isel(lev=lev_k).values
+            ds[sl_var].sel(time=t, method='nearest').isel(lev=lev_k).values
             for t in times]))
         if has_q5:
             Q5_all = R.interp_many(np.stack([
-                ds['Q5'].sel(time=t, method='nearest').isel(lev=lev_k).values
+                ds[pmcsl_var].sel(time=t, method='nearest').isel(lev=lev_k).values
                 for t in times]))
             vmin_g = float(np.nanmin([Q_all.min(), Q5_all.min()]))
             vmax_g = float(np.nanmax([Q_all.max(), Q5_all.max()]))
@@ -91,7 +92,7 @@ def plot_maps(fn, level=None, output=None, times=None,
                     vmin5, vmax5 = float(Q5_all[it].min()), float(Q5_all[it].max())
                     if vmaxQ - vminQ < 1e-9: vmaxQ = vminQ + 1e-9
                     if vmax5 - vmin5 < 1e-9: vmax5 = vmin5 + 1e-9
-                    header_vmax = f'vmax: Q={vmaxQ:.3f}, Q5={vmax5:.3f}'
+                    header_vmax = f'vmax: {sl_var}={vmaxQ:.3f}, {pmcsl_var}={vmax5:.3f}'
                 else:
                     if per_page_scale:
                         if has_q5:
@@ -124,9 +125,9 @@ def plot_maps(fn, level=None, output=None, times=None,
                                            extend='both')
                     axes[1].contour(LON, LAT, Q5_all[it], levels=levels5,
                                     colors='k', linewidths=0.3, alpha=0.3)
-                    panel_names = ('Q (SL)', r'$Q_5$ (partmcsl)')
+                    panel_names = (f'{sl_var} (SL)', f'{pmcsl_var} (partmcsl)')
                 else:
-                    panel_names = ('Q (SL)',)
+                    panel_names = (f'{sl_var} (SL)',)
                 for ax, name in zip(axes, panel_names):
                     ax.set_xlim(0, 360); ax.set_ylim(-90, 90)
                     ax.set_xticks([0, 60, 120, 180, 240, 300, 360])
@@ -141,10 +142,10 @@ def plot_maps(fn, level=None, output=None, times=None,
                 if per_panel_scale and has_q5:
                     fig.colorbar(im0, ax=axes[0], orientation='vertical',
                                  fraction=0.05, pad=0.02, shrink=0.9,
-                                 label='Q')
+                                 label=sl_var)
                     fig.colorbar(im1, ax=axes[1], orientation='vertical',
                                  fraction=0.05, pad=0.02, shrink=0.9,
-                                 label=r'$Q_5$')
+                                 label=pmcsl_var)
                 else:
                     cb_source = im1 if has_q5 else im0
                     cb = fig.colorbar(cb_source, ax=axes, orientation='vertical',
@@ -167,16 +168,21 @@ def main():
                     help='use one color scale across all pages (default: '
                          'per-page scale, so decaying peaks stay visible)')
     ap.add_argument('--per-panel-scale', action='store_true',
-                    help='give Q and Q5 their own vmin/vmax + colorbar per '
+                    help='give the two panels their own vmin/vmax + colorbar per '
                          'page, so the panel with the smaller peak is not '
                          'washed out')
+    ap.add_argument('--sl-var', default='Q',
+                    help='SL-transported tracer variable name (default: Q)')
+    ap.add_argument('--pmcsl-var', default='Q5',
+                    help='PartMCSL-transported tracer variable name (default: Q5)')
     args = ap.parse_args()
     for fn in args.files:
         out = args.out if len(args.files) == 1 else None
         plot_maps(fn, level=args.level, output=out,
                   nlon=args.nlon, nlat=args.nlat,
                   per_page_scale=not args.shared_scale,
-                  per_panel_scale=args.per_panel_scale)
+                  per_panel_scale=args.per_panel_scale,
+                  sl_var=args.sl_var, pmcsl_var=args.pmcsl_var)
 
 
 if __name__ == '__main__':
