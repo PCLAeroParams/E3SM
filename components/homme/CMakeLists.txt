@@ -134,6 +134,7 @@ OPTION(PARTMCSL_SKIP_INIT "Skip prim_init1_partmcsl (no fv_mesh alloc, no ghost 
 OPTION(PARTMCSL_SKIP_WRAPPER_INIT "Skip the dcmip12_wrapper HOMME_ENABLE_PARTMCSL-guarded init (gfr_init, pg_data alloc, gfr_dyn_to_fv_phys seed at t=0); A/B-only, use with the other three SKIP flags" OFF)
 OPTION(PARTMCSL_PERTURB_MIRROR "Set q(5:8) = q(1:4) * 0.99999 at t=0 instead of exact mirror; A/B-only, tests whether CEDR is robust to bit-duplicate tracers" OFF)
 OPTION(PARTMCSL_CONST_MIRROR "Set q(5:8) to spatial constants 0.1 0.3 0.5 0.7 at t=0 instead of mirroring q(1:4); A/B-only, distinguishes qsize count from duplicate content as fragmentation trigger" OFF)
+OPTION(PARTMCSL_DIAG_MASS "Print tracer mass sums on FV (pg_data%q) and GLL (state%Q) grids at every output snapshot; used to isolate whether mass loss is inside PartMCSL or inside the FV->GLL projection" OFF)
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)

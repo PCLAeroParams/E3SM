@@ -280,6 +280,11 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
     call gfr_dyn_to_fv_phys(hybrid, nt, hvcoord, elem, nets, nete, &
          pg_data%ps, pg_data%zs, pg_data%T, pg_data%uv, pg_data%omega_p, pg_data%q)
     call t_stopf('gfr_dyn_to_fv_phys')
+#ifdef PARTMCSL_DIAG_MASS
+    ! t=0 baseline: report FV and GLL mass so subsequent snapshots can be
+    ! compared against a known-conservative reference.
+    call partmcsl_report_mass(elem, hvcoord, hybrid, 0, 'IC (post gfr_d2f)', nets, nete)
+#endif
   endif
 #endif
 
@@ -1261,6 +1266,15 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
   call set_pg_q7_analytic_exact(elem, hvcoord, elapsed_time, nets, nete)
 #endif
 
+#ifdef PARTMCSL_DIAG_MASS
+  ! Pre-projection: report the FV-grid mass PartMCSL has produced, plus the
+  ! stale GLL mass from the previous snapshot's copy-back.  Comparing the FV
+  ! mass across snapshots isolates PartMCSL-internal mass drift; comparing
+  ! FV(now) vs GLL(now, post-projection below) isolates FV->GLL projection
+  ! drift.
+  call partmcsl_report_mass(elem, hvcoord, hybrid, tl%nstep, 'pre_projection', nets, nete)
+#endif
+
   ! gfr_fv_phys_to_dyn writes the new state into derived%FQ.  T and uv are
   ! treated as tendencies; we pass zero buffers so FT and FM are unchanged
   ! in any meaningful sense for this prescribed-wind test.
@@ -1281,8 +1295,99 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
     end do
     elem(ie)%derived%FQ(:,:,:,:) = 0.0_rl
   end do
+
+#ifdef PARTMCSL_DIAG_MASS
+  ! Post-projection: report the GLL mass that will be written to NetCDF.
+  ! Any change vs the pre_projection GLL number (same snapshot) is the
+  ! FV->GLL projection's mass modification.
+  call partmcsl_report_mass(elem, hvcoord, hybrid, tl%nstep, 'post_projection', nets, nete)
+#endif
+
   call t_stopf('partmcsl_phys_to_dyn')
 end subroutine dcmip2012_test1_1_phys_to_dyn
+
+#ifdef PARTMCSL_DIAG_MASS
+subroutine partmcsl_report_mass(elem, hvcoord, hybrid, nstep, label, nets, nete)
+  !! DIAGNOSTIC ONLY (PARTMCSL_DIAG_MASS): report total tracer mass on both
+  !! the FV grid (pg_data%q, slots 5..qsize) and the GLL grid (state%Q, all
+  !! slots).  Prints one line per grid from masterthread.
+  !!
+  !! Interpretation of subsequent snapshots vs the t=0 baseline:
+  !!   - FV mass drift  => PartMCSL loses/gains mass internally.
+  !!   - GLL mass drift == FV drift => projection is conservative; loss is
+  !!     inside PartMCSL.
+  !!   - GLL mass drift > FV drift  => gfr_fv_phys_to_dyn projection is
+  !!     lossy (probably limiter_clip_and_sum on tracers with near-zero
+  !!     cells).
+  !!
+  !! Cost: one MPI_Allreduce of 2*qsize doubles per call (2 calls per output
+  !! snapshot).  Negligible at daily-output cadence.
+
+  use gllfvremap_mod, only: gfr_f_get_area
+  use kinds,          only: iulog
+  use parallel_mod,   only: MPIreal_t
+
+  type(element_t),   intent(in) :: elem(:)
+  type(hvcoord_t),   intent(in) :: hvcoord
+  type(hybrid_t),    intent(in) :: hybrid
+  integer,           intent(in) :: nstep
+  character(len=*),  intent(in) :: label
+  integer,           intent(in) :: nets, nete
+
+  integer,  parameter :: nphys_side = 2   ! pg2
+  integer,  parameter :: nphys_cell = 4
+  real(rl) :: dp_lev(nlev)
+  real(rl) :: mass_fv_local(qsize),  mass_fv_global(qsize)
+  real(rl) :: mass_gll_local(qsize), mass_gll_global(qsize)
+  integer  :: ie, kc, kl, qi, i_fv, j_fv, ierr
+
+  if (.not. allocated(pg_data%q)) return
+
+  ! Uniform dp with ps = p0 (accurate to ~1e-8 rel for prescribed_wind).
+  do kl = 1, nlev
+    dp_lev(kl) = ((hvcoord%hyai(kl+1) - hvcoord%hyai(kl)) + &
+                  (hvcoord%hybi(kl+1) - hvcoord%hybi(kl))) * p0
+  end do
+
+  mass_fv_local  = 0.0_rl
+  mass_gll_local = 0.0_rl
+
+  do ie = nets, nete
+    ! FV side: pg_data%q slots 5..qsize (partmcsl-transported).
+    do qi = 5, qsize
+      do kc = 1, nphys_cell
+        i_fv = mod(kc - 1, nphys_side) + 1
+        j_fv = (kc - 1) / nphys_side + 1
+        do kl = 1, nlev
+          mass_fv_local(qi) = mass_fv_local(qi) + &
+               pg_data%q(kc, kl, qi, ie) * dp_lev(kl) * gfr_f_get_area(ie, i_fv, j_fv)
+        end do
+      end do
+    end do
+    ! GLL side: state%Q, all slots (1..qsize).
+    do qi = 1, qsize
+      do kl = 1, nlev
+        mass_gll_local(qi) = mass_gll_local(qi) + &
+             sum(elem(ie)%state%Q(:,:,kl,qi) * elem(ie)%spheremp(:,:)) * dp_lev(kl)
+      end do
+    end do
+  end do
+
+  call MPI_Allreduce(mass_fv_local, mass_fv_global, qsize, &
+                     MPIreal_t, MPI_SUM, hybrid%par%comm, ierr)
+  call MPI_Allreduce(mass_gll_local, mass_gll_global, qsize, &
+                     MPIreal_t, MPI_SUM, hybrid%par%comm, ierr)
+
+  if (hybrid%masterthread .and. hybrid%par%masterproc) then
+    write(iulog, '(a,i8,1x,a24,a,10es16.8)') &
+         'PARTMCSL_DIAG_MASS nstep=', nstep, adjustl(label), &
+         '  FV_5..qsize:', mass_fv_global(5:qsize)
+    write(iulog, '(a,i8,1x,a24,a,10es16.8)') &
+         'PARTMCSL_DIAG_MASS nstep=', nstep, adjustl(label), &
+         ' GLL_1..qsize:', mass_gll_global(1:qsize)
+  end if
+end subroutine partmcsl_report_mass
+#endif
 
 #ifdef PARTMCSL_SBR_DIAG
 subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)

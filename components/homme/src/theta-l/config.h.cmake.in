@@ -103,3 +103,6 @@
 
 /* Overwrite q slots 5 to 8 with spatial constants at t=0 instead of mirroring q 1 to 4. A/B to distinguish qsize count from duplicate content as fragmentation trigger. */
 #cmakedefine PARTMCSL_CONST_MIRROR
+
+/* Print tracer mass sums on FV pg_data q and GLL state Q at every output snapshot. Diagnostic for isolating whether mass loss is in PartMCSL or in the FV to GLL projection. */
+#cmakedefine PARTMCSL_DIAG_MASS
