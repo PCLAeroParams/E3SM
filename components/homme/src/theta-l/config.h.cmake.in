@@ -106,3 +106,9 @@
 
 /* Print tracer mass sums on FV pg_data q and GLL state Q at every output snapshot. Diagnostic for isolating whether mass loss is in PartMCSL or in the FV to GLL projection. */
 #cmakedefine PARTMCSL_DIAG_MASS
+
+/* Skip only partmcsl_step_forward (horizontal transport). Keep vertical step and permutes. A/B-only attribution between horizontal and vertical partmcsl steps. */
+#cmakedefine PARTMCSL_SKIP_HORIZONTAL_ONLY
+
+/* Skip only partmcsl_vertical_step. Keep horizontal step and permutes. A/B-only attribution between horizontal and vertical partmcsl steps. */
+#cmakedefine PARTMCSL_SKIP_VERTICAL_ONLY
