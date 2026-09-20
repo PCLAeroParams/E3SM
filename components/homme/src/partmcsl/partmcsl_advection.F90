@@ -71,14 +71,11 @@ module partmcsl_advection_mod
   ! src_area(k, ci, ie) is the sphere-triangle area of the advected subcell (i.e.
   !     the forward image of subcell ci of elem(ie) at level k).  Same numerator
   !     dividend used by calc_src_partition on the C++ side (partmcsl.cpp:105-110).
-  !     Exchanged alongside dest_portions so the arrival side can reconstruct the
-  !     mass-conserving update:
-  !         q_new(dj) = (1 / A_dst(dj)) * Sum_si (dest_portions * src_area) * q_src(si)
-  !     which uses ov_area = dest_portions * src_area for each (si -> dj) pair, and
-  !     normalizes by the receiving cell's static area.  For a non-divergent flow
-  !     A_advected = A_src (static), and for a divergent flow src_area absorbs the
-  !     compression/expansion factor consistently with hydrostatic Lagrangian
-  !     dp adjustment.
+  !     NOTE: currently unused by the runtime mass-update path (see Phase C notes
+  !     in partmcsl_step_forward and the src_static_area field on arrival_partition).
+  !     Kept allocated and populated for diagnostics / future divergent-flow
+  !     bookkeeping where the parcel's advected mixing ratio q_adv = q * a_src /
+  !     src_area would be needed explicitly.
   ! ndest(k,ci,ie) is the number of fv cells that subcell ci of elem(ie) sends to at
   !     vertical level k.
   type :: source_partition_t
@@ -97,15 +94,28 @@ module partmcsl_advection_mod
   !   src_gid(d, k, cj, je) is the GlobalID of the source element (any rank).
   !   src_subcell(d, k, cj, je) is the source subcell within that element [1..4].
   !   src_frac(d, k, cj, je) is the fraction of the source cell delivered into (je, cj).
-  !     Source-normalized (ov_area / src_area).  Retained as the physically-meaningful
-  !     "portion of source's advected shape covering dst" quantity; the arrival-side
-  !     mass update multiplies it by src_advected_area to recover ov_area itself,
-  !     then divides by A_dst.
-  !   src_advected_area(d, k, cj, je) is the sphere-triangle area of the source
-  !     subcell's advected shape (i.e., src_partition%src_area at the source side).
-  !     Ferried through the exchange alongside src_frac so the arrival side can
-  !     compute ov_area = src_frac * src_advected_area without an extra lookup
-  !     into a per-record source-cell area table.
+  !     Source-normalized (ov_area / src_area_advected).  Retained as the
+  !     physically-meaningful "portion of source's advected shape covering dst"
+  !     quantity; the arrival-side mass update multiplies it by the source's
+  !     STATIC (Eulerian) area src_static_area so that source si contributes
+  !     total mass q(si) * a_src(si) = m_si -- its Lagrangian-conserved parcel
+  !     mass at time n.
+  !   src_static_area(d, k, cj, je) is the source subcell's static Eulerian area
+  !     a_src, i.e. fv_mesh%subcell_area(src_ci, in_source, ...).  This is the
+  !     mass-weight for the source parcel: mass_delivered = q(si) * src_static_area
+  !     * src_frac.  Using the STATIC (not advected) area is what makes the
+  !     scheme Lagrangian-mass-conservative under any flow, divergent or not:
+  !     the parcel's mass at time n was q * a_src; that mass is what should be
+  !     distributed among destinations.  Using the advected area instead (an
+  !     earlier bug) mixed frames and biased mass by (src_area_advected - a_src)
+  !     / a_src -- an O(forward-Euler drift) per-step loss under non-divergent
+  !     flow, growing to O(1) under divergent flow.
+  !
+  !     Note src_static_area could be looked up locally at the destination via
+  !     fv_mesh (a_src is static and available for any neighbor), but it is
+  !     packed into the exchange payload alongside src_frac to keep the arrival
+  !     side's Phase C access pattern uniform -- one record => one contribution
+  !     of q * src_static_area * src_frac, no per-record neighbor-index search.
   !   src_lneighbor(d, k, cj, je) is the local index of the source in je's neighbor list:
   !     0 sentinel means "self" (source == je) -- consumer reads q from local state;
   !     1..nneighbors(je) means use je's halo at slot src_lneighbor (foreign or local-non-self).
@@ -118,7 +128,7 @@ module partmcsl_advection_mod
     integer, allocatable :: src_gid(:,:,:,:)        ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_subcell(:,:,:,:)    ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
-    real(real_kind), allocatable :: src_advected_area(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    real(real_kind), allocatable :: src_static_area(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
 
@@ -286,13 +296,13 @@ subroutine partmcsl_init(par, elem)
     allocate(arrival_partition%src_gid(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_subcell(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_frac(max_ndest, nlev, nphys_cell_per_elem, nelemd))
-    allocate(arrival_partition%src_advected_area(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_static_area(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_lneighbor(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     arrival_partition%nsrc = 0
     arrival_partition%src_gid = -1
     arrival_partition%src_subcell = -1
     arrival_partition%src_frac = zero
-    arrival_partition%src_advected_area = zero
+    arrival_partition%src_static_area = zero
     arrival_partition%src_lneighbor = -1
 
     !--------------------------------------------
@@ -666,7 +676,7 @@ subroutine test_sum_to_one(par, elem)
   arrival_partition%src_gid           = -1
   arrival_partition%src_subcell       = -1
   arrival_partition%src_frac          = zero
-  arrival_partition%src_advected_area = zero
+  arrival_partition%src_static_area = zero
 
   if (par%masterproc) then
     write(iulog,*) 'partmcsl_test: sum-to-one passed.'
@@ -862,7 +872,7 @@ end subroutine check_gfr_partmcsl_subcell_map
       deallocate(arrival_partition%src_gid)
       deallocate(arrival_partition%src_subcell)
       deallocate(arrival_partition%src_frac)
-      deallocate(arrival_partition%src_advected_area)
+      deallocate(arrival_partition%src_static_area)
       deallocate(arrival_partition%src_lneighbor)
     endif
     if (allocated(q_halo)) deallocate(q_halo)
@@ -940,14 +950,18 @@ end subroutine check_gfr_partmcsl_subcell_map
   subroutine pack_payload(ie, k, payload)
     integer,              intent(in)  :: ie, k
     real(real_kind),      intent(out) :: payload(pmcsl_ghost_slot)
-    integer :: ci, d, base, in_dest, ci_dest, gid_dest, ndest_here
-    integer, parameter :: hdr = 2 * nphys_cell_per_elem   ! ndest + src_area words
+    integer :: ci, d, base, in_dest, ci_dest, gid_dest, ndest_here, in_self
+    integer, parameter :: hdr = 2 * nphys_cell_per_elem   ! ndest + a_src words
 
     payload = zero
+    in_self = fv_mesh%my_elem_local_idx(ie)
 
     do ci = 1, nphys_cell_per_elem
       payload(ci)                        = real(src_partition%ndest(k, ci, ie), real_kind)
-      payload(nphys_cell_per_elem + ci)  = src_partition%src_area(k, ci, ie)
+      ! Pack the source cell's STATIC (Eulerian) area a_src, not its advected
+      ! area, so the arrival side computes mass = q(si) * a_src * src_frac
+      ! (Lagrangian-mass-conservative).  See arrival_partition_t doc-comment.
+      payload(nphys_cell_per_elem + ci)  = fv_mesh%subcell_area(ci, in_self, ie)
     enddo
 
     do ci = 1, nphys_cell_per_elem
@@ -1034,7 +1048,7 @@ end subroutine check_gfr_partmcsl_subcell_map
                 arrival_partition%src_gid(slot, k, cj, ie)       = src_elem_gid
                 arrival_partition%src_subcell(slot, k, cj, ie)   = ci
                 arrival_partition%src_frac(slot, k, cj, ie)      = frac
-                arrival_partition%src_advected_area(slot, k, cj, ie) = src_area_ci
+                arrival_partition%src_static_area(slot, k, cj, ie) = src_area_ci
                 arrival_partition%src_lneighbor(slot, k, cj, ie) = l_local
               endif
             enddo
@@ -1064,8 +1078,10 @@ end subroutine check_gfr_partmcsl_subcell_map
             arrival_partition%src_subcell(slot, k, cj, ie)   = ci
             arrival_partition%src_frac(slot, k, cj, ie)      = &
                 src_partition%dest_portions(d, k, ci, ie)
-            arrival_partition%src_advected_area(slot, k, cj, ie) = &
-                src_partition%src_area(k, ci, ie)
+            ! Static (Eulerian) source cell area; see pack_payload/pack side
+            ! for the divergent-flow rationale.
+            arrival_partition%src_static_area(slot, k, cj, ie) = &
+                fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
             arrival_partition%src_lneighbor(slot, k, cj, ie) = 0
           enddo
         enddo
@@ -1192,7 +1208,7 @@ end subroutine check_gfr_partmcsl_subcell_map
     type(cartesian3D_t) :: advected_pts(nverts, nphys_cell_per_elem)
     integer :: ie, je, k, ci, cj, d
     integer :: src_ci, l_loc
-    real(real_kind) :: frac, src_area_arr, a_dst
+    real(real_kind) :: frac, a_src_static, a_dst
     real(real_kind), allocatable :: q_new(:,:,:,:)
 
     if (size(pg_q, 3) /= pmcsl_nq) then
@@ -1244,18 +1260,28 @@ end subroutine check_gfr_partmcsl_subcell_map
     !-----------------------------------------------------------
     ! Phase C: step 3 -- per-cell mixing-ratio update.
     !
-    ! Forward-SL mass balance on mixing ratios:
-    !     mass_recv(dj) = sum_si q(si) * ov_area(si -> dj)
-    !                    (dp folded in externally by hydrostatic-Lagrangian dp adjustment
-    !                     -- for horizontal-only tests dp is uniform and cancels)
-    !     q_new(dj)     = mass_recv(dj) / A_dst(dj)
+    ! Lagrangian mass balance:
+    !     m_si          = q(si) * a_src(si)                 [parcel mass at time n]
+    !     mass_recv(dj) = sum_si src_frac(si->dj) * m_si    [parcel mass distributed
+    !                    (dp folded in by dp adjustment;     to dj by source-normalized
+    !                     for horizontal-only, dp uniform)   fractions summing to 1]
+    !     q_new(dj)     = mass_recv(dj) / A_dst(dj)         [Eulerian mixing ratio]
     !
-    ! With src_frac source-normalized (= ov_area / src_area), rebuild ov_area at
-    ! the arrival side as (src_frac * src_advected_area), accumulate, then divide
-    ! by A_dst = fv_mesh%subcell_area(cj, self_in, je).  This preserves a
-    ! constant tracer pointwise (constant q -> constant q_new) and preserves
-    ! total mass exactly, on non-uniform cubed-sphere grids and under divergent
-    ! flow (via src_advected_area absorbing the compression/expansion).
+    ! Concretely: multiply q_src by src_static_area (== a_src, the source's static
+    ! Eulerian area) and src_frac; accumulate; divide by A_dst.  This is the
+    ! correct Lagrangian bookkeeping: each parcel carries its time-n mass
+    ! q * a_src, which is conserved along the trajectory and distributed among
+    ! destinations by geometric source-normalized fractions.  It gives EXACT
+    ! global mass conservation up to the src_frac normalization from
+    ! calc_src_partition (Sum_dst src_frac = 1 by construction), independent of
+    ! whether the flow is divergent.
+    !
+    ! Prior versions used src_area_advected here instead of a_src, which was a
+    ! frame mix: it multiplied a time-n mixing ratio by a time-(n+1) area and
+    ! silently biased mass by (src_area_advected - a_src)/a_src.  Under
+    ! non-divergent flow this shows up only as forward-Euler drift accumulating
+    ! per step (~5e-4 per day at ne=30, tstep=33s for a strongly-gradient
+    ! tracer); under divergent flow it would be O(1).
     !
     ! q_src is local pg_q if src_lneighbor == 0 (self), else q_halo at the
     ! recorded local neighbor index.  Writes go through a temp array because
@@ -1269,18 +1295,18 @@ end subroutine check_gfr_partmcsl_subcell_map
       do k = 1, nlev
         do cj = 1, nphys_cell_per_elem
           do d = 1, arrival_partition%nsrc(k, cj, je)
-            src_ci       = arrival_partition%src_subcell(d, k, cj, je)
-            frac         = arrival_partition%src_frac(d, k, cj, je)
-            src_area_arr = arrival_partition%src_advected_area(d, k, cj, je)
-            l_loc        = arrival_partition%src_lneighbor(d, k, cj, je)
+            src_ci      = arrival_partition%src_subcell(d, k, cj, je)
+            frac        = arrival_partition%src_frac(d, k, cj, je)
+            a_src_static = arrival_partition%src_static_area(d, k, cj, je)
+            l_loc       = arrival_partition%src_lneighbor(d, k, cj, je)
             if (l_loc == 0) then
               ! self: read q from local pg_q
               q_new(cj, k, :, je) = q_new(cj, k, :, je) &
-                                    + (frac * src_area_arr) * pg_q(src_ci, k, :, je)
+                                    + (frac * a_src_static) * pg_q(src_ci, k, :, je)
             else
               ! foreign or local-non-self: read q from halo
               q_new(cj, k, :, je) = q_new(cj, k, :, je) &
-                                    + (frac * src_area_arr) * q_halo(src_ci, :, k, l_loc, je)
+                                    + (frac * a_src_static) * q_halo(src_ci, :, k, l_loc, je)
             endif
           enddo
           ! Divide accumulated mass by the destination cell's static area to
