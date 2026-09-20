@@ -1325,7 +1325,10 @@ subroutine partmcsl_report_mass(elem, hvcoord, hybrid, nstep, label, nets, nete)
 
   use gllfvremap_mod, only: gfr_f_get_area
   use kinds,          only: iulog
-  use parallel_mod,   only: MPIreal_t
+  ! Full `use parallel_mod` (no `only:` clause) pulls in MPI_SUM alongside
+  ! MPIreal_t.  MPI_SUM is defined by `include <mpif.h>` at parallel_mod's
+  ! module scope, so it isn't accessible via a selective import.
+  use parallel_mod
 
   type(element_t),   intent(in) :: elem(:)
   type(hvcoord_t),   intent(in) :: hvcoord
