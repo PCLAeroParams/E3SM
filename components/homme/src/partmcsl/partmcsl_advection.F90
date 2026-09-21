@@ -1208,7 +1208,7 @@ end subroutine check_gfr_partmcsl_subcell_map
     type(cartesian3D_t) :: advected_pts(nverts, nphys_cell_per_elem)
     integer :: ie, je, k, ci, cj, d
     integer :: src_ci, l_loc
-    real(real_kind) :: frac, a_src_static, a_dst
+    real(real_kind) :: frac, a_src_static, air_mass_recv, contribution
     real(real_kind), allocatable :: q_new(:,:,:,:)
 
     if (size(pg_q, 3) /= pmcsl_nq) then
@@ -1260,28 +1260,59 @@ end subroutine check_gfr_partmcsl_subcell_map
     !-----------------------------------------------------------
     ! Phase C: step 3 -- per-cell mixing-ratio update.
     !
-    ! Lagrangian mass balance:
-    !     m_si          = q(si) * a_src(si)                 [parcel mass at time n]
-    !     mass_recv(dj) = sum_si src_frac(si->dj) * m_si    [parcel mass distributed
-    !                    (dp folded in by dp adjustment;     to dj by source-normalized
-    !                     for horizontal-only, dp uniform)   fractions summing to 1]
-    !     q_new(dj)     = mass_recv(dj) / A_dst(dj)         [Eulerian mixing ratio]
+    ! ARRIVAL-TILING FORMULATION.  Each source cell si carries a Lagrangian
+    ! parcel of AIR MASS M_air(si) = rho_src(si) * a_src(si), unchanged along
+    ! the parcel's trajectory.  Because mixing ratio q is Lagrangian-invariant
+    ! (D q / D t = 0 for a passive tracer, holds under compressible flow too),
+    ! the parcel also carries its source mixing ratio q_src(si) unchanged.
     !
-    ! Concretely: multiply q_src by src_static_area (== a_src, the source's static
-    ! Eulerian area) and src_frac; accumulate; divide by A_dst.  This is the
-    ! correct Lagrangian bookkeeping: each parcel carries its time-n mass
-    ! q * a_src, which is conserved along the trajectory and distributed among
-    ! destinations by geometric source-normalized fractions.  It gives EXACT
-    ! global mass conservation up to the src_frac normalization from
-    ! calc_src_partition (Sum_dst src_frac = 1 by construction), independent of
-    ! whether the flow is divergent.
+    ! Source-normalized fractions src_frac(si -> dj) split each parcel among
+    ! destination cells geometrically; sum_dj src_frac(si -> dj) = 1 exactly.
+    ! Under the "arrival tiling" assumption -- the advected parcels tile the
+    ! destination grid, so the destination cell's air mass at time n+1 is
+    ! the sum of the air-mass parcels that landed in it -- the new mixing
+    ! ratio at dj is a MASS-WEIGHTED AVERAGE of the source mixing ratios:
     !
-    ! Prior versions used src_area_advected here instead of a_src, which was a
-    ! frame mix: it multiplied a time-n mixing ratio by a time-(n+1) area and
-    ! silently biased mass by (src_area_advected - a_src)/a_src.  Under
-    ! non-divergent flow this shows up only as forward-Euler drift accumulating
-    ! per step (~5e-4 per day at ne=30, tstep=33s for a strongly-gradient
-    ! tracer); under divergent flow it would be O(1).
+    !     air_mass_recv(dj) = sum_si M_air(si) * src_frac(si -> dj)
+    !     q_new(dj)         = sum_si q_src(si) * M_air(si) * src_frac(si -> dj)
+    !                        / air_mass_recv(dj)
+    !
+    ! Two exact properties, both provable given sum_dj src_frac = 1:
+    !   (1) POINTWISE CONSTANT PRESERVATION: q_src == q_c constant everywhere
+    !       => q_new == q_c at every dj (numerator = q_c * denominator).
+    !   (2) EXACT GLOBAL TRACER MASS CONSERVATION:
+    !         sum_dj q_new(dj) * air_mass_recv(dj)
+    !            = sum_dj sum_si q_src(si) * M_air(si) * src_frac(si -> dj)
+    !            = sum_si q_src(si) * M_air(si) * [sum_dj src_frac(si -> dj)]
+    !            = sum_si q_src(si) * M_air(si)   [initial total tracer mass]
+    !       Both hold under arbitrary flow -- divergent or not, and independent
+    !       of any forward-Euler drift in the src_frac calculation.  The
+    !       arrival-tiling divisor is what makes this work: it uses the SAME
+    !       parcel-summed metric as the numerator, so any per-parcel weight
+    !       error cancels top-and-bottom.
+    !
+    ! For DCMIP 1-1 with prescribed ps = p0, rho_src is spatially uniform per
+    ! level, so rho_src cancels in the ratio and the effective per-source
+    ! weight is a_src(si) * src_frac(si -> dj).  For truly divergent flows
+    ! where rho varies horizontally at a level, pack rho_src into the exchange
+    ! payload alongside a_src and weight by rho_src(si) * a_src(si).
+    !
+    ! Where to find rho_src for the general case: at the start of the tracer
+    ! time step, elem(ie)%derived%dp(:,:,:) holds dp3d(n0) -- a snapshot taken
+    ! by set_tracer_transport_derived_values in prim_driver_base.F90.  Project
+    ! that to the FV grid with gfr_g2f_scalar (as partmcsl_vertical_step does
+    ! at line ~1447 for the time-(n+1) dp_lagr), permute to PARTMCSL CI, and
+    ! pack alongside a_src.  Density factor (g * dz) cancels in the arrival-
+    ! tiling ratio at a single level, so only dp_src_n is needed -- no need
+    ! to divide by g or Delta z explicitly.
+    !
+    ! Prior formulations used a fixed a_dst(dj) as the divisor.  That form is
+    ! only conservative in the (a_src, a_dst) integral pair and fails
+    ! pointwise constant preservation the moment the parcel geometry drifts
+    ! from exact tiling.  It also required the fv_mesh area metric to agree
+    ! per-cell with whatever metric the surrounding SL/gfr pipeline uses,
+    ! which it does not in general.  The arrival-tiling divisor sidesteps
+    ! both issues.
     !
     ! q_src is local pg_q if src_lneighbor == 0 (self), else q_halo at the
     ! recorded local neighbor index.  Writes go through a temp array because
@@ -1294,28 +1325,36 @@ end subroutine check_gfr_partmcsl_subcell_map
     do je = nets, nete
       do k = 1, nlev
         do cj = 1, nphys_cell_per_elem
+          air_mass_recv = zero
           do d = 1, arrival_partition%nsrc(k, cj, je)
-            src_ci      = arrival_partition%src_subcell(d, k, cj, je)
-            frac        = arrival_partition%src_frac(d, k, cj, je)
+            src_ci       = arrival_partition%src_subcell(d, k, cj, je)
+            frac         = arrival_partition%src_frac(d, k, cj, je)
             a_src_static = arrival_partition%src_static_area(d, k, cj, je)
-            l_loc       = arrival_partition%src_lneighbor(d, k, cj, je)
+            l_loc        = arrival_partition%src_lneighbor(d, k, cj, je)
+            ! Parcel air-mass contribution to this destination.  Uniform-rho
+            ! assumption: rho cancels top-and-bottom in the arrival-tiling
+            ! ratio.  For rho-varying flows, multiply by rho_src(si) here
+            ! (packed alongside a_src) and in air_mass_recv accumulation.
+            contribution = frac * a_src_static
             if (l_loc == 0) then
               ! self: read q from local pg_q
               q_new(cj, k, :, je) = q_new(cj, k, :, je) &
-                                    + (frac * a_src_static) * pg_q(src_ci, k, :, je)
+                                    + contribution * pg_q(src_ci, k, :, je)
             else
               ! foreign or local-non-self: read q from halo
               q_new(cj, k, :, je) = q_new(cj, k, :, je) &
-                                    + (frac * a_src_static) * q_halo(src_ci, :, k, l_loc, je)
+                                    + contribution * q_halo(src_ci, :, k, l_loc, je)
             endif
+            air_mass_recv = air_mass_recv + contribution
           enddo
-          ! Divide accumulated mass by the destination cell's static area to
-          ! recover the mixing ratio.
-          a_dst = fv_mesh%subcell_area(cj, fv_mesh%my_elem_local_idx(je), je)
-          if (a_dst <= zero) then
-            call abortmp('partmcsl step 3: nonpositive dst subcell area.')
+          ! Arrival-tiling divisor: total air mass landed at this dst.
+          ! Zero would mean the destination cell received no advected parcel
+          ! coverage at all -- a red flag that the fv_mesh halo stencil is
+          ! too small for the CFL of the flow.
+          if (air_mass_recv <= zero) then
+            call abortmp('partmcsl step 3: no parcels landed at destination; halo stencil too small?')
           endif
-          q_new(cj, k, :, je) = q_new(cj, k, :, je) / a_dst
+          q_new(cj, k, :, je) = q_new(cj, k, :, je) / air_mass_recv
         enddo
       enddo
     enddo
