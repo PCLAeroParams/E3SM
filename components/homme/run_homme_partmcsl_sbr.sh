@@ -36,7 +36,7 @@ submitFlag=
 
 jobFilePrefix=batch_run_sbr
 nnodes=1
-wtime="02:00:00"
+wtime="04:00:00"
 res=flight-cldera
 acct=fy210162
 ntasks=448
@@ -88,18 +88,40 @@ do
 
   if [ "$submitFlag" ]
   then
+    # Default (cee-compute) submission parameters; ne120 overrides below.
+    ne_nnodes=$nnodes
+    ne_wtime=$wtime
+    ne_wdir=$wdir
+    ne_ntasks=$ntasks
+    ne_launcher="mpirun --map-by core --bind-to core --n $ne_ntasks"
+
+    if [ "$ne" = "120" ]; then
+      # ne=120 case runs on the Flight capacity cluster instead of
+      # cee-compute (too crowded).  Flight nodes: Xeon Silver 4210R
+      # 2S:56C = 112 cores/node.  Machine file:
+      # cmake/machineFiles/flight.cmake.  This override affects only
+      # the -s (submit) path; -r is unchanged.  A Flight-built exec
+      # must already exist under $ne_wdir/test_execs/$execName/.
+      ne_nnodes=8
+      ne_wtime="04:00:00"
+      ne_wdir=/pscratch/pabosle/e3sm-pclap/
+      ne_ntasks=$(( ne_nnodes * 112 ))
+      # Flight uses srun+pmi2 (see flight.cmake USE_MPIEXEC / USE_MPI_OPTIONS).
+      ne_launcher="srun --mpi=pmi2 --kill-on-bad-exit --cpu_bind=cores"
+    fi
+
     jobFile=${jobFilePrefix}_ne${ne}.cmd
     printf "creating job command for ne=${ne}: ${jobFile}\n"
     cat <<EOF > $jobFile
 #!/bin/bash
-#SBATCH -N $nnodes
-#SBATCH -t $wtime
+#SBATCH -N $ne_nnodes
+#SBATCH -t $ne_wtime
 #SBATCH -A $acct
-#SBATCH -n $ntasks
+#SBATCH -n $ne_ntasks
 #SBATCH --reservation $res
-mkdir -p $wdir/$outDir
-cd $wdir
-mpirun --map-by core --bind-to core --n $ntasks $wdir/test_execs/$execName/$execName < $nlFile
+mkdir -p $ne_wdir/$outDir
+cd $ne_wdir
+$ne_launcher $ne_wdir/test_execs/$execName/$execName < $nlFile
 EOF
     chmod +x $jobFile
     cat $jobFile
