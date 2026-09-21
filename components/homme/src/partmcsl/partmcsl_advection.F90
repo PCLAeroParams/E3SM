@@ -34,6 +34,9 @@ module partmcsl_advection_mod
   public :: partmcsl_permute_pg_q_cells
   public :: source_partition_t, src_partition
   public :: partmcsl_get_subcell_static_area
+#ifdef PARTMCSL_DIAG_TILING
+  public :: partmcsl_report_tiling
+#endif
 
   !=====================================
   ! PartMCSL local finite volume mesh
@@ -130,6 +133,12 @@ module partmcsl_advection_mod
     integer, allocatable :: src_subcell(:,:,:,:)    ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_static_area(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
+    ! src_area_advected(d, k, cj, je): Lagrangian advected area of source
+    ! subcell (its tri_area computed on forward-Euler advected corners this
+    ! step).  Ferried through the exchange for the tiling diagnostic
+    ! (partmcsl_report_tiling), which reconstructs ov_area = src_frac *
+    ! src_area_advected and checks Sum_si ov_area(si -> dj) ~ a_dst(dj).
+    real(real_kind), allocatable :: src_area_advected(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
 
@@ -148,16 +157,21 @@ module partmcsl_advection_mod
   !
   ! Per element, per vertical level, the packed payload is:
   !   nphys_cell_per_elem ndest values (one per source subcell), cast int->real
-  !   nphys_cell_per_elem src_area values (one per source subcell)
+  !   nphys_cell_per_elem a_src values (static Eulerian source area; used by
+  !     arrival-tiling mass update in partmcsl_step_forward Phase C)
+  !   nphys_cell_per_elem src_area_advected values (Lagrangian advected area
+  !     of the source parcel; kept for reconstructing ov_area = frac *
+  !     src_area_advected at the destination, needed by the tiling
+  !     diagnostic partmcsl_report_tiling)
   !   nphys_cell_per_elem * max_ndest * 3 record words: (gid_dest, subcell_dest, frac)
   !
   ! Records beyond ndest(k,ci,ie) are zero-padded; ndest is the trusted count at unpack.
   ! Choose ghost-buffer dims (np, nhc) so np*(nhc+1) >= pmcsl_payload_words.
-  integer, parameter :: pmcsl_payload_words = 2 * nphys_cell_per_elem &
+  integer, parameter :: pmcsl_payload_words = 3 * nphys_cell_per_elem &
                           + nphys_cell_per_elem * max_ndest * 3
-  ! For default constants (4, 36) -> 8 + 432 = 440. (21, 20) gives 21*21 = 441.
-  integer, parameter :: pmcsl_ghost_np  = 21
-  integer, parameter :: pmcsl_ghost_nhc = 20
+  ! For default constants (4, 36) -> 12 + 432 = 444.  (22, 21) gives 22*22 = 484.
+  integer, parameter :: pmcsl_ghost_np  = 22
+  integer, parameter :: pmcsl_ghost_nhc = 21
   integer, parameter :: pmcsl_ghost_slot = pmcsl_ghost_np * (pmcsl_ghost_nhc + 1)
 
   !=====================================
@@ -298,12 +312,14 @@ subroutine partmcsl_init(par, elem)
     allocate(arrival_partition%src_subcell(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_frac(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_static_area(max_ndest, nlev, nphys_cell_per_elem, nelemd))
+    allocate(arrival_partition%src_area_advected(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     allocate(arrival_partition%src_lneighbor(max_ndest, nlev, nphys_cell_per_elem, nelemd))
     arrival_partition%nsrc = 0
     arrival_partition%src_gid = -1
     arrival_partition%src_subcell = -1
     arrival_partition%src_frac = zero
     arrival_partition%src_static_area = zero
+    arrival_partition%src_area_advected = zero
     arrival_partition%src_lneighbor = -1
 
     !--------------------------------------------
@@ -677,7 +693,8 @@ subroutine test_sum_to_one(par, elem)
   arrival_partition%src_gid           = -1
   arrival_partition%src_subcell       = -1
   arrival_partition%src_frac          = zero
-  arrival_partition%src_static_area = zero
+  arrival_partition%src_static_area   = zero
+  arrival_partition%src_area_advected = zero
 
   if (par%masterproc) then
     write(iulog,*) 'partmcsl_test: sum-to-one passed.'
@@ -874,6 +891,7 @@ end subroutine check_gfr_partmcsl_subcell_map
       deallocate(arrival_partition%src_subcell)
       deallocate(arrival_partition%src_frac)
       deallocate(arrival_partition%src_static_area)
+      deallocate(arrival_partition%src_area_advected)
       deallocate(arrival_partition%src_lneighbor)
     endif
     if (allocated(q_halo)) deallocate(q_halo)
@@ -954,6 +972,89 @@ end subroutine check_gfr_partmcsl_subcell_map
     area = fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
   end function partmcsl_get_subcell_static_area
 
+#ifdef PARTMCSL_DIAG_TILING
+  !=====================================================================
+  ! Arrival-tiling diagnostic: for each destination (cj, k, je), compute
+  !   sum_ov(dj) = Sum_si ov_area(si -> dj)
+  !              = Sum_d src_frac(d) * src_area_advected(d)   over records
+  ! and compare against the destination's static Eulerian area a_dst.
+  !
+  ! Physical arrival tiling asserts sum_ov(dj) == a_dst(dj): every point of
+  ! the destination cell is covered by the union of advected source parcels
+  ! that landed in it.  Deviations reveal either forward-Euler drift of the
+  ! parcel geometry off the sphere (small, per-step) or halo stencil
+  ! truncation (parcels overlap cells outside the local neighbor list; the
+  ! missed contributions cause sum_ov < a_dst systematically).
+  !
+  ! Reports one line from masterproc per call:
+  !   PARTMCSL_DIAG_TILING nstep=<n>  ratio (sum_ov/a_dst - 1)  min/max/mean:<...>
+  !
+  ! Cost: 2 MPI_Allreduce per call.  Call once per output snapshot or once
+  ! per step depending on how much time-series is wanted.
+  subroutine partmcsl_report_tiling(hybrid, nstep, nets, nete)
+    use kinds,        only: iulog
+    use hybrid_mod,   only: hybrid_t
+    use parallel_mod
+
+    type(hybrid_t), intent(in) :: hybrid
+    integer,        intent(in) :: nstep, nets, nete
+
+    real(real_kind) :: sum_ov, a_dst, ratio
+    real(real_kind) :: local_min, local_max, local_sum_dev, local_sum_sqdev, local_count
+    real(real_kind) :: global_min, global_max, global_sum_dev, global_sum_sqdev, global_count
+    real(real_kind) :: mean_dev, rms_dev
+    integer :: je, k, cj, d, ierr
+
+    local_min       =  huge(one)
+    local_max       = -huge(one)
+    local_sum_dev   = zero
+    local_sum_sqdev = zero
+    local_count     = zero
+
+    do je = nets, nete
+      do k = 1, nlev
+        do cj = 1, nphys_cell_per_elem
+          sum_ov = zero
+          do d = 1, arrival_partition%nsrc(k, cj, je)
+            sum_ov = sum_ov + arrival_partition%src_frac(d, k, cj, je) &
+                            * arrival_partition%src_area_advected(d, k, cj, je)
+          enddo
+          a_dst = fv_mesh%subcell_area(cj, fv_mesh%my_elem_local_idx(je), je)
+          if (a_dst > zero) then
+            ratio = sum_ov / a_dst - one   ! signed deviation from perfect tiling
+            local_min       = min(local_min, ratio)
+            local_max       = max(local_max, ratio)
+            local_sum_dev   = local_sum_dev + ratio
+            local_sum_sqdev = local_sum_sqdev + ratio * ratio
+            local_count     = local_count + one
+          endif
+        enddo
+      enddo
+    enddo
+
+    call MPI_Allreduce(local_min, global_min, 1, MPIreal_t, MPI_MIN, hybrid%par%comm, ierr)
+    call MPI_Allreduce(local_max, global_max, 1, MPIreal_t, MPI_MAX, hybrid%par%comm, ierr)
+    call MPI_Allreduce(local_sum_dev, global_sum_dev, 1, MPIreal_t, MPI_SUM, hybrid%par%comm, ierr)
+    call MPI_Allreduce(local_sum_sqdev, global_sum_sqdev, 1, MPIreal_t, MPI_SUM, hybrid%par%comm, ierr)
+    call MPI_Allreduce(local_count, global_count, 1, MPIreal_t, MPI_SUM, hybrid%par%comm, ierr)
+
+    if (global_count > zero) then
+      mean_dev = global_sum_dev / global_count
+      rms_dev  = sqrt(max(zero, global_sum_sqdev / global_count))
+    else
+      mean_dev = zero
+      rms_dev  = zero
+    endif
+
+    if (hybrid%masterthread .and. hybrid%par%masterproc) then
+      write(iulog, '(a,i8,a,4es14.6)') &
+        'PARTMCSL_DIAG_TILING nstep=', nstep, &
+        '  (sum_ov/a_dst - 1) min/max/mean/rms:', &
+        global_min, global_max, mean_dev, rms_dev
+    endif
+  end subroutine partmcsl_report_tiling
+#endif
+
   ! Decode a flat C++ cell index (0-based) from src_partition%dest_cell_idxs into
   ! a 1-based (in_dest, ci_dest) pair.  See partmcsl.hpp:init_local_mesh_if_needed
   ! for the layout: cell_idx = nbr_idx * n_subcells_per_elem + subcell_idx (0-based).
@@ -982,17 +1083,22 @@ end subroutine check_gfr_partmcsl_subcell_map
     integer,              intent(in)  :: ie, k
     real(real_kind),      intent(out) :: payload(pmcsl_ghost_slot)
     integer :: ci, d, base, in_dest, ci_dest, gid_dest, ndest_here, in_self
-    integer, parameter :: hdr = 2 * nphys_cell_per_elem   ! ndest + a_src words
+    integer, parameter :: hdr = 3 * nphys_cell_per_elem   ! ndest + a_src + src_area_advected
 
     payload = zero
     in_self = fv_mesh%my_elem_local_idx(ie)
 
     do ci = 1, nphys_cell_per_elem
-      payload(ci)                        = real(src_partition%ndest(k, ci, ie), real_kind)
+      payload(ci)                            = real(src_partition%ndest(k, ci, ie), real_kind)
       ! Pack the source cell's STATIC (Eulerian) area a_src, not its advected
       ! area, so the arrival side computes mass = q(si) * a_src * src_frac
       ! (Lagrangian-mass-conservative).  See arrival_partition_t doc-comment.
-      payload(nphys_cell_per_elem + ci)  = fv_mesh%subcell_area(ci, in_self, ie)
+      payload(nphys_cell_per_elem + ci)      = fv_mesh%subcell_area(ci, in_self, ie)
+      ! Pack the source cell's LAGRANGIAN advected area (tri_area of forward-
+      ! Euler advected corners), for reconstructing ov_area = src_frac *
+      ! src_area_advected at the destination in the tiling diagnostic.
+      ! src_partition%src_area holds this from Phase A.
+      payload(2 * nphys_cell_per_elem + ci)  = src_partition%src_area(k, ci, ie)
     enddo
 
     do ci = 1, nphys_cell_per_elem
@@ -1044,8 +1150,8 @@ end subroutine check_gfr_partmcsl_subcell_map
     integer :: ie, k, l_local, l, is, ci, d, base
     integer :: src_elem_gid, src_ndest, gid_dest, ci_dest, cj, slot
     integer :: in_dest, in_dest_self, ci_dest_self
-    integer, parameter :: hdr = 2 * nphys_cell_per_elem
-    real(real_kind) :: frac, src_area_ci
+    integer, parameter :: hdr = 3 * nphys_cell_per_elem
+    real(real_kind) :: frac, src_area_ci, src_area_advected_ci
 
     do ie = nets, nete
       arrival_partition%nsrc(:, :, ie) = 0
@@ -1061,8 +1167,9 @@ end subroutine check_gfr_partmcsl_subcell_map
           payload = reshape(partmcsl_ghostbuf%buf(:, :, k, is), &
                             (/ pmcsl_ghost_slot /))
           do ci = 1, nphys_cell_per_elem
-            src_ndest   = nint(payload(ci))
-            src_area_ci = payload(nphys_cell_per_elem + ci)
+            src_ndest            = nint(payload(ci))
+            src_area_ci          = payload(nphys_cell_per_elem + ci)
+            src_area_advected_ci = payload(2 * nphys_cell_per_elem + ci)
             base = hdr + (ci - 1) * max_ndest * 3
             do d = 1, src_ndest
               gid_dest = nint(payload(base + (d-1)*3 + 1))
@@ -1075,12 +1182,13 @@ end subroutine check_gfr_partmcsl_subcell_map
                 if (slot > max_ndest) then
                   call abortmp('partmcsl unpack: arrival_partition slot overflow.')
                 endif
-                arrival_partition%nsrc(k, cj, ie)                = slot
-                arrival_partition%src_gid(slot, k, cj, ie)       = src_elem_gid
-                arrival_partition%src_subcell(slot, k, cj, ie)   = ci
-                arrival_partition%src_frac(slot, k, cj, ie)      = frac
+                arrival_partition%nsrc(k, cj, ie)                  = slot
+                arrival_partition%src_gid(slot, k, cj, ie)         = src_elem_gid
+                arrival_partition%src_subcell(slot, k, cj, ie)     = ci
+                arrival_partition%src_frac(slot, k, cj, ie)        = frac
                 arrival_partition%src_static_area(slot, k, cj, ie) = src_area_ci
-                arrival_partition%src_lneighbor(slot, k, cj, ie) = l_local
+                arrival_partition%src_area_advected(slot, k, cj, ie) = src_area_advected_ci
+                arrival_partition%src_lneighbor(slot, k, cj, ie)   = l_local
               endif
             enddo
           enddo
@@ -1113,6 +1221,9 @@ end subroutine check_gfr_partmcsl_subcell_map
             ! for the divergent-flow rationale.
             arrival_partition%src_static_area(slot, k, cj, ie) = &
                 fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
+            ! Lagrangian advected area for tiling diagnostic; local self src.
+            arrival_partition%src_area_advected(slot, k, cj, ie) = &
+                src_partition%src_area(k, ci, ie)
             arrival_partition%src_lneighbor(slot, k, cj, ie) = 0
           enddo
         enddo
@@ -1392,7 +1503,27 @@ end subroutine check_gfr_partmcsl_subcell_map
     pg_q(:, :, :, nets:nete) = q_new(:, :, :, nets:nete)
     deallocate(q_new)
     call t_stopf('partmcsl_step3_move')
+
+#ifdef PARTMCSL_DIAG_TILING
+    ! Diagnostic: measure how well the advected parcels tile each destination
+    ! cell.  One line per tracer time step from masterproc; grep the log for
+    ! 'PARTMCSL_DIAG_TILING' to extract the time series.
+    call partmcsl_report_tiling(par_to_hybrid_shim(par, ithr), tl%nstep, nets, nete)
+#endif
   end subroutine partmcsl_step_forward
+
+#ifdef PARTMCSL_DIAG_TILING
+  ! Local shim so we can build a minimal hybrid_t inside step_forward without
+  ! plumbing hybrid all the way in.  hybrid%par is what MPI_Allreduce needs
+  ! and hybrid%ithr / hybrid%masterthread gate the print.
+  function par_to_hybrid_shim(par, ithr) result(hyb)
+    use hybrid_mod, only: hybrid_t, hybrid_create
+    type(parallel_t), intent(in) :: par
+    integer,          intent(in) :: ithr
+    type(hybrid_t) :: hyb
+    hyb = hybrid_create(par, ithr, 1)
+  end function par_to_hybrid_shim
+#endif
  
   subroutine partmcsl_fwd_advection(acart, vt0, vt1, fvm, elem, ie, dt)
     type(cartesian3D_t), intent(out) :: acart(4,4)  ! output: cartesian coordinates of advected fv cell corners ; shared corners are duplicated -- could be changed later.

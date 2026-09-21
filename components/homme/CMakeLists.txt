@@ -137,6 +137,7 @@ OPTION(PARTMCSL_CONST_MIRROR "Set q(5:8) to spatial constants 0.1 0.3 0.5 0.7 at
 OPTION(PARTMCSL_DIAG_MASS "Print tracer mass sums on FV (pg_data%q) and GLL (state%Q) grids at every output snapshot; used to isolate whether mass loss is inside PartMCSL or inside the FV->GLL projection" OFF)
 OPTION(PARTMCSL_SKIP_HORIZONTAL_ONLY "Skip only partmcsl_step_forward (horizontal transport); keep partmcsl_vertical_step and the pg_q permutes; A/B-only, attributes mass leak between the horizontal and vertical partmcsl steps" OFF)
 OPTION(PARTMCSL_SKIP_VERTICAL_ONLY "Skip only partmcsl_vertical_step; keep partmcsl_step_forward and the pg_q permutes; A/B-only, attributes mass leak between the horizontal and vertical partmcsl steps" OFF)
+OPTION(PARTMCSL_DIAG_TILING "Print arrival-tiling diagnostic at every partmcsl_step_forward call: Sum_si ov_area(si -> dj) / a_dst(dj) - 1 statistics per destination cell.  Reveals halo stencil truncation and forward-Euler geometry drift." OFF)
 
 #by default we don't need cxx
 SET(HOMME_USE_CXX FALSE)

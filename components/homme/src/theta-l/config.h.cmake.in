@@ -112,3 +112,6 @@
 
 /* Skip only partmcsl_vertical_step. Keep horizontal step and permutes. A/B-only attribution between horizontal and vertical partmcsl steps. */
 #cmakedefine PARTMCSL_SKIP_VERTICAL_ONLY
+
+/* Print arrival-tiling diagnostic every partmcsl_step_forward call. Reveals halo stencil truncation and forward-Euler geometry drift via Sum_si ov_area / a_dst - 1 statistics per destination. */
+#cmakedefine PARTMCSL_DIAG_TILING
