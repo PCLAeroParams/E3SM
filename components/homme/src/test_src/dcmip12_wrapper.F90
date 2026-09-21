@@ -1323,8 +1323,8 @@ subroutine partmcsl_report_mass(elem, hvcoord, hybrid, nstep, label, nets, nete)
   !! Cost: one MPI_Allreduce of 2*qsize doubles per call (2 calls per output
   !! snapshot).  Negligible at daily-output cadence.
 
-  use gllfvremap_mod, only: gfr_f_get_area
-  use kinds,          only: iulog
+  use partmcsl_advection_mod, only: partmcsl_get_subcell_static_area
+  use kinds,                  only: iulog
   ! Full `use parallel_mod` (no `only:` clause) pulls in MPI_SUM alongside
   ! MPIreal_t.  MPI_SUM is defined by `include <mpif.h>` at parallel_mod's
   ! module scope, so it isn't accessible via a selective import.
@@ -1362,8 +1362,14 @@ subroutine partmcsl_report_mass(elem, hvcoord, hybrid, nstep, label, nets, nete)
         i_fv = mod(kc - 1, nphys_side) + 1
         j_fv = (kc - 1) / nphys_side + 1
         do kl = 1, nlev
+          ! Weight by fv_mesh%subcell_area (partmcsl's own metric) rather than
+          ! gfr_f_get_area (rescaled per element to match sum(spheremp)).  The
+          ! two agree per element but differ per subcell; measuring in
+          ! partmcsl's metric is what makes drift = 0 when the arrival-tiling
+          ! scheme is conservative.
           mass_fv_local(qi) = mass_fv_local(qi) + &
-               pg_data%q(kc, kl, qi, ie) * dp_lev(kl) * gfr_f_get_area(ie, i_fv, j_fv)
+               pg_data%q(kc, kl, qi, ie) * dp_lev(kl) * &
+               partmcsl_get_subcell_static_area(ie, i_fv, j_fv)
         end do
       end do
     end do

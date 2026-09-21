@@ -33,6 +33,7 @@ module partmcsl_advection_mod
   public :: partmcsl_exchange_source_partition
   public :: partmcsl_permute_pg_q_cells
   public :: source_partition_t, src_partition
+  public :: partmcsl_get_subcell_static_area
 
   !=====================================
   ! PartMCSL local finite volume mesh
@@ -921,8 +922,38 @@ end subroutine check_gfr_partmcsl_subcell_map
     enddo
   end subroutine partmcsl_permute_pg_q_cells
 
-  
-  
+  !=====================================================================
+  ! Static-area accessor for external diagnostics.
+  !
+  ! Returns fv_mesh%subcell_area(ci_partmcsl, in_self, ie), where ci_partmcsl
+  ! is the PARTMCSL CI index corresponding to the caller's gfr flat (i, j)
+  ! -- i.e., the source-cell static area used by partmcsl_step_forward's
+  ! arrival-tiling mass update.
+  !
+  ! Callers that expect gfr flat cell ordering (e.g. dcmip2012_test1_1's
+  ! mass diagnostic, which reads pg_data%q post-permute, in gfr order) pass
+  ! (i_fv, j_fv) in gfr flat form: k_gfr = nphys*(j_fv-1) + i_fv.
+  !
+  ! Used to measure "mass in partmcsl's own metric" -- the diagnostic weight
+  ! that the arrival-tiling scheme actually conserves.  Contrasts with
+  ! gfr_f_get_area, which reports the same area rescaled per element to
+  ! match sum(spheremp) (the GLL-side canonical measure); the two agree in
+  ! aggregate per element but differ per subcell, which is exactly what
+  ! creates diagnostic-vs-transport metric mismatch for concentrated tracers.
+  function partmcsl_get_subcell_static_area(ie, i_fv, j_fv) result(area)
+    integer, intent(in) :: ie, i_fv, j_fv
+    real(real_kind) :: area
+    integer :: k_gfr, ci
+    integer, parameter :: nphys_side = 2   ! pg2
+    k_gfr = nphys_side * (j_fv - 1) + i_fv
+    ! Invert gfr_to_partmcsl_ci (a permutation) by linear scan.  For nphys=2
+    ! the array is (/1,2,4,3/), 4 entries -- a hard-coded 4-cycle loop.
+    do ci = 1, nphys_cell_per_elem
+      if (gfr_to_partmcsl_ci(ci) == k_gfr) exit
+    end do
+    area = fv_mesh%subcell_area(ci, fv_mesh%my_elem_local_idx(ie), ie)
+  end function partmcsl_get_subcell_static_area
+
   ! Decode a flat C++ cell index (0-based) from src_partition%dest_cell_idxs into
   ! a 1-based (in_dest, ci_dest) pair.  See partmcsl.hpp:init_local_mesh_if_needed
   ! for the layout: cell_idx = nbr_idx * n_subcells_per_elem + subcell_idx (0-based).
