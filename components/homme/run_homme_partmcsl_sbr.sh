@@ -19,8 +19,28 @@
 
 e3sm=$HOME/e3sm-pclap
 homme=$e3sm/components/homme
-mach=$homme/cmake/machineFiles/cee-compute.cmake
-wdir=/scratch/pabosle/e3sm-pclap
+
+# Host-dependent build/work dir + machine file:
+#   cee-compute[0-9]+  -> /scratch/pabosle/e3sm-pclap   (cee-compute.cmake)
+#   flight*            -> /pscratch/pabosle/e3sm-pclap  (flight.cmake)
+# configure/build/run/submit all key off this $wdir.
+host=$(hostname -s)
+case $host in
+  cee-compute[0-9]*)
+    wdir=/scratch/pabosle/e3sm-pclap
+    mach=$homme/cmake/machineFiles/cee-compute.cmake
+    ;;
+  flight*)
+    wdir=/pscratch/pabosle/e3sm-pclap
+    mach=$homme/cmake/machineFiles/flight.cmake
+    ;;
+  *)
+    wdir=/scratch/pabosle/e3sm-pclap
+    mach=$homme/cmake/machineFiles/cee-compute.cmake
+    printf "WARN: unknown host '%s'; defaulting wdir=%s, mach=%s\n" \
+      "$host" "$wdir" "$mach" >&2
+    ;;
+esac
 
 # Default ne sweep — override with -n "16 30" or a subset.
 neList="16 30 60 120"
@@ -94,6 +114,7 @@ do
     ne_wdir=$wdir
     ne_ntasks=$ntasks
     ne_launcher="mpirun --map-by core --bind-to core --n $ne_ntasks"
+    ne_preamble=""
 
     if [ "$ne" = "120" ]; then
       # ne=120 case runs on the Flight capacity cluster instead of
@@ -104,10 +125,14 @@ do
       # must already exist under $ne_wdir/test_execs/$execName/.
       ne_nnodes=8
       ne_wtime="04:00:00"
-      ne_wdir=/pscratch/pabosle/e3sm-pclap/
+      ne_wdir=/pscratch/pabosle/e3sm-pclap
       ne_ntasks=$(( ne_nnodes * 112 ))
       # Flight uses srun+pmi2 (see flight.cmake USE_MPIEXEC / USE_MPI_OPTIONS).
       ne_launcher="srun --mpi=pmi2 --kill-on-bad-exit --cpu_bind=cores"
+      # prim_movie_output stack-allocates temp3d(np,np,nlev,nelemd) and
+      # var3d(nxyp,nlev); at ne=120 nlev=128 those exceed the default
+      # 8 MB stack per rank and segfault in nf_put2DR.  Lift the limit.
+      ne_preamble="ulimit -s unlimited"
     fi
 
     jobFile=${jobFilePrefix}_ne${ne}.cmd
@@ -119,6 +144,7 @@ do
 #SBATCH -A $acct
 #SBATCH -n $ne_ntasks
 #SBATCH --reservation $res
+$ne_preamble
 mkdir -p $ne_wdir/$outDir
 cd $ne_wdir
 $ne_launcher $ne_wdir/test_execs/$execName/$execName < $nlFile
