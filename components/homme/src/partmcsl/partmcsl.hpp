@@ -3,7 +3,7 @@
 
 #include "compose_slmm.hpp"
 #include "compose_slmm_siqk.hpp" // geometry, sqr, slice, kokkos view types
-#include "compose_homme.hpp" // FA types, Cartesian3D
+#include "compose_homme.hpp" // Fortran Array <FA> types, Cartesian3D
 
 #include "siqk_exe_space.hpp"
 #include "siqk_intersect.hpp" // Mesh, and polygonal intersections based on them.

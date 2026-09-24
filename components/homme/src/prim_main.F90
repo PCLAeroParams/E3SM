@@ -277,7 +277,7 @@ program prim_main
      ! Refresh GLL state%Q(:,:,:,5:7) from the partmcsl-evolved physgrid
      ! tracer state so the NetCDF writer below can see Q5..Q7.  No-op for
      ! non-dcmip2012 runs (early-returns when pg_data%q is unallocated).
-     ! PARTMCSL_SKIP_PHYS_TO_DYN (compile-time) disables the call for A/B
+     ! PARTMCSL_SKIP_PHYS_TO_DYN (compile-time) disables the call for 
      ! diagnostics of whether the gllfvremap round-trip poisons SL Q1;
      ! Q5..Q7 in the NetCDF will be stale (their t=0 IC).
      call dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)

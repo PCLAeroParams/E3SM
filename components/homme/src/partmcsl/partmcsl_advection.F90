@@ -29,7 +29,7 @@ module partmcsl_advection_mod
   private
 
   public :: partmcsl_init, partmcsl_finalize, partmcsl_test
-  public :: partmcsl_step_forward, partmcsl_vertical_step
+  public :: partmcsl_step_forward, partmcsl_vertical_step, partmcsl_vertical_partition
   public :: partmcsl_exchange_source_partition
   public :: partmcsl_permute_pg_q_cells
   public :: source_partition_t, src_partition
@@ -45,7 +45,7 @@ module partmcsl_advection_mod
   ! ie = 1,...,nelemd:
   !
   !  fv_mesh%points(1:4, ci, in, ie) gives the coordinates of the 4 vertices of fv subcell
-  !     ci (in [1,4]) of element `in` (in [1, nneighbors]) in elem(ie)'s neighbor list.
+  !     `ci` (in [1:4]) of element `in` (in [1, nneighbors]) in elem(ie)'s neighbor list.
   !  fv_mesh%elem_global_id(ci, in, ie) gives Homme's global index of element `in` in
   !     elem(ie)'s neighbor list.
   !  fv_mesh%nneighbors(ie) gives the number of neighboring elements that elem(ie) has.
@@ -75,11 +75,9 @@ module partmcsl_advection_mod
   ! src_area(k, ci, ie) is the sphere-triangle area of the advected subcell (i.e.
   !     the forward image of subcell ci of elem(ie) at level k).  Same numerator
   !     dividend used by calc_src_partition on the C++ side (partmcsl.cpp:105-110).
-  !     NOTE: currently unused by the runtime mass-update path (see Phase C notes
-  !     in partmcsl_step_forward and the src_static_area field on arrival_partition).
+  !     NOTE: currently unused by the runtime mass-update path.
   !     Kept allocated and populated for diagnostics / future divergent-flow
-  !     bookkeeping where the parcel's advected mixing ratio q_adv = q * a_src /
-  !     src_area would be needed explicitly.
+  !     bookkeeping.
   ! ndest(k,ci,ie) is the number of fv cells that subcell ci of elem(ie) sends to at
   !     vertical level k.
   type :: source_partition_t
@@ -92,36 +90,19 @@ module partmcsl_advection_mod
   !=====================================
   ! PartMCSL arrival partition (full-stencil contributions received at each owned destination)
   !
-  ! For each element je owned by this rank, for each destination subcell cj of je
+  ! For each element `je` owned by this rank, for each destination subcell `cj` of `je`
   ! and each vertical level k:
   !   nsrc(k, cj, je) is the number of source records contributing to (je, cj, k).
   !   src_gid(d, k, cj, je) is the GlobalID of the source element (any rank).
-  !   src_subcell(d, k, cj, je) is the source subcell within that element [1..4].
+  !   src_subcell(d, k, cj, je) is the source subcell within that element [1:4].
   !   src_frac(d, k, cj, je) is the fraction of the source cell delivered into (je, cj).
-  !     Source-normalized (ov_area / src_area_advected).  Retained as the
-  !     physically-meaningful "portion of source's advected shape covering dst"
-  !     quantity; the arrival-side mass update multiplies it by the source's
-  !     STATIC (Eulerian) area src_static_area so that source si contributes
-  !     total mass q(si) * a_src(si) = m_si -- its Lagrangian-conserved parcel
-  !     mass at time n.
   !   src_static_area(d, k, cj, je) is the source subcell's static Eulerian area
-  !     a_src, i.e. fv_mesh%subcell_area(src_ci, in_source, ...).  This is the
-  !     mass-weight for the source parcel: mass_delivered = q(si) * src_static_area
-  !     * src_frac.  Using the STATIC (not advected) area is what makes the
-  !     scheme Lagrangian-mass-conservative under any flow, divergent or not:
-  !     the parcel's mass at time n was q * a_src; that mass is what should be
-  !     distributed among destinations.  Using the advected area instead (an
-  !     earlier bug) mixed frames and biased mass by (src_area_advected - a_src)
-  !     / a_src -- an O(forward-Euler drift) per-step loss under non-divergent
-  !     flow, growing to O(1) under divergent flow.
-  !
   !     Note src_static_area could be looked up locally at the destination via
   !     fv_mesh (a_src is static and available for any neighbor), but it is
   !     packed into the exchange payload alongside src_frac to keep the arrival
-  !     side's Phase C access pattern uniform -- one record => one contribution
-  !     of q * src_static_area * src_frac, no per-record neighbor-index search.
+  !     pattern uniform -- one record => one contribution, no per-record neighbor-index search.
   !   src_lneighbor(d, k, cj, je) is the local index of the source in je's neighbor list:
-  !     0 sentinel means "self" (source == je) -- consumer reads q from local state;
+  !     0 sentinel means "self" (source == je) -- reads q from local state;
   !     1..nneighbors(je) means use je's halo at slot src_lneighbor (foreign or local-non-self).
   !
   ! Full stencil: holds every record targeting je from every source -- foreign,
@@ -133,11 +114,6 @@ module partmcsl_advection_mod
     integer, allocatable :: src_subcell(:,:,:,:)    ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_frac(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     real(real_kind), allocatable :: src_static_area(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
-    ! src_area_advected(d, k, cj, je): Lagrangian advected area of source
-    ! subcell (its tri_area computed on forward-Euler advected corners this
-    ! step).  Ferried through the exchange for the tiling diagnostic
-    ! (partmcsl_report_tiling), which reconstructs ov_area = src_frac *
-    ! src_area_advected and checks Sum_si ov_area(si -> dj) ~ a_dst(dj).
     real(real_kind), allocatable :: src_area_advected(:,:,:,:) ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
     integer, allocatable :: src_lneighbor(:,:,:,:)  ! (max_ndest, nlev, nphys_cell_per_elem, nelemd)
   end type
@@ -227,6 +203,7 @@ module partmcsl_advection_mod
   !   l_local: local neighbor index of source in je's neighbor list [1..nneighbors(je)]
   !   je: this rank's owned element index [1..nelemd]
   ! Self contributions are NOT in the halo; consumer reads them from local pg_q.
+  ! TODO: q_halo is a stand-in (for the DCMIP tests only) for aerosol_state
   real(real_kind), allocatable, private :: q_halo(:,:,:,:,:)
   
   contains
@@ -368,7 +345,7 @@ subroutine partmcsl_init(par, elem)
             ! subcells are defined in the reference quadrilateral's (a,b) coordinates;
             ! see subroutine ref_coords_ab.
             call ref_coords_ab(a, b, ci-1, vi-1) ! ref_coords_ab uses 0-based indexing
-            ! spherical coordinates of subcells are then defined through the reference quad.
+            ! spherical coordinates of subcells are then defined through the reference quad
             ! to sphere map.
             ! see cube_mod.F90.  On output, p_cart has the sphere point's xyz coords.
             p_sph = ref2sphere(a, b, elem(ie)%desc%neigh_corners(:,in), cubed_sphere_map, elem(ie)%corners, facenum, p_cart)
@@ -449,7 +426,7 @@ subroutine reset_src_partition()
   src_partition%src_area       = zero
 end subroutine reset_src_partition
 
-! Populate src_partition with the identity mapping: each (ie, ci, k) sends 100%
+! Unit testing: Populate src_partition with the identity mapping: each (ie, ci, k) sends 100%
 ! to its own (ie, ci, k).  dest_cell_idxs uses the flat 0-based index produced
 ! by the C++ side: (in_self - 1) * nphys_cell_per_elem + (ci - 1).
 subroutine fill_identity_src_partition()
@@ -474,7 +451,7 @@ subroutine fill_identity_src_partition()
   enddo
 end subroutine fill_identity_src_partition
 
-! Populate src_partition so that each (ie, ci, k) distributes evenly across all
+! Unit testing: Populate src_partition so that each (ie, ci, k) distributes evenly across all
 ! nneighbors(ie) of its neighbors (including self), targeting the same subcell
 ! ci in each neighbor.  Each fraction equals 1/nneighbors(ie); per-source totals
 ! sum exactly to 1.0.
@@ -1410,8 +1387,7 @@ end subroutine check_gfr_partmcsl_subcell_map
     !
     ! Source-normalized fractions src_frac(si -> dj) split each parcel among
     ! destination cells geometrically; sum_dj src_frac(si -> dj) = 1 exactly.
-    ! Under the "arrival tiling" assumption -- the advected parcels tile the
-    ! destination grid, so the destination cell's air mass at time n+1 is
+    ! The destination cell's air mass at time n+1 is
     ! the sum of the air-mass parcels that landed in it -- the new mixing
     ! ratio at dj is a MASS-WEIGHTED AVERAGE of the source mixing ratios:
     !
@@ -1477,6 +1453,10 @@ end subroutine check_gfr_partmcsl_subcell_map
             ! assumption: rho cancels top-and-bottom in the arrival-tiling
             ! ratio.  For rho-varying flows, multiply by rho_src(si) here
             ! (packed alongside a_src) and in air_mass_recv accumulation.
+            ! TODO: We ignore rho issues for now, since we're only using tracer transport
+            ! as a check to make sure we've implemented source->destination mass fraction
+            ! mappings correctly.  All actual tracer transport will still be computed by
+            ! the models' Interpolation Semi-Lagrangian scheme, ISLET.
             contribution = frac * a_src_static
             if (l_loc == 0) then
               ! self: read q from local pg_q
@@ -1586,25 +1566,23 @@ end subroutine check_gfr_partmcsl_subcell_map
   !=====================================================================
   ! Vertical transport step (column-local; PPM remap via vertremap_base).
   !
-  ! For prescribed-wind tests (currently dcmip2012_test1_1) with the
-  ! midpoint_eta_dot_dpdn flag enabled in test_mod, the dynamics has
-  ! already constructed the midpoint-Lagrangian floating-level thickness
-  ! in elem%state%dp3d(:,:,:,tl%np1) via set_prescribed_wind's
-  ! Lagrangian branch (test_mod.F90:336-343).  We consume that dp
-  ! directly here, the same way the SL tracer path consumes
+  ! the dynamics has  already constructed the midpoint-Lagrangian floating-level thickness
+  ! in elem%state%dp3d(:,:,:,tl%np1). For DCMIP transport testing,
+  ! enable the midpoint_eta_dot_dpdn flag enabled in test_mod,  via set_prescribed_wind's
+  ! Lagrangian branch (test_mod.F90:336-343).  
+  !
+  ! Use dp directly here, the same way the SL tracer path consumes
   ! elem%derived%divdp (= dp_star from calc_vertically_lagrangian_levels)
   ! in sl_vertically_remap_tracers (sl_advection.F90:1241).  This makes
-  ! the vertical step 2nd-order in time when the flag is on, with no
+  ! the vertical step 2nd-order in time, with no
   ! partmcsl-local eta_dot caching needed.
-  !
-  ! No MPI: each FV cell column is independent.
   !
   ! ps_v and dp3d are sampled at FV cell centers by delegating to
   ! gllfvremap's gfr_g2f_scalar -- sphere-area-weighted FV cell mean of
   ! the GLL polynomial, using the cubed-sphere Jacobian.  Because dp is
   ! a density (mass per unit area), the sphere-area mean preserves
   ! per-column mass on the FV grid.  gfr_init must have been called
-  ! upstream (dcmip12_wrapper.F90 does this).
+  ! upstream (dcmip12_wrapper.F90 does this for the partmcsl tests).
   !=====================================================================
 
   ! Column-local vertical transport for the partmcsl tracers.  For each
@@ -1616,9 +1594,7 @@ end subroutine check_gfr_partmcsl_subcell_map
   !   3. Convert mixing ratio to source-cell mass Qdp = pg_q * dp_lagr.
   !      pg_q is the Lagrangian-preserved mixing ratio; its physical
   !      mass in the Lagrangian cell is pg_q * dp_lagr (compressed
-  !      cells carry proportionally less mass at the same q).  Using
-  !      dp_dst here would inflate mass at compression zones and
-  !      produce unphysical peak overshoots.
+  !      cells carry proportionally less mass at the same q).
   !   4. Call remap1 with dp1=dp_lagr, dp2=dp_dst, alg=vert_remap_q_alg
   !      -- same kernel and algorithm choice as the SL tracer path.
   !   5. Convert back to mixing ratio: pg_q = Qdp / dp_dst.
@@ -1659,8 +1635,7 @@ end subroutine check_gfr_partmcsl_subcell_map
 
     call t_startf('partmcsl_vertical_step')
     do ie = nets, nete
-      ! ps at FV cell centers: sphere-area mean over the FV subcell.
-      ps_g(:,:,1) = elem(ie)%state%ps_v(:,:,tl%n0)
+      ps_g(:,:,1) = elem(ie)%state%ps_v(:,:,tl%np1)
       call gfr_g2f_scalar(ie, elem(ie)%metdet, ps_g, ps_fv_gfr)
       do ci = 1, nphys_cell_per_elem
         ps_fv(ci) = ps_fv_gfr(gfr_to_partmcsl_ci(ci), 1)
@@ -1708,5 +1683,58 @@ end subroutine check_gfr_partmcsl_subcell_map
     enddo
     call t_stopf('partmcsl_vertical_step')
   end subroutine partmcsl_vertical_step
+
+  ! Geometric mass-transfer partition for the vertical step.  Column-local,
+  ! independent of tracer profile and of PPM/limiter.  s(l, k) is the
+  ! fraction of the air mass in Lagrangian layer k at t^n that lands inside
+  ! Eulerian destination layer l at t^{n+1}.  Columns of s (fixed k) sum
+  ! to 1 exactly by matched column endpoints (sum(dp_lagr) = sum(dp_dst)).
+  !
+  ! This is the vertical mirror of the horizontal arrival-tiling
+  ! src_frac(si -> dj); use it wherever an aerosol-particle payload needs
+  ! to know which destination layer(s) a source-layer parcel arrives in.
+  ! The gridded-tracer step in partmcsl_vertical_step uses PPM (remap1)
+  ! instead, which redistributes subgrid mass and does NOT produce these
+  ! fractions.
+  !
+  ! Two-pointer sweep on cumulative pressure; O(nlev) total work per call
+  ! (each source overlaps ~1-3 destinations in practice).
+  subroutine partmcsl_vertical_partition(dp_lagr, dp_dst, s)
+    real(real_kind), intent(in)  :: dp_lagr(nlev)
+    real(real_kind), intent(in)  :: dp_dst(nlev)
+    real(real_kind), intent(out) :: s(nlev, nlev)
+    real(real_kind) :: P_lagr(nlevp), P_dst(nlevp)
+    integer :: k, l, l_start
+
+    P_lagr(1) = zero
+    P_dst(1)  = zero
+    do k = 1, nlev
+      if (dp_lagr(k) <= zero) then
+        call abortmp('partmcsl_vertical_partition: nonpositive dp_lagr.')
+      endif
+      if (dp_dst(k) <= zero) then
+        call abortmp('partmcsl_vertical_partition: nonpositive dp_dst.')
+      endif
+      P_lagr(k+1) = P_lagr(k) + dp_lagr(k)
+      P_dst(k+1)  = P_dst(k)  + dp_dst(k)
+    enddo
+
+    s = zero
+    l_start = 1
+    do k = 1, nlev
+      do l = l_start, nlev
+        if (P_dst(l+1) <= P_lagr(k)) then
+          ! Destination l ends at or below source k's start.  Sources are
+          ! monotone-increasing in cumulative pressure, so dst l cannot
+          ! overlap any future source either -- retire it from the sweep.
+          l_start = l + 1
+          cycle
+        endif
+        if (P_dst(l) >= P_lagr(k+1)) exit  ! all further l are above source k
+        s(l, k) = (min(P_lagr(k+1), P_dst(l+1)) - max(P_lagr(k), P_dst(l))) &
+                  / dp_lagr(k)
+      enddo
+    enddo
+  end subroutine partmcsl_vertical_partition
 
 end module partmcsl_advection_mod

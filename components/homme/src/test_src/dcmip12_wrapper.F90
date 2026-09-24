@@ -51,8 +51,8 @@ real(rl):: tau
 real(rl):: ztop
 
 #ifdef PARTMCSL_SBR_DIAG
-!! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): SBR wind override
-!! parameters, promoted to module scope so set_pg_q7_analytic_exact below can
+!! DIAGNOSTIC Solid-Body Rotation wind parameters
+!! promoted to module scope so set_pg_q7_analytic_exact below can
 !! use the same axis/tau as the Test S override at dcmip2012_test1_1.
 !! Williamson SW1 axis tilt alpha = pi/4; one full revolution per 12 days.
 real(rl), parameter :: sbr_tau   = 12.0_rl * 86400.0_rl
@@ -65,10 +65,6 @@ real(rl), parameter :: sbr_u0    = 2.0_rl * pi * a / sbr_tau
 !! set_pg_q7_analytic_exact).  Bell centers coincide with the cosine-bell
 !! centers in test1_advection_deformation (dcmip2012_test1_2_3.F90:128-131).
 !! h_max and b match the standard DCMIP 2012 Gaussian-hills prescription.
-!! Vertical modulation is a Gaussian in (z-gh_z0)/gh_zz so Q1 is C^infinity
-!! and avoids the C^0 kink of the cosine-bell + min(1,.) cutoff, which was
-!! the source of CEDR-clipping mass loss under the SL scheme
-!! (see partmcsl_half_order_sbr_handoff.md §7c).
 real(rl), parameter :: gh_lam0 = 5.0_rl*pi/6.0_rl, gh_phi0 = 0.0_rl
 real(rl), parameter :: gh_lam1 = 7.0_rl*pi/6.0_rl, gh_phi1 = 0.0_rl
 real(rl), parameter :: gh_hmax = 0.95_rl, gh_b = 5.0_rl
@@ -150,10 +146,6 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   real(rl):: q(7)
 #endif
 
-  ! Test S, vivid-napping-lighthouse: SBR wind override.  Constants sbr_tau,
-  ! sbr_alpha, sbr_u0 are now declared at module scope (top of file) so
-  ! set_pg_q7_analytic_exact can reuse them.
-
   ! set analytic vertical coordinates at t=0
   if(.not. initialized) then
     if (hybrid%masterthread) write(iulog,*) 'initializing dcmip2012 test 1-1: 3d deformational flow'
@@ -216,11 +208,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
         ! Mirror q1..q3 into q5..q7 so the partmcsl-advected physgrid tracers
         ! share the IC of the first three DCMIP dynamics-grid tracers.  Q4
         ! (SL, 1 - 0.3*(q1+q2+q3)) has no partmcsl companion.  qsize=7 (not 8)
-        ! to avoid the compose SL blocksize=8 auto-vectorization branch, which
-        ! biases the SL reference at qsize=8 via CEDR-clipped Q1 undershoots.
-        ! PARTMCSL_PERTURB_MIRROR (compile-time) breaks bit-identity via a 1e-5
-        ! relative perturbation.  PARTMCSL_CONST_MIRROR (compile-time) overrides
-        ! both and seeds q5..q7 with spatial constants.
+        ! to avoid the qsize = 8 bug.
 #if defined(PARTMCSL_CONST_MIRROR)
         q(5) = 0.1_rl
         q(6) = 0.3_rl
@@ -296,9 +284,7 @@ subroutine dcmip2012_test1_1(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
       call test1_advection_deformation(time,lon,lat,p,z,zcoords,u,v,w,T,phis,ps,rho,q(1),q(2),q(3),q(4))
 #ifdef PARTMCSL_SBR_DIAG
       !! DIAGNOSTIC ONLY (Test S, vivid-napping-lighthouse): zero w so
-      !! theta-l's set_state_i writes state%w_i = 0 (consistent with the
-      !! midpoint-loop solid-body override; see vivid-napping-lighthouse.md
-      !! Step 3 notes).
+      !! theta-l's set_state_i writes state%w_i = 0 
       w = 0.0_rl
 #endif
       call set_state_i(u,v,w,T,ps,phis,p,zi(k),g, i,j,k,elem(ie),n0,n1)
@@ -410,7 +396,7 @@ subroutine dcmip2012_test1_vt(elem,hybrid,hvcoord,nets,nete,time,n0,n1)
   !  parameter block near top of module for the flow definition and
   !  analytic trajectory used by the Python reference.
   !
-  !  qsize>=7 required: partmcsl transports slots 5..7 hard-coded
+  !  qsize_d>=7 required: partmcsl transports slots 5..7 hard-coded
   !  (pmcsl_nq=3 in partmcsl_advection.F90).  We seed the Gaussian in Q1
   !  (SL-transported reference) and mirror to Q5 (partmcsl-transported).
   !  Q2..Q4 / Q6..Q7 are inert padding.
@@ -1260,8 +1246,7 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
 #ifdef PARTMCSL_SBR_DIAG
   !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
   !! analytic SBR-rotated IC at FV centroids before the fv->gll projection.  See
-  !! set_pg_q7_analytic_exact below for the rotation-axis derivation.  Revert
-  !! before shipping.
+  !! set_pg_q7_analytic_exact below for the rotation-axis derivation.
   elapsed_time = real(tl%nstep, rl) * tstep
   call set_pg_q7_analytic_exact(elem, hvcoord, elapsed_time, nets, nete)
 #endif
@@ -1284,11 +1269,7 @@ subroutine dcmip2012_test1_1_phys_to_dyn(elem, hybrid, hvcoord, tl, nets, nete)
 
   ! Copy the partmcsl-advected slots back into state%Q so the NetCDF writer
   ! sees them.  Slots 1..4 are the dynamics-grid tracers; we leave those as
-  ! the SL transport produced them.  Then zero derived%FQ everywhere so
-  ! applyCAMforcing_tracers on the next subcycle does not fold this
-  ! output-time scratch tendency back into Qdp (see run notes: with the
-  ! default ftype=0, non-zero FQ silently poisons SL's Q1 slot; the
-  ! namelists also set ftype=-1 as a belt-and-braces guard).
+  ! the SL transport produced them.  
   do ie = nets, nete
     do qi = 5, qsize
       elem(ie)%state%Q(:,:,:,qi) = elem(ie)%derived%FQ(:,:,:,qi)
@@ -1402,21 +1383,11 @@ end subroutine partmcsl_report_mass
 subroutine set_pg_q7_analytic_exact(elem, hvcoord, time, nets, nete)
   !! DIAGNOSTIC ONLY (Q7 analytic-exact): overwrite pg_data%q(:,:,7,:) with the
   !! analytic SBR-rotated Q1 IC evaluated at FV cell centroids.  Q1 is
-  !! the Gaussian-hills tracer defined by q1_gaussian_hills; see comment
-  !! on the gh_* module parameters for the formula and rationale.  At the
-  !! next output snapshot, Q7 in the NetCDF is the analytic exact solution
-  !! and ||Q5 - Q7|| is partmcsl's true convergence error against that
-  !! analytic exact -- independent of the SL Q reference (which was shown
-  !! to be unreliable under the Test S SBR override; see
-  !! partmcsl_half_order_sbr_handoff.md §6a.3).
+  !! the Gaussian-hills tracer defined by q1_gaussian_hills.
   !!
   !! Rotation axis n = (-sin(sbr_alpha), 0, cos(sbr_alpha)), angular velocity
   !! omega = 2*pi / sbr_tau.  Derived by matching u,v in the Test S override at
-  !! dcmip2012_test1_1 (this file) to omega x r; see
-  !! partmcsl_half_order_sbr_handoff.md §6a.2 for the term-by-term derivation.
-  !! To rotate a point at (lat, lon) at time t BACK to its t=0 origin, apply
-  !! the Rodrigues formula with angle = -omega*t (both u_east and v_north
-  !! signs verified against the override formulae).
+  !! dcmip2012_test1_1 (this file) to omega x r.
   !!
   !! FV centroid (lat, lon) obtained from gfr_f_get_latlon.  pg_data%q at this
   !! call site is in gllfvremap's flat k ordering (k = nphys_side*(j-1) + i),
