@@ -111,6 +111,15 @@ jobs:
         id: run-test
         run: |
           mkdir -p inputdata scratch partmc
+          # EAM lists micro_p3_lookup_dir (atm/cam/physprops, no trailing slash) as input data,
+          # and CIME's check_input_data treats a path without a trailing slash as a file: it
+          # fetches the directory URL with wget and saves the response as a plain file named
+          # physprops, so the 16 files that belong inside it then fail with "Not a directory".
+          # With the directory already there, CIME skips that entry and fetches the files.
+          if [ -e inputdata/atm/cam/physprops ] && [ ! -d inputdata/atm/cam/physprops ]; then
+            rm -f inputdata/atm/cam/physprops
+          fi
+          mkdir -p inputdata/atm/cam/physprops
           find inputdata -type f | wc -l > inputdata.count
           sudo chown -R 1000:1000 E3SM inputdata scratch partmc
           # The machine and compiler go in the test name (TEST.GRID.COMPSET.MACHINE_COMPILER[.TESTMODS])
