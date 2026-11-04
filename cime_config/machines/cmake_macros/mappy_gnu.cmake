@@ -1,5 +1,12 @@
-set(PARTMC_PATH "/home/odiazib/v3/partmc/partmc/build")
-set(MOSAIC_PATH "/home/odiazib/v3/partmc/mosaic")
+# PartMC (-partmc): each user builds their own PartMC with this machine's modules and
+# exports PARTMC_PATH (its build directory) before building a case. Export MOSAIC_PATH too
+# only if that PartMC was built with ENABLE_MOSAIC=ON. See components/cmake/build_model.cmake.
+if (DEFINED ENV{PARTMC_PATH})
+  set(PARTMC_PATH "$ENV{PARTMC_PATH}")
+endif()
+if (DEFINED ENV{MOSAIC_PATH})
+  set(MOSAIC_PATH "$ENV{MOSAIC_PATH}")
+endif()
 if (COMP_NAME STREQUAL gptl)
   string(APPEND CPPDEFS " -DHAVE_SLASHPROC")
 endif()
