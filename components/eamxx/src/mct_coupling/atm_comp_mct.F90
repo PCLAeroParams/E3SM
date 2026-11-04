@@ -33,7 +33,7 @@ module atm_comp_mct
   ! Public interfaces
   !--------------------------------------------------------------------------
 
-#if defined(SCREAM_SYSTEM_WORKAROUND) && (SCREAM_SYSTEM_WORKAROUND == 1)
+#if defined(MPINIT_WORKAROUND) && (MPINIT_WORKAROUND == 1)
   public :: atm_init_hip_mct
 #endif
   public :: atm_init_mct
@@ -68,7 +68,7 @@ module atm_comp_mct
 CONTAINS
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-#if defined(SCREAM_SYSTEM_WORKAROUND) && (SCREAM_SYSTEM_WORKAROUND == 1)
+#if defined(MPINIT_WORKAROUND) && (MPINIT_WORKAROUND == 1)
   !===============================================================================
   subroutine atm_init_hip_mct()
     use eamxx_f2c_mod, only: scream_init_hip_atm
@@ -197,7 +197,7 @@ CONTAINS
     else if (trim(run_type) == trim(seq_infodata_start_type_cont) ) then
       run_type_c = 1
     else if (trim(run_type) == trim(seq_infodata_start_type_brnch) ) then
-      run_type_c = 1
+      run_type_c = 2
     else
       print *, "[eamxx] ERROR! Unsupported run type: "//trim(run_type)
       call mpi_abort(mpicom_atm,ierr,mpi_ierr)
@@ -617,6 +617,22 @@ CONTAINS
     ierr = iMOAB_DefineTagStorage(mphaid, tagname, tagtype, numco,  tagindex )
     if (ierr > 0 )  then
       print *, 'Error: fail to create  tags from seq_flds_dom_fields '
+      call mpi_abort(mpicom_atm,ierr,mpi_ierr)
+    endif
+
+
+    ! lat and lon are in data1 and data2
+    tagname = 'lat'//C_NULL_CHAR !
+    ierr = iMOAB_SetDoubleTagStorage(mphaid, tagname, num_local_cols , ent_type, data1)
+    if (ierr > 0 )  then
+      print *, 'Error: fail to set lat '
+      call mpi_abort(mpicom_atm,ierr,mpi_ierr)
+    endif
+
+    tagname = 'lon'//C_NULL_CHAR !
+    ierr = iMOAB_SetDoubleTagStorage(mphaid, tagname, num_local_cols , ent_type, data2)
+    if (ierr > 0 )  then
+      print *, 'Error: fail to set lon '
       call mpi_abort(mpicom_atm,ierr,mpi_ierr)
     endif
 

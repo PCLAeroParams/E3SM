@@ -2,10 +2,10 @@
 #define P3_MAIN_IMPL_PART_1_HPP
 
 #include "p3_functions.hpp" // for ETI only but harmless for GPU
-#include "physics/share/physics_functions.hpp" // also for ETI not on GPUs
-#include "physics/share/physics_saturation_impl.hpp"
+#include "share/physics/physics_functions.hpp" // also for ETI not on GPUs
+#include "share/physics/physics_saturation_impl.hpp"
 
-#include "ekat/kokkos/ekat_subview_utils.hpp"
+#include <ekat_subview_utils.hpp>
 
 namespace scream {
 namespace p3 {
@@ -81,6 +81,7 @@ void Functions<S,D>
   constexpr Scalar latice       = C::LatIce;
 
   const Scalar spa_ccn_to_nc_factor = runtime_options.spa_ccn_to_nc_factor;
+  const Scalar spa_ccn_to_nc_exponent = runtime_options.spa_ccn_to_nc_exponent;
 
   nucleationPossible = false;
   hydrometeorsPresent = false;
@@ -133,9 +134,18 @@ void Functions<S,D>
       // prescribe that value
 
       if(do_prescribed_CCN) {
+        // the SPA equation is of the form:
+        // Nc = max ( Nc , alpha * (nccn_prescribed / inv_cld_frac_l) ^ beta )
+        // where alpha and beta are the factor and exponent, respectively.
+        // This functional form accounts for "activation" of CCN into Nc
+        // and it can be made sublinear (e.g., 2000 and 0.55).
+        // First, scale by cld_frac_l to account for subgrid frac (if any)
+        auto nccn_scaled = nccn_prescribed(k) / inv_cld_frac_l(k);
+        // Second, apply the exponent
+        nccn_scaled = pow(nccn_scaled, spa_ccn_to_nc_exponent);
+        // Third, apply the factor, and retain the max
         nc(k).set(not_drymass,
-                  max(nc(k), spa_ccn_to_nc_factor * nccn_prescribed(k) /
-                                 inv_cld_frac_l(k)));
+                  max(nc(k), spa_ccn_to_nc_factor * nccn_scaled));
       } else if(predictNc) {
         nc(k).set(not_drymass, max(nc(k) + nc_nuceat_tend(k) * dt, 0.0));
       } else {

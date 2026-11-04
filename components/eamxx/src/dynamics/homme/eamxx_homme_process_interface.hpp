@@ -2,11 +2,10 @@
 #define SCREAM_HOMME_DYNAMICS_HPP
 
 #include "share/atm_process/atmosphere_process.hpp"
-#include "share/grid/remap/abstract_remapper.hpp"
+#include "share/remap/abstract_remapper.hpp"
 
-#include "ekat/ekat_parameter_list.hpp"
-#include "ekat/ekat_pack.hpp"
-#include "ekat/ekat_workspace.hpp"
+#include <ekat_parameter_list.hpp>
+#include <ekat_pack.hpp>
 
 #include <string>
 
@@ -25,8 +24,6 @@ class HommeDynamics : public AtmosphereProcess
 {
   // Define some types needed by class
   using Pack = ekat::Pack<Real, SCREAM_PACK_SIZE>;
-  using IntPack = ekat::Pack<int, SCREAM_PACK_SIZE>;
-  using Mask = ekat::Mask<SCREAM_PACK_SIZE>;
 
   using KT = KokkosTypes<DefaultDevice>;
   template<typename ScalarT>
@@ -39,9 +36,6 @@ class HommeDynamics : public AtmosphereProcess
   using uview_1d = ekat::Unmanaged<view_1d<ST>>;
   template<typename ST>
   using uview_2d = ekat::Unmanaged<view_2d<ST>>;
-
-  using WorkspaceMgr = ekat::WorkspaceManager<Pack, DefaultDevice>;
-  using Workspace = WorkspaceMgr::Workspace;
 
 public:
 
@@ -87,7 +81,7 @@ protected:
 
   // fv_phys refers to the horizontal finite volume (FV) grid for column
   // parameterizations nested inside the horizontal element grid. The grid names
-  // are "Physics PGN", where N in practice is 2. The name of each routine is
+  // are "physics_pgn", where N in practice is 2. The name of each routine is
   // fv_phys_X, where X is the name of an existing HommeDynamics routine. If
   // fv_phys is not being used, each of these routines does an immediate exit,
   // so it's OK to always call the routine.
@@ -98,7 +92,7 @@ protected:
   void fv_phys_set_grids();
   void fv_phys_requested_buffer_size_in_bytes() const;
   void fv_phys_initialize_impl();
-  void fv_phys_dyn_to_fv_phys(const bool restart = false);
+  void fv_phys_dyn_to_fv_phys(const util::TimeStamp& t, const bool restart = false);
   void fv_phys_pre_process();
   void fv_phys_post_process();
   // See [rrtmgp active gases] in eamxx_homme_fv_phys.cpp.
@@ -110,7 +104,7 @@ protected:
   void rayleigh_friction_apply (const Real dt) const;
 
 public:
-  // Fast boolean function returning whether Physics PGN is being used.
+  // Fast boolean function returning whether physics PGN is being used.
   bool fv_phys_active() const;
   struct GllFvRemapTmp;
   void remap_dyn_to_fv_phys(GllFvRemapTmp* t = nullptr) const;

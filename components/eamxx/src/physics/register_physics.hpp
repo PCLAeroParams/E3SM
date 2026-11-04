@@ -11,6 +11,9 @@
 #ifdef EAMXX_HAS_SHOC
 #include "physics/shoc/eamxx_shoc_process_interface.hpp"
 #endif
+#ifdef EAMXX_HAS_ZM
+#include "physics/zm/eamxx_zm_process_interface.hpp"
+#endif
 #ifdef EAMXX_HAS_CLD_FRACTION
 #include "physics/cld_fraction/eamxx_cld_fraction_process_interface.hpp"
 #endif
@@ -55,8 +58,11 @@ inline void register_physics () {
 #ifdef EAMXX_HAS_SHOC
   proc_factory.register_product("SHOC",&create_atmosphere_process<SHOCMacrophysics>);
 #endif
+#ifdef EAMXX_HAS_ZM
+  proc_factory.register_product("zm",&create_atmosphere_process<ZMDeepConvection>);
+#endif
 #ifdef EAMXX_HAS_CLD_FRACTION
-  proc_factory.register_product("CldFraction",&create_atmosphere_process<CldFraction>);
+  proc_factory.register_product("cld_fraction",&create_atmosphere_process<CldFraction>);
 #endif
 #ifdef EAMXX_HAS_RRTMGP
   proc_factory.register_product("RRTMGP",&create_atmosphere_process<RRTMGPRadiation>);

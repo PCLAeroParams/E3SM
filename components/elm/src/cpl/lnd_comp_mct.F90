@@ -13,7 +13,6 @@ module lnd_comp_mct
   use decompmod        , only : bounds_type, ldecomp
   use lnd_import_export
   use iso_c_binding
-  use elm_cpl_indices
   use esmf, only: ESMF_clock
 
 #ifdef HAVE_MOAB
@@ -66,10 +65,11 @@ contains
     !
     ! !USES:
     use abortutils       , only : endrun
+    use shr_log_mod      , only : errMsg => shr_log_errMsg
     use shr_kind_mod     , only : SHR_KIND_CL
     use elm_time_manager , only : get_nstep, get_step_size, set_timemgr_init, set_nextsw_cday
     use elm_initializeMod, only : initialize1, initialize2, initialize3
-    use elm_instMod      , only : lnd2atm_vars, lnd2glc_vars
+    use elm_instMod      , only : lnd2atm_vars, lnd2glc_vars, lnd2iac_vars
     use elm_instance     , only : elm_instance_init
     use elm_varctl       , only : finidat,single_column, elm_varctl_set, iulog, noland, fatmlndfrc, &
                                   scm_multcols, scm_nx, scm_ny
@@ -92,6 +92,7 @@ contains
     use seq_flds_mod     , only : seq_flds_x2l_fields, seq_flds_l2x_fields, lnd_rof_two_way
     use spmdMod          , only : masterproc, npes, spmd_init
     use elm_varctl       , only : nsrStartup, nsrContinue, nsrBranch, use_lnd_rof_two_way
+    use elm_varctl       , only:  elm_varctl_set_iac_flag
     use elm_cpl_indices  , only : elm_cpl_indices_set
     use perf_mod         , only : t_startf, t_stopf
     use mct_mod
@@ -117,6 +118,7 @@ contains
     integer  :: g,i,j                                ! indices
     integer  :: dtime_sync                           ! coupling time-step from the input synchronization clock
     integer  :: dtime_elm                            ! elm time-step
+    logical  :: iac_flag                             ! Flag if IAC is present
     logical  :: exists                               ! true if file exists
     logical  :: verbose_taskmap_output               ! true then use verbose task-to-node mapping format
     logical  :: atm_aero                             ! Flag if aerosol data sent from atm model
@@ -149,10 +151,8 @@ contains
     character(len=*),  parameter :: format = "('("//trim(sub)//") :',A)"
 
 #ifdef HAVE_MOAB
-    character*100 outfile, wopts, localmeshfile
+    character*100 outfile, wopts
     integer :: ierr, nsend,n
-    character(len=SHR_KIND_CL) :: atm_gnam          ! atm grid
-    character(len=SHR_KIND_CL) :: lnd_gnam          ! lnd grid
 #endif
     !-----------------------------------------------------------------------
 
@@ -170,6 +170,10 @@ contains
     mpicom_lnd_moab = mpicom_lnd ! just store it now, for later use
     call shr_mpi_commrank( mpicom_lnd_moab, rank2 ) ! this will be used for differences between mct and moab tags
 #endif 
+
+    ! Determine if iac is active, and set flag
+    call seq_infodata_GetData(infodata, iac_present=iac_flag)
+    call elm_varctl_set_iac_flag(iac_flag)
 
     call elm_cpl_indices_set()
 
@@ -285,7 +289,7 @@ contains
                         hostname_in=hostname, username_in=username)
 
     use_lnd_rof_two_way = lnd_rof_two_way
-    
+
     ! Read namelist, grid and surface data
 
     call initialize1( )
@@ -316,6 +320,9 @@ contains
 
     call lnd_domain_mct( bounds, lsz, gsMap_lnd, dom_l )
 #ifdef HAVE_MOAB
+    if (iac_present) then
+      call endrun(msg=sub//'ERROR: EHC not supported with MOAB yet: '//errMsg(__FILE__, __LINE__))
+    endif
     call init_moab_land(bounds, LNDID)
 #endif
     call mct_aVect_init(x2l_l, rList=seq_flds_x2l_fields, lsize=lsz)
@@ -357,9 +364,9 @@ contains
     end if
 
     ! Create land export state 
-
-    if (atm_present) then 
-      call lnd_export(bounds, lnd2atm_vars, lnd2glc_vars, l2x_l%rattr)
+    ! Note that lnd2iac_vars is not set yet for restart
+    if (atm_present .or. iac_present) then 
+      call lnd_export(bounds, lnd2atm_vars, lnd2glc_vars, lnd2iac_vars, l2x_l%rattr)
 #ifdef HAVE_MOAB
 !     Also send data through the MOAB path in driver-moab
       call lnd_export_moab(EClock, bounds, lnd2atm_vars, lnd2glc_vars) ! it is private here
@@ -406,9 +413,11 @@ contains
     !     write out the mesh file to disk, in parallel
     outfile = 'wholeLnd.h5m'//C_NULL_CHAR
     wopts   = 'PARALLEL=WRITE_PART'//C_NULL_CHAR
-    ierr = iMOAB_WriteMesh(mlnid, outfile, wopts)
-    if (ierr > 0 )  &
-      call endrun('Error: fail to write the land mesh file')
+    if (mlnid >= 0) then
+       ierr = iMOAB_WriteMesh(mlnid, outfile, wopts)
+       if (ierr > 0 )  &
+         call endrun('Error: fail to write the land mesh file')
+    endif
 #endif
 
   end subroutine lnd_init_mct
@@ -423,6 +432,7 @@ contains
     ! !USES:
     use shr_kind_mod    ,  only : r8 => shr_kind_r8
     use elm_instMod     , only : lnd2atm_vars, atm2lnd_vars, lnd2glc_vars, glc2lnd_vars
+    use elm_instMod     , only : lnd2iac_vars, iac2lnd_vars
     use elm_driver      ,  only : elm_drv
     use elm_time_manager,  only : get_curr_date, get_nstep, get_curr_calday, get_step_size
     use elm_time_manager,  only : advance_timestep, set_nextsw_cday,update_rad_dtime
@@ -542,10 +552,9 @@ contains
     ! Map to elm (only when state and/or fluxes need to be updated)
 
     call t_startf ('lc_lnd_import')
-    call lnd_import( bounds, x2l_l%rattr, atm2lnd_vars, glc2lnd_vars, lnd2atm_vars)
+    call lnd_import( bounds, x2l_l%rattr, atm2lnd_vars, glc2lnd_vars, lnd2atm_vars, iac2lnd_vars)
     
 #ifdef HAVE_MOAB
-    ! first call moab import 
 #ifdef MOABCOMP
     ! loop over all fields in seq_flds_x2l_fields
     call mct_list_init(temp_list ,seq_flds_x2l_fields)
@@ -556,13 +565,13 @@ contains
       call mct_list_get(mctOStr,index_list,temp_list)
       mct_field = mct_string_toChar(mctOStr)
       tagname= trim(mct_field)//C_NULL_CHAR
-      modelStr = 'lnd run'
+      modelStr = 'lnd run import'
       call seq_comm_compare_mb_mct(modelStr, mpicom_lnd_moab, x2l_l, mct_field,  mlnid, tagname, ent_type, difference)
     enddo
     call mct_list_clean(temp_list)
-
 #endif
 ! calling MOAB's import last means this is what the model will use.
+! also, call after comparisons are made, so we can see the eventual differences
     call lnd_import_moab( EClock, bounds, atm2lnd_vars, glc2lnd_vars)
 #endif
 
@@ -623,7 +632,7 @@ contains
 
 #ifndef CPL_BYPASS       
        call t_startf ('lc_lnd_export')
-       call lnd_export(bounds, lnd2atm_vars, lnd2glc_vars, l2x_l%rattr)
+       call lnd_export(bounds, lnd2atm_vars, lnd2glc_vars, lnd2iac_vars, l2x_l%rattr)
 #ifdef HAVE_MOAB
        call lnd_export_moab(EClock, bounds, lnd2atm_vars, lnd2glc_vars) ! it is private here
 #endif
@@ -865,11 +874,9 @@ contains
     real(r8)   :: latv, lonv
     integer   dims, i, iv, ilat, ilon, igdx, ierr, tagindex
     integer tagtype, numco, ent_type, mbtype, block_ID
-    character*100 outfile, wopts, localmeshfile
+    character*100 outfile, wopts
     character(CXX) ::  tagname ! hold all fields
     character*32  appname
-
-    integer, allocatable :: moabconn(:) ! will have the connectivity in terms of local index in verts
 
     ! define a MOAB app for ELM
     appname="LNDMB"//C_NULL_CHAR
@@ -1076,6 +1083,7 @@ contains
        l2x_lm(i,index_l2x_Sl_tref)     =  lnd2atm_vars%t_ref2m_grc(g)
        l2x_lm(i,index_l2x_Sl_qref)     =  lnd2atm_vars%q_ref2m_grc(g)
        l2x_lm(i,index_l2x_Sl_u10)      =  lnd2atm_vars%u_ref10m_grc(g)
+       l2x_lm(i,index_l2x_Sl_u10withgusts)=lnd2atm_vars%u_ref10m_with_gusts_grc(g) ! see commit 5813d4103
        l2x_lm(i,index_l2x_Fall_taux)   = -lnd2atm_vars%taux_grc(g)
        l2x_lm(i,index_l2x_Fall_tauy)   = -lnd2atm_vars%tauy_grc(g)
        l2x_lm(i,index_l2x_Fall_lat)    = -lnd2atm_vars%eflx_lh_tot_grc(g)

@@ -8,7 +8,7 @@ time_stepping:
   run_t0: ${RUN_T0}  # YYYY-MM-DD-XXXXX
   number_of_steps: ${NUM_STEPS}
 
-atmosphere_processes:
+eamxx:
   atm_procs_list: [mam4_aero_microphys]
   mam4_aero_microphys:
    mam4_do_cond: true
@@ -20,8 +20,8 @@ atmosphere_processes:
    mam4_o3_lbl: 4
    mam4_psc_T : 193.0
    mam4_linoz_ymd : 20100101
-   mam4_linoz_file_name : ${SCREAM_DATA_DIR}/mam4xx/linoz/ne2np4/linoz1850-2015_2010JPL_CMIP6_10deg_58km_ne2np4_c20240724.nc
-   mam4_oxid_file_name : ${SCREAM_DATA_DIR}/mam4xx/invariants/ne2np4/oxid_ne2np4_L26_1850-2015_c20240827.nc
+   mam4_linoz_file_name : ${SCREAM_DATA_DIR}/mam4xx/linoz/ne2np4/linoz2010_2010JPL_CMIP6_10deg_58km_ne2np4_c20250923.nc
+   mam4_oxid_file_name : ${SCREAM_DATA_DIR}/mam4xx/invariants/ne2np4/oxid_ne2np4_L26_2015_c20250923.nc
    mam4_oxid_ymd : 20150101
    mam4_linoz_chlorine_file : ${SCREAM_DATA_DIR}/mam4xx/linoz/Linoz_Chlorine_Loading_CMIP6_0003-2017_c20171114.nc
    mam4_chlorine_loading_ymd : 20100101
@@ -38,19 +38,20 @@ atmosphere_processes:
    mam4_num_a4_elevated_emiss_file_name : ${SCREAM_DATA_DIR}/mam4xx/emissions/ne2np4/elevated/cmip6_mam4_num_a4_elev_ne2np4_2010_clim_c20240823.nc
    mam4_soag_elevated_emiss_file_name : ${SCREAM_DATA_DIR}/mam4xx/emissions/ne2np4/elevated/cmip6_mam4_soag_elev_ne2np4_2010_clim_c20240823.nc
    mam4_season_wes_file : ${SCREAM_DATA_DIR}/mam4xx/drydep/season_wes.nc
+   create_fields_interval_checks: true
 grids_manager:
-  Type: Mesh Free
+  type: mesh_free
   geo_data_source: IC_FILE
-  grids_names: [Physics GLL]
-  Physics GLL:
+  grids_names: [physics_gll]
+  physics_gll:
     type: point_grid
-    aliases: [Physics]
+    aliases: [physics]
     number_of_global_columns:   218
     number_of_vertical_levels:  72
 
 initial_conditions:
   # The name of the file containing the initial conditions for this test.
-  Filename: ${SCREAM_DATA_DIR}/init/${EAMxx_tests_IC_FILE_MAM4xx_72lev}
+  filename: ${SCREAM_DATA_DIR}/init/${EAMxx_tests_IC_FILE_MAM4xx_72lev}
   topography_filename: ${TOPO_DATA_DIR}/${EAMxx_tests_TOPO_FILE}
   phis : 1.0
   pbl_height: 1.0
@@ -59,7 +60,7 @@ initial_conditions:
   dgnumwet: [2.367209731605067E-007, 6.780643470563889E-008, 3.028011448344027E-006, 1.000000096285154E-007]
   wetdens: [1038.67760516297, 1046.20002003441, 1031.74623165457, 1086.79731859184]
   nevapr: 0.0
-  precip_total_tend: 0.0  
+  precip_total_tend: 0.0
   surf_radiative_T: 288.0
   ps: 105000.0
   horiz_winds: [-0.24988988196194634E+000, -0.23959782871450760E+000]
@@ -70,6 +71,6 @@ initial_conditions:
   SW_flux_dn: 500.0
   constituent_fluxes: 0.0
 # The parameters for I/O control
-Scorpio:
+scorpio:
   output_yaml_files: ["output.yaml"]
 ...

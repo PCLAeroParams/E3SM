@@ -6,8 +6,8 @@
 #include "share/atm_process/atmosphere_diagnostic.hpp"
 #include "share/grid/abstract_grid.hpp"
 
-#include <ekat/util/ekat_string_utils.hpp>
-#include <ekat/mpi/ekat_comm.hpp>
+#include <ekat_string_utils.hpp>
+#include <ekat_comm.hpp>
 
 #include <string>
 #include <memory>
@@ -72,6 +72,7 @@ std::string find_filename_in_rpointer (
     const bool model_restart,
     const ekat::Comm& comm,
     const util::TimeStamp& run_t0,
+    const bool allow_not_found = false,
     const OutputAvgType avg_type = OutputAvgType::Instant,
     const IOControl& control = {});
 
@@ -89,4 +90,5 @@ create_diagnostic (const std::string& diag_name,
                    const std::shared_ptr<const AbstractGrid>& grid);
 
 } // namespace scream
+
 #endif // SCREAM_IO_UTILS_HPP

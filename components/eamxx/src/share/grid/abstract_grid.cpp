@@ -2,7 +2,7 @@
 
 #include "share/field/field_utils.hpp"
 
-#include <ekat/ekat_assert.hpp>
+#include <ekat_assert.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -11,17 +11,13 @@
 namespace scream
 {
 // Constructor(s) & Destructor
-AbstractGrid::
-AbstractGrid (const std::string& name,
-              const GridType type,
-              const int num_local_dofs,
-              const int num_vertical_lev,
-              const ekat::Comm& comm)
- : m_type (type)
- , m_name (name)
- , m_num_local_dofs (num_local_dofs)
- , m_num_vert_levs  (num_vertical_lev)
- , m_comm (comm)
+AbstractGrid::AbstractGrid(const std::string &name, const GridType type, const int num_local_dofs,
+                           const int num_vertical_lev, const ekat::Comm &comm)
+ : m_type(type),
+   m_name(name),
+   m_num_local_dofs(num_local_dofs),
+   m_num_vert_levs(num_vertical_lev),
+   m_comm(comm)
 {
   // Sanity checks
   EKAT_REQUIRE_MSG (m_num_local_dofs>=0, "Error! Number of local dofs must be non-negative.\n");
@@ -81,7 +77,7 @@ get_vertical_layout (const bool midpoints,
 {
   using namespace ShortFieldTagsNames;
   auto l = get_vertical_layout(midpoints);
-  l.append_dim(CMP,vector_dim,vec_dim_name);
+  l.prepend_dim(CMP,vector_dim,vec_dim_name);
   return l;
 }
 
@@ -113,6 +109,67 @@ AbstractGrid::get_3d_tensor_layout (const bool midpoints, const std::vector<int>
   using namespace ShortFieldTagsNames;
   std::vector<std::string> names (cmp_dims.size(),e2str(CMP));
   return get_3d_tensor_layout(midpoints,cmp_dims,names);
+}
+
+FieldLayout
+AbstractGrid::equivalent_layout (const FieldLayout& template_layout) const
+{
+  using namespace ShortFieldTagsNames;
+
+  FieldLayout ret_layout = FieldLayout::invalid();
+
+  const bool midpoints   = template_layout.has_tag(LEV);
+  const auto names       = template_layout.names();
+  const auto vec_cmp     = template_layout.is_vector_layout() ?
+                           template_layout.get_vector_component_idx() : -1;
+  const auto vec_dim     = template_layout.is_vector_layout() ?
+                           template_layout.get_vector_dim() : -1;
+  const auto tensor_dims = template_layout.is_tensor_layout() ?
+                           template_layout.get_tensor_dims() : std::vector<int>{};
+  std::vector<std::string> tdims_names;
+  if (template_layout.is_tensor_layout()) {
+    for (auto idx : template_layout.get_tensor_components_ids()) {
+      tdims_names.push_back(names[idx]);
+    }
+  }
+
+  switch (template_layout.type()) {
+    case LayoutType::Scalar0D:
+    case LayoutType::Vector0D:
+    case LayoutType::Tensor0D:
+      // 0d layouts are the same on all grids
+      ret_layout = template_layout;
+      break;
+    case LayoutType::Scalar1D:
+      ret_layout = get_vertical_layout(midpoints);
+      break;
+    case LayoutType::Vector1D:
+      ret_layout = get_vertical_layout(midpoints, vec_dim, names[vec_cmp]);
+      break;
+    case LayoutType::Scalar2D:
+      ret_layout = get_2d_scalar_layout();
+      break;
+    case LayoutType::Vector2D:
+      ret_layout = get_2d_vector_layout(vec_dim, names[vec_cmp]);
+      break;
+    case LayoutType::Tensor2D:
+      ret_layout = get_2d_tensor_layout(tensor_dims, tdims_names);
+      break;
+    case LayoutType::Scalar3D:
+      ret_layout = get_3d_scalar_layout(midpoints);
+      break;
+    case LayoutType::Vector3D:
+      ret_layout = get_3d_vector_layout(midpoints, vec_dim, names[vec_cmp]);
+      break;
+    case LayoutType::Tensor3D:
+      ret_layout = get_3d_tensor_layout(midpoints, tensor_dims, tdims_names);
+      break;
+    default:
+      EKAT_ERROR_MSG("Error! Unknown FieldLayout type.\n");
+      break;
+  }
+
+  return ret_layout;
 }
 
 bool AbstractGrid::is_unique () const {
@@ -196,9 +253,10 @@ is_valid_layout (const FieldLayout& layout) const
     case LayoutType::Tensor0D:
       // 0d quantities are always ok
       return true;
-    case LayoutType::Scalar1D: [[fallthrough]];
-    case LayoutType::Vector1D:
+    case LayoutType::Scalar1D:
       return layout.congruent(get_vertical_layout(midpoints));
+    case LayoutType::Vector1D:
+        return layout.congruent(get_vertical_layout(midpoints,layout.get_vector_dim()));
     case LayoutType::Scalar2D:
       return layout.congruent(get_2d_scalar_layout());
     case LayoutType::Vector2D:
@@ -404,6 +462,31 @@ AbstractGrid::get_unique_gids () const
   }
 
   return unique_dofs;
+}
+
+std::shared_ptr<AbstractGrid>
+AbstractGrid::get_aux_grid(const std::string& data_layout) const
+{
+  if (m_aux_grids.count(data_layout)==1) {
+    return m_aux_grids.at(data_layout);
+  } else {
+    return nullptr;
+  }
+}
+
+void AbstractGrid::
+set_aux_grid (const std::string& data_layout, const std::shared_ptr<AbstractGrid>& aux_grid)
+{
+  m_aux_grids[data_layout] = aux_grid;
+}
+
+std::vector<std::string> AbstractGrid::get_aux_grids_keys () const
+{
+  std::vector<std::string> keys;
+  for (const auto& it : m_aux_grids) {
+    keys.push_back(it.first);
+  }
+  return keys;
 }
 
 std::vector<int> AbstractGrid::

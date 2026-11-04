@@ -6,9 +6,8 @@ namespace scream
 
 Field::
 Field (const identifier_type& id)
- : m_header (create_header(id))
 {
-  // Nothing to do here
+  m_header = std::make_shared<FieldHeader>(id);
 }
 
 Field
@@ -34,10 +33,15 @@ Field::alias (const std::string& name) const {
 
 Field
 Field::clone(const std::string& name) const {
+  return clone(name, get_header().get_identifier().get_grid_name());
+}
+
+Field
+Field::clone(const std::string& name, const std::string& grid_name) const {
   // Create new field
   const auto& my_fid = get_header().get_identifier();
   FieldIdentifier fid(name,my_fid.get_layout(),my_fid.get_units(),
-                      my_fid.get_grid_name(),my_fid.data_type());
+                      grid_name,my_fid.data_type());
   Field f(fid);
 
   // Ensure alloc props match
@@ -57,65 +61,6 @@ Field::clone(const std::string& name) const {
   f.deep_copy<Host>(*this);
 
   return f;
-}
-
-void Field::
-sync_to_host (const bool fence) const {
-  // Sanity check
-  EKAT_REQUIRE_MSG (is_allocated(),
-      "Error! Input field must be allocated in order to sync host and device views.\n");
-
-  // Check for early return if Host and Device are the same memory space
-  if (host_and_device_share_memory_space()) return;
-
-  // We allow sync_to_host for constant fields. Temporarily disable read only flag.
-  const bool original_read_only = m_is_read_only;
-  m_is_read_only = false;
-
-  switch (data_type()) {
-    case DataType::IntType:
-      sync_views_impl<int, Device, Host>();
-      break;
-    case DataType::FloatType:
-      sync_views_impl<float, Device, Host>();
-      break;
-    case DataType::DoubleType:
-      sync_views_impl<double, Device, Host>();
-      break;
-    default:
-      EKAT_ERROR_MSG("Error! Unrecognized field data type in Field::sync_to_host.\n");
-  }
-
-  if (fence) Kokkos::fence();
-
-  // Return field to read-only state
-  m_is_read_only = original_read_only;
-}
-
-void Field::
-sync_to_dev (const bool fence) const {
-  // Sanity check
-  EKAT_REQUIRE_MSG (is_allocated(),
-      "Error! Input field must be allocated in order to sync host and device views.\n");
-
-  // Check for early return if Host and Device are the same memory space
-  if (host_and_device_share_memory_space()) return;
-
-  switch (data_type()) {
-    case DataType::IntType:
-      sync_views_impl<int, Host, Device>();
-      break;
-    case DataType::FloatType:
-      sync_views_impl<float, Host, Device>();
-      break;
-    case DataType::DoubleType:
-      sync_views_impl<double, Host, Device>();
-      break;
-    default:
-      EKAT_ERROR_MSG("Error! Unrecognized field data type in Field::sync_to_dev.\n");
-  }
-
-  if (fence) Kokkos::fence();
 }
 
 Field Field::
@@ -186,6 +131,7 @@ Field Field::subfield(const std::string& sf_name,
 
   auto sf_layout = lt.clone();
   sf_layout.reset_dim(idim, index_end - index_beg);
+
   // Create identifier for subfield
   FieldIdentifier sf_id(sf_name, sf_layout, sf_units, id.get_grid_name(), id.data_type());
 
@@ -220,7 +166,7 @@ Field Field::subfield(const int idim, const int index_beg,
 }
 
 Field Field::
-get_component (const int i, const bool dynamic) {
+get_component (const int i, const bool dynamic) const {
   const auto& layout = get_header().get_identifier().get_layout();
   const auto& fname = get_header().get_identifier().name();
   EKAT_REQUIRE_MSG (layout.is_vector_layout(),
@@ -236,7 +182,7 @@ get_component (const int i, const bool dynamic) {
   return subfield (fname + "_" + std::to_string(i),idim,i,dynamic);
 }
 
-Field Field::get_components(const int beg, const int end) {
+Field Field::get_components(const int beg, const int end) const {
   const auto& layout = get_header().get_identifier().get_layout();
   const auto& fname = get_header().get_identifier().name();
   EKAT_REQUIRE_MSG(layout.is_vector_layout(),

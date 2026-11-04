@@ -1,5 +1,5 @@
 module cam_cpl_indices
-  
+
   use seq_flds_mod
   use mct_mod
   use seq_drydep_mod, only: drydep_fields_token, lnd_drydep
@@ -16,6 +16,7 @@ module cam_cpl_indices
   integer :: index_a2x_Sa_wsresp       ! first order response of wind to stress
   integer :: index_a2x_Sa_tau_est      ! estimated stress in equilibrium with ubot/vbot
   integer :: index_a2x_Sa_ugust        ! magnitude of gustiness at surface
+  integer :: index_a2x_Sa_topo         ! topography
   integer :: index_a2x_Sa_tbot         ! bottom atm level temp
   integer :: index_a2x_Sa_ptem         ! bottom atm level pot temp
   integer :: index_a2x_Sa_shum         ! bottom atm level spec hum
@@ -50,50 +51,63 @@ module cam_cpl_indices
   integer :: index_a2x_Sa_co2prog      ! bottom atm level prognostic co2
   integer :: index_a2x_Sa_co2diag      ! bottom atm level diagnostic co2
 
-  integer :: index_x2a_Sx_t            ! surface temperature             
-  integer :: index_x2a_So_t            ! sea surface temperature         
-  integer :: index_x2a_Sf_lfrac        ! surface land fraction           
-  integer :: index_x2a_Sf_ifrac        ! surface ice fraction            
-  integer :: index_x2a_Sf_ofrac        ! surface ocn fraction            
-  integer :: index_x2a_Sx_tref         ! 2m reference temperature        
-  integer :: index_x2a_Sx_qref         ! 2m reference specific humidity  
-  integer :: index_x2a_Sx_avsdr        ! albedo, visible, direct         
-  integer :: index_x2a_Sx_anidr        ! albedo, near-ir, direct         
-  integer :: index_x2a_Sx_avsdf        ! albedo, visible, diffuse        
-  integer :: index_x2a_Sx_anidf        ! albedo, near-ir, diffuse        
+  integer :: index_x2a_Sx_t            ! surface temperature
+  integer :: index_x2a_So_t            ! sea surface temperature
+  integer :: index_x2a_Sf_lfrac        ! surface land fraction
+  integer :: index_x2a_Sf_ifrac        ! surface ice fraction
+  integer :: index_x2a_Sf_ofrac        ! surface ocn fraction
+  integer :: index_x2a_Sf_zfrac        ! surface iac fraction            
+  integer :: index_x2a_Sx_tref         ! 2m reference temperature
+  integer :: index_x2a_Sx_qref         ! 2m reference specific humidity
+  integer :: index_x2a_Sx_avsdr        ! albedo, visible, direct
+  integer :: index_x2a_Sx_anidr        ! albedo, near-ir, direct
+  integer :: index_x2a_Sx_avsdf        ! albedo, visible, diffuse
+  integer :: index_x2a_Sx_anidf        ! albedo, near-ir, diffuse
   integer :: index_x2a_Sl_snowh        ! surface snow depth over land
   integer :: index_x2a_Si_snowh        ! surface snow depth over ice
   integer :: index_x2a_Sl_fv           ! friction velocity
   integer :: index_x2a_Sl_ram1         ! aerodynamical resistance
   integer :: index_x2a_Sl_soilw        ! volumetric soil water
-  integer :: index_x2a_Faxx_taux       ! wind stress, zonal              
-  integer :: index_x2a_Faxx_tauy       ! wind stress, meridional         
-  integer :: index_x2a_Faxx_lat        ! latent          heat flux       
-  integer :: index_x2a_Faxx_sen        ! sensible        heat flux       
-  integer :: index_x2a_Faxx_lwup       ! upward longwave heat flux       
-  integer :: index_x2a_Faxx_evap       ! evaporation    water flux       
-  integer :: index_x2a_Fall_flxdst1    ! dust flux size bin 1    
-  integer :: index_x2a_Fall_flxdst2    ! dust flux size bin 2    
-  integer :: index_x2a_Fall_flxdst3    ! dust flux size bin 3    
+  integer :: index_x2a_Faxx_taux       ! wind stress, zonal
+  integer :: index_x2a_Faxx_tauy       ! wind stress, meridional
+  integer :: index_x2a_Faxx_lat        ! latent          heat flux
+  integer :: index_x2a_Faxx_sen        ! sensible        heat flux
+  integer :: index_x2a_Faxx_lwup       ! upward longwave heat flux
+  integer :: index_x2a_Faxx_evap       ! evaporation    water flux
+  integer :: index_x2a_Fall_flxdst1    ! dust flux size bin 1
+  integer :: index_x2a_Fall_flxdst2    ! dust flux size bin 2
+  integer :: index_x2a_Fall_flxdst3    ! dust flux size bin 3
   integer :: index_x2a_Fall_flxdst4    ! dust flux size bin 4
-  integer :: index_x2a_Fall_flxvoc     ! MEGAN emissions fluxes   
-  integer :: index_x2a_Fall_fco2_lnd   ! co2 flux from land   
-  integer :: index_x2a_Faoo_fco2_ocn   ! co2 flux from ocean  
+  integer :: index_x2a_Fall_flxvoc     ! MEGAN emissions fluxes
+  integer :: index_x2a_Fall_fco2_lnd   ! co2 flux from land
+  integer :: index_x2a_Faoo_fco2_ocn   ! co2 flux from ocean
   integer :: index_x2a_Faoo_fdms_ocn   ! dms flux from ocean
-  integer :: index_x2a_Faoo_h2otemp    ! water temperature heat flux from ocean  
+  integer :: index_x2a_Faoo_h2otemp    ! water temperature heat flux from ocean
   integer :: index_x2a_So_ustar	       ! surface friction velocity in ocean
-  integer :: index_x2a_So_re           ! square of atm/ocn exch. coeff 
-  integer :: index_x2a_So_ssq          ! surface saturation specific humidity in ocean 
+  integer :: index_x2a_So_re           ! square of atm/ocn exch. coeff
+  integer :: index_x2a_So_ssq          ! surface saturation specific humidity in ocean
   integer :: index_x2a_Sl_ddvel        ! dry deposition velocities from land
   integer :: index_x2a_Sx_u10          ! 10m wind
   integer :: index_x2a_Sx_u10withgusts ! 10m wind with gusts
+
+  ! Iac co2 fields - sfc, two air levels, monthly
+  ! integer :: index_x2a_Fazz_fco2_iac   ! co2 flux from iac component
+  integer, pointer, public ::index_x2a_Fazz_co2sfc_iac(:)
+  integer, pointer, public ::index_x2a_Fazz_co2airlo_iac(:)
+  integer, pointer, public ::index_x2a_Fazz_co2airhi_iac(:)
 
 contains
 
   subroutine cam_cpl_indices_set( )
 
+    use phys_control  , only: iac_present
+
     type(mct_aVect) :: a2x      ! temporary
     type(mct_aVect) :: x2a      ! temporary
+
+    integer, parameter :: tot_mon_in_year = 12
+    integer :: imon, ier
+    character(len=2) :: monstr ! month string
 
     ! Determine attribute vector indices
 
@@ -110,17 +124,18 @@ contains
     index_x2a_So_t          = mct_avect_indexra(x2a,'So_t')
     index_x2a_Sl_snowh      = mct_avect_indexra(x2a,'Sl_snowh')
     index_x2a_Si_snowh      = mct_avect_indexra(x2a,'Si_snowh')
-    
+
     index_x2a_Sl_fv         = mct_avect_indexra(x2a,'Sl_fv')
     index_x2a_Sl_ram1       = mct_avect_indexra(x2a,'Sl_ram1')
     index_x2a_Sl_soilw      = mct_avect_indexra(x2a,'Sl_soilw',perrWith='quiet')
-    
+
     index_x2a_Sx_tref       = mct_avect_indexra(x2a,'Sx_tref')
     index_x2a_Sx_qref       = mct_avect_indexra(x2a,'Sx_qref')
 
     index_x2a_Sf_ifrac      = mct_avect_indexra(x2a,'Sf_ifrac')
     index_x2a_Sf_ofrac      = mct_avect_indexra(x2a,'Sf_ofrac')
     index_x2a_Sf_lfrac      = mct_avect_indexra(x2a,'Sf_lfrac')
+    if (iac_present)index_x2a_Sf_zfrac      = mct_avect_indexra(x2a,'Sf_zfrac')
 
     index_x2a_Sx_u10        = mct_avect_indexra(x2a,'Sx_u10')
     index_x2a_Sx_u10withgusts = mct_avect_indexra(x2a,'Sx_u10withgusts')
@@ -143,6 +158,30 @@ contains
     index_x2a_Faoo_fco2_ocn = mct_avect_indexra(x2a,'Faoo_fco2_ocn',perrWith='quiet')
     index_x2a_Faoo_fdms_ocn = mct_avect_indexra(x2a,'Faoo_fdms_ocn',perrWith='quiet')
     index_x2a_Faoo_h2otemp  = mct_avect_indexra(x2a,'Faoo_h2otemp',perrWith='quiet')
+
+    ! iac coupled indeces are monthly
+    allocate(index_x2a_Fazz_co2sfc_iac(12), stat=ier)
+    allocate(index_x2a_Fazz_co2airlo_iac(12), stat=ier)
+    allocate(index_x2a_Fazz_co2airhi_iac(12), stat=ier)
+
+      if (iac_present) then
+         !if IAC is active, associate monthly index for fetching values for each month
+         do imon = 1, tot_mon_in_year
+            write(monstr,'(I0)') imon
+            monstr=trim(monstr)
+            index_x2a_Fazz_co2sfc_iac(imon) = &
+            mct_avect_indexra(x2a,trim('Fazz_co2sfc_mon' // monstr))
+            index_x2a_Fazz_co2airlo_iac(imon) = &
+            mct_avect_indexra(x2a,trim('Fazz_co2airlo_mon' // monstr))
+            index_x2a_Fazz_co2airhi_iac(imon) = &
+            mct_avect_indexra(x2a,trim('Fazz_co2airhi_mon' // monstr))
+         end do
+      else
+         !if IAC is not active, assign zeros for the indices
+         index_x2a_Fazz_co2sfc_iac(:)   = 0
+         index_x2a_Fazz_co2airlo_iac(:) = 0
+         index_x2a_Fazz_co2airhi_iac(:) = 0
+      endif
 
     if (shr_megan_mechcomps_n>0) then
        index_x2a_Fall_flxvoc = mct_avect_indexra(x2a,trim(shr_megan_fields_token))

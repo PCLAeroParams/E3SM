@@ -47,19 +47,18 @@ A minimal example:
 ```shell
 ./atmchange output_yaml_files=eamxx_daily_output.yaml
 cat << EOF > eamxx_cosp_daily_output.yaml
-Averaging Type: Average
-Fields:
-  Physics PG2:
-    Field Names:
+averaging_type: average
+fields:
+  physics_pg2:
+    field_names:
     - isccp_cldtot
     - isccp_ctptau
     - modis_ctptau
     - misr_cthtau
-    - cosp_sunlit
-Max Snapshots Per File: 1
+max_snapshots_per_file: 1
 filename_prefix: eamxx
 output_control:
-  Frequency: 1
+  frequency: 1
   frequency_units: ndays
 EOF
 ```
@@ -76,19 +75,3 @@ The following output fields are available:
       - MODIS-simulated cloud top pressure/optical depth joint histogram
 - `misr_cthtau`
       - MISR-simulated cloud top height/optical depth joint histogram
-- `cosp_sunlit`
-      - sunlit flag aggregated at COSP frequency for renormalizing daytime averages
-
-ISCCP, MODIS, and MISR outputs are valid only for daytime/sunlit columns
-(to be consistent with available satellite retrievals).
-In order to aggregate only daytime columns in time averages, these outputs are
-multiplied by the sunlit flag (0 or 1) at each COSP calculation time.
-Time averages of these quantities are then aggregated, along with the COSP
-sunlit flag each time COSP is called.
-In order to back out the daytime-only time averages from the outputs,
-one needs to divide the output fields by `cosp_sunlit`.
-E.g.,
-
-```shell
-isccp_ctptau = mean(isccp_ctptau) / mean(cosp_sunlit)
-```

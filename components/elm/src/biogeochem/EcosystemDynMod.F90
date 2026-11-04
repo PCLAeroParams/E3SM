@@ -7,7 +7,7 @@ module EcosystemDynMod
   use dynSubgridControlMod, only : get_do_harvest
   use shr_kind_mod        , only : r8 => shr_kind_r8
   use shr_sys_mod         , only : shr_sys_flush
-  use elm_varctl          , only : use_c13, use_c14, use_fates, use_dynroot, use_fan
+  use elm_varctl          , only : use_c13, use_c14, use_fates, use_dynroot, iac_present, use_fan
   use decompMod           , only : bounds_type
   use perf_mod            , only : t_startf, t_stopf
   use spmdMod             , only : masterproc
@@ -43,6 +43,7 @@ module EcosystemDynMod
   use PhenologyFLuxLimitMod , only : phenology_flux_limiter, InitPhenoFluxLimiter
   ! for FAN
   use SolarAbsorbedType    , only : solarabs_type
+  use FanUpdateMod,  only: fan_eval
 
 
   use timeinfoMod
@@ -188,7 +189,7 @@ contains
     if (.not. nu_com_phosphatase) then
       event = 'PhosphorusBiochemMin'
        call t_start_lnd(event)
-       call PhosphorusBiochemMin(bounds,num_soilc, filter_soilc, &
+       call PhosphorusBiochemMin(num_soilc, filter_soilc, &
             cnstate_vars, dt)
        call t_stop_lnd(event)
     else
@@ -202,9 +203,9 @@ contains
     !-----------------------------------------------------------------------
     ! pflotran: when both 'pf-bgc' and 'pf-h' on, no need to call CLM-CN's N leaching module
     if (.not. (pf_cmode .and. pf_hmode)) then
-     call NitrogenLeaching(bounds, num_soilc, filter_soilc, dt)
+     call NitrogenLeaching(num_soilc, filter_soilc, dt)
 
-     call PhosphorusLeaching(bounds, num_soilc, filter_soilc, dt)
+     call PhosphorusLeaching(num_soilc, filter_soilc, dt)
     end if !(.not. (pf_cmode .and. pf_hmode))
        !-----------------------------------------------------------------------
 
@@ -272,6 +273,11 @@ contains
     call col_ps_Summary(col_ps,bounds, num_soilc, filter_soilc)
 
     call t_stop_lnd(event)
+
+    if (use_fates) then
+       call alm_fates%wrap_FatesAtmosphericCarbonFluxes(bounds, num_soilc, filter_soilc)
+       call alm_fates%wrap_FatesCarbonStocks(bounds, num_soilc, filter_soilc)
+    endif
 
   end subroutine EcosystemDynLeaching
 
@@ -375,9 +381,11 @@ contains
 
     event = 'CNDeposition'
     call t_start_lnd(event)
-    call NitrogenDeposition(bounds, &
-         atm2lnd_vars, frictionvel_vars,  &
-         soilstate_vars, filter_soilc, num_soilc, dt )
+    call NitrogenDeposition(bounds, atm2lnd_vars)
+    if (use_fan) then
+      call fan_eval(bounds, num_soilc, filter_soilc, &
+           atm2lnd_vars, soilstate_vars, frictionvel_vars)
+    end if
     call t_stop_lnd(event)
 
     event = 'CNFixation'
@@ -422,7 +430,7 @@ contains
        event = 'PhosphorusBiochemMin'
        if (.not. nu_com_phosphatase) then
            call t_start_lnd(event)
-           call PhosphorusBiochemMin(bounds,num_soilc, filter_soilc, &
+           call PhosphorusBiochemMin(num_soilc, filter_soilc, &
                 cnstate_vars, dt)
            call t_stop_lnd(event)
        else
@@ -732,8 +740,7 @@ contains
 
    event = 'SoilLittVertTransp'
    call t_start_lnd(event)
-   call SoilLittVertTransp(bounds, &
-            num_soilc, filter_soilc, &
+   call SoilLittVertTransp( num_soilc, filter_soilc, &
             canopystate_vars, cnstate_vars )
        call t_stop_lnd(event)
    if(.not.use_fates)then
@@ -780,7 +787,7 @@ contains
        call PhosphorusStateUpdate2(num_soilc, filter_soilc, num_soilp, filter_soilp, &
             dt)
 
-       if (get_do_harvest()) then
+       if (get_do_harvest() .or. iac_present) then
           call CNHarvest(num_soilc, filter_soilc, num_soilp, filter_soilp, &
                cnstate_vars )
        end if

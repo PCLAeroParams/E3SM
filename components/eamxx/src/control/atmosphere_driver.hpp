@@ -2,19 +2,19 @@
 #define SCREAM_ATMOSPHERE_DRIVER_HPP
 
 #include "control/surface_coupling_utils.hpp"
-#include "share/field/field_manager.hpp"
-#include "share/grid/grids_manager.hpp"
+#include "share/data_managers/field_manager.hpp"
+#include "share/data_managers/grids_manager.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
-#include "share/eamxx_types.hpp"
+#include "share/core/eamxx_types.hpp"
 #include "share/io/eamxx_output_manager.hpp"
 #include "share/io/scorpio_input.hpp"
 #include "share/atm_process/ATMBufferManager.hpp"
-#include "share/atm_process/SCDataManager.hpp"
-#include "share/atm_process/IOPDataManager.hpp"
+#include "share/data_managers/IOPDataManager.hpp"
+#include "share/data_managers/SCDataManager.hpp"
 
-#include "ekat/logging/ekat_logger.hpp"
-#include "ekat/mpi/ekat_comm.hpp"
-#include "ekat/ekat_parameter_list.hpp"
+#include <ekat_logger.hpp>
+#include <ekat_comm.hpp>
+#include <ekat_parameter_list.hpp>
 
 #include <memory>
 
@@ -161,7 +161,7 @@ public:
   // NOTE: if already finalized, this is a no-op
   void finalize ();
 
-  field_mgr_ptr get_field_mgr (const std::string& grid_name) const;
+  field_mgr_ptr get_field_mgr () const { return m_field_mgr; }
 
   // Get atmosphere time stamp
   const util::TimeStamp& get_atm_time_stamp () const { return m_current_ts; }
@@ -191,7 +191,7 @@ protected:
                               const std::string& file_name);
   void register_groups ();
 
-  std::map<std::string,field_mgr_ptr>       m_field_mgrs;
+  field_mgr_ptr                             m_field_mgr;
 
   std::shared_ptr<AtmosphereProcessGroup>   m_atm_process_group;
 
@@ -217,6 +217,7 @@ protected:
   util::TimeStamp                           m_run_t0;
   util::TimeStamp                           m_case_t0;
   RunType                                   m_run_type;
+  bool                                      m_branch_run = false;
 
   // This is the comm containing all (and only) the processes assigned to the atmosphere
   ekat::Comm                                m_atm_comm;

@@ -9,24 +9,24 @@
 #include "GllFvRemap.hpp"
 
 // Scream includes
-#include "share/field/field_manager.hpp"
-#include "share/util/eamxx_fv_phys_rrtmgp_active_gases_workaround.hpp"
+#include "share/algorithm/eamxx_fv_phys_rrtmgp_active_gases_workaround.hpp"
+#include "share/data_managers/field_manager.hpp"
 #include "dynamics/homme/homme_dimensions.hpp"
 
 // Ekat includes
-#include "ekat/ekat_assert.hpp"
-#include "ekat/kokkos/ekat_subview_utils.hpp"
-#include "ekat/ekat_pack.hpp"
-#include "ekat/ekat_pack_kokkos.hpp"
-#include "ekat/ekat_pack_utils.hpp"
+#include <ekat_assert.hpp>
+#include <ekat_team_policy_utils.hpp>
+#include <ekat_subview_utils.hpp>
+#include <ekat_pack.hpp>
+#include <ekat_pack_utils.hpp>
 
 extern "C" void gfr_init_hxx();
 
-// Parse a name of the form "Physics PGN". Return -1 if not an FV physics grid
+// Parse a name of the form "physics_pgn". Return -1 if not an FV physics grid
 // name, otherwise N in pgN.
 static int get_phys_grid_fv_param (const std::string& grid_name) {
   if (grid_name.size() < 11) return -1;
-  if (grid_name.substr(0, 10) != "Physics PG") return -1;
+  if (grid_name.substr(0, 10) != "physics_pg") return -1;
   const auto param = grid_name.substr(10, std::string::npos);
   int N;
   std::istringstream ss(param);
@@ -79,8 +79,9 @@ static void copy_prev (const int ncols, const int npacks,
                        const T_t& T, const uv_t& uv,
                        const FT_t& FT, const FM_t& FM) {
   using KT = KokkosTypes<DefaultDevice>;
-  using ESU = ekat::ExeSpaceUtils<KT::ExeSpace>;
-  const auto policy = ESU::get_default_team_policy(ncols, npacks);
+  using TPF = ekat::TeamPolicyFactory<KT::ExeSpace>;
+
+  const auto policy = TPF::get_default_team_policy(ncols, npacks);
   Kokkos::parallel_for(policy, KOKKOS_LAMBDA (const KT::MemberType& team) {
     const int& icol = team.league_rank();
     Kokkos::parallel_for(Kokkos::TeamVectorRange(team, npacks),
@@ -93,7 +94,7 @@ static void copy_prev (const int ncols, const int npacks,
   Kokkos::fence();
 }
 
-void HommeDynamics::fv_phys_dyn_to_fv_phys (const bool restart) {
+void HommeDynamics::fv_phys_dyn_to_fv_phys (const util::TimeStamp& ts, const bool restart) {
   if (not fv_phys_active()) return;
   constexpr int N = HOMMEXX_PACK_SIZE;
   using Pack = ekat::Pack<Real,N>;
@@ -111,7 +112,7 @@ void HommeDynamics::fv_phys_dyn_to_fv_phys (const bool restart) {
     t.T_mid = Homme::ExecView<Real***>("T_mid_tmp", nelem, npg, npacks*N);
     t.horiz_winds = Homme::ExecView<Real****>("horiz_winds_tmp", nelem, npg, 2, npacks*N);
     // Really need just the first tracer.
-    const auto qsize = get_group_out("tracers", pgn).m_bundle->get_view<Real***>().extent_int(1);
+    const auto qsize = get_group_out("tracers", pgn).m_monolithic_field->get_view<Real***>().extent_int(1);
     t.tracers = Homme::ExecView<Real****>("tracers_tmp", nelem, npg, qsize, npacks*N);
     remap_dyn_to_fv_phys(&t);
     assert(ncols == nelem*npg);
@@ -126,7 +127,7 @@ void HommeDynamics::fv_phys_dyn_to_fv_phys (const bool restart) {
     const auto uv = get_field_out("horiz_winds",pgn).get_view<const Pack***>();
     copy_prev(ncols, npacks, T, uv, FT, FM);
 
-    // In an initial run, the AD only reads IC for the Physics GLL fields,
+    // In an initial run, the AD only reads IC for the physics GLL fields,
     // and this class has just taken care of remapping them to the FV grid.
     // Therefore, the timestamp of the FV fields has *not* been set yet,
     // which can cause serious issues downstream. For details, see
@@ -136,10 +137,10 @@ void HommeDynamics::fv_phys_dyn_to_fv_phys (const bool restart) {
     // IC for FV fields, this step remains safe (we're setting the same t0)
     for (auto n : {"T_mid","horiz_winds","ps","phis","omega","pseudo_density"}) {
       auto f = get_field_out(n,pgn);
-      f.get_header().get_tracking().update_time_stamp(timestamp());
+      f.get_header().get_tracking().update_time_stamp(ts);
     }
-    auto Q = get_group_out("tracers",pgn).m_bundle;
-    Q->get_header().get_tracking().update_time_stamp(timestamp());
+    auto Q = get_group_out("tracers",pgn).m_monolithic_field;
+    Q->get_header().get_tracking().update_time_stamp(ts);
   }
   update_pressure(m_phys_grid);
 }
@@ -156,7 +157,7 @@ void HommeDynamics::fv_phys_pre_process () {
 // update_pressure to update p_mid,int.
 void HommeDynamics::fv_phys_post_process () {
   if (not fv_phys_active()) return;
-  fv_phys_dyn_to_fv_phys();
+  fv_phys_dyn_to_fv_phys(end_of_step_ts());
 }
 
 void HommeDynamics::remap_dyn_to_fv_phys (GllFvRemapTmp* t) const {
@@ -169,7 +170,7 @@ void HommeDynamics::remap_dyn_to_fv_phys (GllFvRemapTmp* t) const {
   const auto npg = m_phys_grid_pgN*m_phys_grid_pgN;
   const auto& gn = m_phys_grid->name();
   const auto nlev = get_field_out("T_mid", gn).get_view<Real**>().extent_int(1);
-  const auto nq = get_group_out("tracers").m_bundle->get_view<Real***>().extent_int(1);
+  const auto nq = get_group_out("tracers").m_monolithic_field->get_view<Real***>().extent_int(1);
   assert(get_field_out("T_mid", gn).get_view<Real**>().extent_int(0) == nelem*npg);
   assert(get_field_out("horiz_winds", gn).get_view<Real***>().extent_int(1) == 2);
 
@@ -189,7 +190,7 @@ void HommeDynamics::remap_dyn_to_fv_phys (GllFvRemapTmp* t) const {
     t ? t->horiz_winds.data() : get_field_out("horiz_winds", gn).get_view<Real***>().data(),
     nelem, npg, 2, nlev);
   const auto q = Homme::GllFvRemap::Phys3T(
-    t ? t->tracers.data() : get_group_out("tracers", gn).m_bundle->get_view<Real***>().data(),
+    t ? t->tracers.data() : get_group_out("tracers", gn).m_monolithic_field->get_view<Real***>().data(),
     nelem, npg, nq, nlev);
   const auto dp = Homme::GllFvRemap::Phys2T(
     get_field_out("pseudo_density", gn).get_view<Real**>().data(),
@@ -209,7 +210,7 @@ void HommeDynamics::remap_fv_phys_to_dyn () const {
   const auto npg = m_phys_grid_pgN*m_phys_grid_pgN;
   const auto& gn = m_phys_grid->name();
   const auto nlev = m_helper_fields.at("FT_phys").get_view<const Real**>().extent_int(1);
-  const auto nq = get_group_in("tracers", gn).m_bundle->get_view<const Real***>().extent_int(1);
+  const auto nq = get_group_in("tracers", gn).m_monolithic_field->get_view<const Real***>().extent_int(1);
   assert(m_helper_fields.at("FT_phys").get_view<const Real**>().extent_int(0) == nelem*npg);
 
   const auto uv_ndim = m_helper_fields.at("FM_phys").get_view<const Real***>().extent_int(1);
@@ -222,7 +223,7 @@ void HommeDynamics::remap_fv_phys_to_dyn () const {
     m_helper_fields.at("FM_phys").get_view<const Real***>().data(),
     nelem, npg, uv_ndim, nlev);
   const auto q = Homme::GllFvRemap::CPhys3T(
-    get_group_in("tracers", gn).m_bundle->get_view<const Real***>().data(),
+    get_group_in("tracers", gn).m_monolithic_field->get_view<const Real***>().data(),
     nelem, npg, nq, nlev);
 
   gfr.run_fv_phys_to_dyn(time_idx, T, uv, q);
@@ -278,7 +279,6 @@ void HommeDynamics::fv_phys_rrtmgp_active_gases_remap (const RunType run_type) {
       for (const auto& e : trace_gases_workaround.get_active_gases())
         create_helper_field(e, {EL,GP,GP,LEV}, {nelem,NGP,NGP,nlev}, dgn);
       auto r = trace_gases_workaround.get_remapper();
-      r->registration_begins();
       for (const auto& e : trace_gases_workaround.get_active_gases())
         r->register_field(get_field_in(e, rgn), m_helper_fields.at(e));
       r->registration_ends();
@@ -304,7 +304,7 @@ void HommeDynamics::fv_phys_rrtmgp_active_gases_remap (const RunType run_type) {
         gfr.remap_tracer_dyn_to_fv_phys(time_idx, 1, in_dgll, out_phys);
         Kokkos::fence();
 
-        f_phys.get_header().get_tracking().update_time_stamp(timestamp());
+        f_phys.get_header().get_tracking().update_time_stamp(start_of_step_ts());
       }
     }
   }

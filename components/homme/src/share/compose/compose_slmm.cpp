@@ -21,7 +21,7 @@ namespace islmpi {
 
 #ifdef COMPOSE_PORT
 template <typename ES> SLMM_KF
-void print (const IslMpi<ko::MachineTraits>::ElemData<ES>& ed) {
+void print (const ElemData<ES>& ed) {
   printf("me %p\n", ed.me);
   printf("nbrs %d:", ed.nbrs.size());
   for (int i = 0; i < ed.nbrs.size(); ++i)
@@ -42,8 +42,7 @@ void print (const IslMpi<ko::MachineTraits>::ElemData<ES>& ed) {
 }
 
 template <typename MT, typename ESD, typename ESS>
-void deep_copy (typename IslMpi<MT>::template ElemData<ESD>& d,
-                const typename IslMpi<MT>::template ElemData<ESS>& s) {
+void deep_copy (ElemData<ESD>& d, ElemData<ESS>& s) {
   d.nbrs.copy(s.nbrs);
   const ptrdiff_t me_os = s.me - s.nbrs.data();
   d.me = d.nbrs.data() + me_os;
@@ -51,7 +50,7 @@ void deep_copy (typename IslMpi<MT>::template ElemData<ESD>& d,
   //d.own.copy(s.own); unused in COMPOSE_PORT
   d.rmt.copy(s.rmt);
   siqk::resize_and_copy(d.src, s.src);
-  d.q_extrema = typename IslMpi<MT>::template Array<Real**[2], ESD>(
+  d.q_extrema = Array<Real**[2], ESD>(
     "q_extrema", s.q_extrema.extent_int(0), s.q_extrema.extent_int(1));
   ko::deep_copy(d.q_extrema, s.q_extrema);
   d.qdp = s.qdp;
@@ -87,10 +86,15 @@ void deep_copy (typename IslMpi<MT>::ElemDataListD& d,
 }
 
 template <typename MT> ko::EnableIfDiffSpace<MT>
-sync_to_device (IslMpi<MT>& cm) { deep_copy<MT>(cm.ed_d, cm.ed_m, cm.ed_h); }
+sync_to_device (IslMpi<MT>& cm) {
+  deep_copy<MT>(cm.ed_d, cm.ed_m, cm.ed_h);
+}
 
 template <typename MT> ko::EnableIfSameSpace<MT>
-sync_to_device (IslMpi<MT>& cm) { cm.ed_d = cm.ed_h; }
+sync_to_device (IslMpi<MT>& cm) {
+  cm.ed_d = cm.ed_h;
+  cm.ed_m.reset_capacity(0);
+}
 
 template <typename MT>
 typename IslMpi<MT>::Ptr
@@ -281,21 +285,6 @@ static void initialize_kokkos () {
   if (Kokkos::is_initialized()) return;
   in_charge_of_kokkos = true;
   std::vector<char*> args;
-#ifdef HOMMEXX_ENABLE_GPU
-  int nd;
-  const auto ret = cudaGetDeviceCount(&nd);
-  if (ret != cudaSuccess) {
-    // It isn't a big deal if we can't get the device count.
-    nd = 1;
-  }
-  std::stringstream ss;
-  ss << "--kokkos-ndevices=" << nd;
-  const auto key = ss.str();
-  std::vector<char> str(key.size()+1);
-  std::copy(key.begin(), key.end(), str.begin());
-  str.back() = 0;
-  args.push_back(const_cast<char*>(str.data()));
-#endif
   const char* silence = "--kokkos-disable-warnings";
   args.push_back(const_cast<char*>(silence));
   int narg = args.size();

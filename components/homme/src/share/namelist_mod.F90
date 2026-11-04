@@ -10,7 +10,7 @@ module namelist_mod
   use kinds,      only: real_kind, iulog
   use params_mod, only: recursive, sfcurve, SPHERE_COORDS, Z2_NO_TASK_MAPPING
   use cube_mod,   only: rotate_grid
-#ifdef CAM
+#if defined(CAM) && !defined(MODEL_CESM)
   use dyn_grid,   only: fv_nphys
 #endif
   use physical_constants, only: rearth, rrearth, omega
@@ -108,7 +108,6 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     internal_diagnostics_level, &
     timestep_make_subcycle_parameters_consistent
 
-
 !PLANAR setup
 #if !defined(CAM) && !defined(SCREAM)
   use control_mod, only:              &
@@ -184,13 +183,11 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
 
   use interpolate_mod, only : set_interp_parameter, get_interp_parameter
 
-
   !=======================================================================================================!
   ! This module should contain no global data and should only be used where readnl is called
 
   implicit none
   private
-
 
   public :: readnl
 
@@ -218,8 +215,14 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     character(len=MAX_FILE_LEN) :: mesh_file
     integer :: se_ftype, se_limiter_option
     integer :: se_nsplit
-    integer :: interp_nlat, interp_nlon, interp_gridtype, interp_type
-    integer :: i, ii, j
+    integer :: interp_nlat, interp_nlon, interp_gridtype
+    integer :: i, ii
+#if !defined(CAM) && !defined(SCREAM)
+#if !defined(HOMME_WITHOUT_PIOLIBRARY)
+    integer :: j
+#endif
+    integer :: interp_type
+#endif
     integer  :: ierr
     character(len=80) :: errstr, arg
     real(kind=real_kind) :: dt_max, se_tstep

@@ -2,19 +2,19 @@
 #define SCREAM_OUTPUT_MANAGER_HPP
 
 #include "share/io/scorpio_output.hpp"
-#include "share/io/eamxx_scorpio_interface.hpp"
+#include "share/scorpio_interface/eamxx_scorpio_interface.hpp"
 #include "share/io/eamxx_io_utils.hpp"
 #include "share/io/eamxx_io_file_specs.hpp"
 #include "share/io/eamxx_io_control.hpp"
 
-#include "share/field/field_manager.hpp"
-#include "share/grid/grids_manager.hpp"
+#include "share/data_managers/field_manager.hpp"
+#include "share/data_managers/grids_manager.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
+#include "share/util/eamxx_utils.hpp"
 
-#include "ekat/logging/ekat_logger.hpp"
-#include "ekat/mpi/ekat_comm.hpp"
-#include "ekat/ekat_parameter_list.hpp"
-#include "ekat/ekat_parse_yaml_file.hpp"
+#include <ekat_logger.hpp>
+#include <ekat_comm.hpp>
+#include <ekat_parameter_list.hpp>
 
 namespace scream
 {
@@ -64,7 +64,7 @@ class OutputManager
 public:
   using fm_type = FieldManager;
   using gm_type = GridsManager;
-  using globals_map_t = std::map<std::string,ekat::any>;
+  using globals_map_t = std::map<std::string,std::shared_ptr<std::any>>;
 
   // Constructor(s) & Destructor
   OutputManager() = default;
@@ -98,19 +98,13 @@ public:
 
   // Setup manager by creating the internal output streams using grids/field data
   // Inputs:
-  //  - field_mgr/field_mgrs: field manager(s) storing fields to be outputed
-  //  - grids_mgr: grid manager to create remapping from field managers grids onto the IO grid.
-  //               This is needed, e.g., when outputing SEGrid fields without duplicating dofs.
+  //  - field_mgr: field manager storing fields to be outputed on various grids
+  //  - grid_names: grid names used for output
   void setup (const std::shared_ptr<fm_type>& field_mgr,
-              const std::shared_ptr<const gm_type>& grids_mgr);
+              const std::set<std::string>& grid_names);
 
-  void setup (const std::map<std::string,std::shared_ptr<fm_type>>& field_mgrs,
-              const std::shared_ptr<const gm_type>& grids_mgr);
-
-  void set_logger(const std::shared_ptr<ekat::logger::LoggerBase>& atm_logger) {
-      m_atm_logger = atm_logger;
-  }
-  void add_global (const std::string& name, const ekat::any& global);
+  void set_logger(const std::shared_ptr<ekat::logger::LoggerBase>& atm_logger);
+  void add_global (const std::string& name, const std::shared_ptr<std::any>& global);
 
   void init_timestep (const util::TimeStamp& start_of_step, const Real dt);
   void run (const util::TimeStamp& current_ts);
@@ -130,9 +124,10 @@ protected:
 
   void set_file_header(const IOFileSpecs& file_specs);
 
-  // Set internal class variables and processes the field_mgrs for restart fields
+  // Set internal class variables and processes the field_mgr for restart fields
   // to add to the parameter list for a model restart managers.
-  void setup_internals (const std::map<std::string,std::shared_ptr<fm_type>>& field_mgrs);
+  void setup_internals (const std::shared_ptr<fm_type>& field_mgr,
+                        const std::set<std::string>& grid_names);
 
   void setup_file (      IOFileSpecs& filespecs,
                    const IOControl& control);
@@ -160,7 +155,7 @@ protected:
 
   std::vector<double> m_time_bnds;
 
-  // How to combine multiple snapshots in the output: Instant, Max, Min, Average
+  // How to combine multiple snapshots in the output: instant, Max, Min, Average
   OutputAvgType     m_avg_type;
 
   // Whether this OutputManager handles a model restart file, or normal model output.
@@ -189,8 +184,7 @@ protected:
   util::TimeStamp   m_case_t0;
   util::TimeStamp   m_run_t0;
 
-  // The logger to be used throughout the ATM to log message
-  std::shared_ptr<ekat::logger::LoggerBase> m_atm_logger;
+  std::shared_ptr<ekat::logger::LoggerBase> m_atm_logger = console_logger(ekat::logger::LogLevel::warn);
 
   // If true, we save grid data in output file
   bool m_save_grid_data;

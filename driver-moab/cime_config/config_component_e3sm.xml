@@ -279,6 +279,24 @@
     </desc>
   </entry>
 
+  <entry id="CPL_COMPUTE_MAPS_ONLINE">
+    <type>logical</type>
+    <valid_values>TRUE,FALSE</valid_values>
+    <default_value>FALSE</default_value>
+    <values match="last">
+      <value/>
+    </values>
+    <group>run_coupling</group>
+    <file>env_run.xml</file>
+    <desc>User option to specify whether MOAB coupler maps should be computed 
+      online or to load precomputed maps from disk at runtime (similar to MCT).
+      Note that this option enforces the same behavior for all coupler maps 
+      (A-O, A-L, R-L, I-O etc) except R2O at the moment 
+      (which is always loaded from disk). Default is false to replicate behavior
+      of existing MCT coupler.
+    </desc>
+  </entry>
+
   <entry id="CCSM_BGC">
     <type>char</type>
     <valid_values>none,CO2A,CO2A_OI,CO2B,CO2C,CO2C_OI,CO2_DMSA</valid_values>
@@ -827,6 +845,24 @@
     <file>env_run.xml</file>
     <desc>Glacier model number of elevation classes, 0 implies no glacier land unit in clm
     Used by both ELM and CISM (even if CISM is not running, and only SGLC is used).</desc>
+  </entry>
+
+  <entry id="GLC_NZOC">
+    <type>integer</type>
+    <valid_values>0,4,30</valid_values>
+    <default_value>0</default_value>
+    <values match="last">
+      <value compset="_MPASO.+_MALI">30</value>
+      <value compset="_MPASO.+_MALI%SIASTATIC">0</value>
+      <value compset="_MPASO.+_MALI%STATIC">0</value>
+      <value compset="_MPASO.+_MALI%SIADATA">0</value>
+      <value compset="_MPASO.+_MALI%DATA">0</value>
+    </values>
+    <group>run_glc</group>
+    <file>env_run.xml</file>
+    <desc>Glacier model number of z-ocean classes, 0 implies no OCN z-level coupling to GLC or
+    GLC is inactive.
+    Used by both OCN and GLC components.</desc>
   </entry>
 
   <entry id="GLC_TWO_WAY_COUPLING">

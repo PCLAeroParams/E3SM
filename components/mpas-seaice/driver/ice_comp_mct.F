@@ -54,8 +54,6 @@ module ice_comp_mct
 
    ! MPASSI modules
    use seaice_analysis_driver
-   use seaice_column, only: seaice_column_reinitialize_fluxes, & !colpkg
-                            seaice_column_coupling_prep
    use seaice_icepack, only: seaice_icepack_reinitialize_fluxes, &
                              seaice_icepack_coupling_prep
    use seaice_constants, only: coupleAlarmID, &
@@ -77,8 +75,6 @@ module ice_comp_mct
    use seaice_mesh, only: seaice_latlon_vector_rotation_backward
    use seaice_time_integration
    use seaice_error, only: seaice_check_critical_error
-
-   use ice_colpkg, only: colpkg_sea_freezing_temperature
    use icepack_intfc, only: icepack_sea_freezing_temperature
 
 !
@@ -494,8 +490,6 @@ contains
         tempLogicalConfig = .true.
         call mpas_pool_get_config(domain % configs, "config_do_restart_snow_grain_radius", tempLogicalConfig)
         tempLogicalConfig = .true.
-        call mpas_pool_get_config(domain % configs, "config_do_restart_zsalinity", tempLogicalConfig)
-        tempLogicalConfig = .true.
         call mpas_pool_get_config(domain % configs, "config_do_restart_bgc", tempLogicalConfig)
         tempLogicalConfig = .true.
 
@@ -558,6 +552,10 @@ contains
        mesh_iotype = MPAS_IO_NETCDF
     else if (trim(iotype) == 'netcdf4') then
        mesh_iotype = MPAS_IO_NETCDF4
+    else if (trim(iotype) == 'adios') then
+       mesh_iotype = MPAS_IO_ADIOS
+    else if (trim(iotype) == 'adiosc') then
+       mesh_iotype = MPAS_IO_ADIOSC
     else
        mesh_iotype = MPAS_IO_PNETCDF
     end if
@@ -757,7 +755,7 @@ contains
     if ( ierrmb == 1 ) then
       call mpas_log_write('cannot define tags for MOAB i2x fields ' // trim(seq_flds_i2x_fields), MPAS_LOG_ERR)
     endif
-    ierrmb = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmbls , ent_type, i2x_im(1, 1) )
+    ierrmb = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmbls , ent_type, i2x_im(1,1) )
     if ( ierrmb /= 0 ) then
        call mpas_log_write('cannot set tags for MOAB i2x fields to zero' // trim(seq_flds_i2x_fields), MPAS_LOG_ERR)
     endif
@@ -766,7 +764,7 @@ contains
     if ( ierrmb == 1 ) then
       call mpas_log_write('cannot define tags for MOAB i2x fields ' // trim(seq_flds_x2i_fields), MPAS_LOG_ERR)
     endif
-    ierrmb = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmblr , ent_type, x2i_im(1, 1) )
+    ierrmb = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmblr , ent_type, x2i_im(1,1) )
     if ( ierrmb /= 0 ) then
        call mpas_log_write('cannot set tags for MOAB x2i fields to zero' // trim(seq_flds_x2i_fields), MPAS_LOG_ERR)
     endif
@@ -842,8 +840,6 @@ contains
     call MPAS_pool_get_config(domain % configs, "config_column_physics_type", tempCharConfig)
     if (trim(tempCharConfig) == "icepack") then
       call seaice_icepack_coupling_prep(domain)
-    else if (trim(tempCharConfig) == "column_package") then
-      call seaice_column_coupling_prep(domain)
     endif ! config_column_physics_type
 
     call MPAS_pool_get_config(domain % configs, "config_use_floe_size_distribution", tempLogicalConfig)
@@ -862,6 +858,22 @@ contains
     endif
 #ifdef HAVE_MOAB
     call ice_export_moab(EClock)
+#ifdef MOABCOMP
+    mpicom_moab = mpicom_i ! save it for run method
+    ! loop over all fields in seq_flds_x2i_fields
+    call mct_list_init(temp_list ,seq_flds_i2x_fields)
+    size_list=mct_list_nitem (temp_list)
+    ent_type = 1 ! entity type is cell for ice
+    modelStr='ice init export'
+
+    do index_list = 1, size_list
+      call mct_list_get(mctOStr,index_list,temp_list)
+      mct_field = mct_string_toChar(mctOStr)
+      tagname= trim(mct_field)//C_NULL_CHAR
+      call seq_comm_compare_mb_mct(modelStr, mpicom_moab, i2x_i, mct_field,  MPSIID, tagname, ent_type, difference)
+    enddo
+    call mct_list_clean(temp_list)
+#endif
 #endif
 
     call t_stopf ('mpassi_mct_init')
@@ -878,14 +890,14 @@ contains
     endif
 !-----------------------------------------------------------------------
 #ifdef HAVE_MOAB
+    call ice_import_moab(Eclock)
 
 #ifdef MOABCOMP
-    mpicom_moab = mpicom_i ! save it for run method
     ! loop over all fields in seq_flds_x2i_fields
     call mct_list_init(temp_list ,seq_flds_x2i_fields)
     size_list=mct_list_nitem (temp_list)
     ent_type = 1 ! entity type is cell for ice
-    modelStr='ice init'
+    modelStr='ice init import'
 
     do index_list = 1, size_list
       call mct_list_get(mctOStr,index_list,temp_list)
@@ -896,7 +908,6 @@ contains
     call mct_list_clean(temp_list)
 #endif
 
-    call ice_import_moab(Eclock)
 #endif
 
 
@@ -1220,21 +1231,20 @@ contains
       call shr_file_setLogUnit (iceLogUnit)
 
       ! reinitialize fluxes
-      if (trim(config_column_physics_type) == "icepack") then
+!      if (trim(config_column_physics_type) == "icepack") then
          call seaice_icepack_reinitialize_fluxes(domain)
-      else if (trim(config_column_physics_type) == "column_package") then
-         call seaice_column_reinitialize_fluxes(domain)
-      endif ! config_column_physics_type
+!      endif ! config_column_physics_type
 
       ! Import state from coupler
       call ice_import_mct(x2i_i, ierr)
 #ifdef HAVE_MOAB
+      call ice_import_moab(Eclock)
 #ifdef MOABCOMP
     ! loop over all fields in seq_flds_x2i_fields
     call mct_list_init(temp_list ,seq_flds_x2i_fields)
     size_list=mct_list_nitem (temp_list)
     ent_type = 1 ! entity type is cell for ice
-    modelStr='ice run'
+    modelStr='ice run import'
 
     do index_list = 1, size_list
       call mct_list_get(mctOStr,index_list,temp_list)
@@ -1244,7 +1254,6 @@ contains
     enddo
     call mct_list_clean(temp_list)
 #endif
-      call ice_import_moab(Eclock)
 #endif
 
       ! Post coupling calls
@@ -1385,6 +1394,21 @@ contains
       call ice_export_mct(i2x_i, ierr)
 #ifdef HAVE_MOAB
       call ice_export_moab(EClock)
+#ifdef MOABCOMP
+    ! loop over all fields in seq_flds_i2x_fields
+    call mct_list_init(temp_list ,seq_flds_i2x_fields)
+    size_list=mct_list_nitem (temp_list)
+    ent_type = 1 ! entity type is cell for ice
+    modelStr='ice run export'
+
+    do index_list = 1, size_list
+      call mct_list_get(mctOStr,index_list,temp_list)
+      mct_field = mct_string_toChar(mctOStr)
+      tagname= trim(mct_field)//C_NULL_CHAR
+      call seq_comm_compare_mb_mct(modelStr, mpicom_moab, i2x_i, mct_field,  MPSIID, tagname, ent_type, difference)
+    enddo
+    call mct_list_clean(temp_list)
+#endif
 #endif
       if (debugOn) call mpas_log_write('Finished exporting state', masterOnly=.true.)
 
@@ -2346,11 +2370,9 @@ contains
         seaSurfaceTemperature(i)       = x2i_i % rAttr(index_x2i_So_t, n)
         seaSurfaceSalinity(i)          = x2i_i % rAttr(index_x2i_So_s, n)
 
-        if (trim(config_column_physics_type) == "icepack") then
+!        if (trim(config_column_physics_type) == "icepack") then
            seaFreezingTemperature(i) = icepack_sea_freezing_temperature(seaSurfaceSalinity(i))
-        else if (trim(config_column_physics_type) == "column_package") then
-           seaFreezingTemperature(i) = colpkg_sea_freezing_temperature(seaSurfaceSalinity(i))
-        endif ! config_column_physics_type
+!        endif ! config_column_physics_type
 
         uOceanVelocity(i)              = x2i_i % rAttr(index_x2i_So_u, n)
         vOceanVelocity(i)              = x2i_i % rAttr(index_x2i_So_v, n)
@@ -3167,10 +3189,6 @@ contains
 ! the frazil mass based on the freezingPotential according to sea ice model thermodynamics,
 !
 ! !USES:
-      use ice_mushy_physics, only:  &
-         liquidus_temperature_mush, &
-         enthalpy_mush
-
       use icepack_intfc, only:  &
          icepack_liquidus_temperature, &
          icepack_enthalpy_mush
@@ -3210,13 +3228,10 @@ contains
              Si0new = seaSurfaceSalinity**2 / (4.0_RKIND*seaiceFrazilSalinityReduction)
          endif
 
-         if (trim(config_column_physics_type) == "icepack") then
+!         if (trim(config_column_physics_type) == "icepack") then
             Ti = icepack_liquidus_temperature(Si0new/seaiceFrazilIcePorosity)
             qi0new = icepack_enthalpy_mush(Ti, Si0new)
-         else if (trim(config_column_physics_type) == "column_package") then
-            Ti = liquidus_temperature_mush(Si0new/seaiceFrazilIcePorosity)
-            qi0new = enthalpy_mush(Ti, Si0new)
-         endif ! config_column_physics_type
+!         endif ! config_column_physics_type
 
       else
          qi0new = -seaiceDensityIce*seaiceLatentHeatMelting
@@ -3569,9 +3584,11 @@ contains
                i2x_im(n, index_i2x_Si_t)  = Tsrf
                i2x_im(n, index_i2x_Si_bpress)  = basalPressure
                i2x_im(n, index_i2x_Si_u10)  = atmosReferenceSpeed10m(i)
+               i2x_im(n, index_i2x_Si_u10withgusts) = atmosReferenceSpeed10m(i)  ! see commit 5813d4103
                i2x_im(n, index_i2x_Si_tref)  = atmosReferenceTemperature2m(i)
                i2x_im(n, index_i2x_Si_qref)  = atmosReferenceHumidity2m(i)
                i2x_im(n, index_i2x_Si_snowh)  = snowVolumeCell(i) / ailohi
+               i2x_im(n, index_i2x_Si_ithick)  = iceVolumeCell(i) / ailohi
 
                !--- a/i fluxes computed by ice
                i2x_im(n, index_i2x_Faii_taux) = tauxa
@@ -3610,7 +3627,7 @@ contains
                   i2x_im(n, index_i2x_Fioi_algae3) = oceanAlgaeFlux(3,i) * carbonToNitrogenRatioAlgae(3)
                   i2x_im(n, index_i2x_Fioi_doc1  ) = oceanDOCFlux(1,i)
                   i2x_im(n, index_i2x_Fioi_doc2  ) = oceanDOCFlux(2,i)
-                  i2x_im(n, index_i2x_Fioi_doc3  ) = oceanDOCFlux(3,i) !JW set to 0?
+                  i2x_im(n, index_i2x_Fioi_doc3  ) = oceanDONFlux(1,i) * carbonToNitrogenRatioDON(1)
                   i2x_im(n, index_i2x_Fioi_dic1  ) = oceanDICFlux(1,i)
                   i2x_im(n, index_i2x_Fioi_don1  ) = oceanDONFlux(1,i)
                   i2x_im(n, index_i2x_Fioi_no3   ) = oceanNitrateFlux(i)
@@ -3638,7 +3655,7 @@ contains
       ent_type = 1 ! cells
       !  set all tags in one method
       tagname = trim(seq_flds_i2x_fields)//C_NULL_CHAR
-      ierr = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmbls , ent_type, i2x_im(1, 1) )
+      ierr = iMOAB_SetDoubleTagStorage ( MPSIID, tagname, totalmbls , ent_type, i2x_im(1,1) )
       if ( ierr /= 0 ) then
          write(iceLogUnit,*) 'Fail to set MOAB fields '
       endif
@@ -3906,7 +3923,7 @@ contains
    ent_type = 1 ! cells
   !  set all tags in one method
    tagname = trim(seq_flds_x2i_fields)//C_NULL_CHAR
-   ierr = iMOAB_GetDoubleTagStorage ( MPSIID, tagname, totalmblr , ent_type, x2i_im(1, 1) )
+   ierr = iMOAB_GetDoubleTagStorage ( MPSIID, tagname, totalmblr , ent_type, x2i_im(1,1) )
    if ( ierr /= 0 ) then
       write(iceLogUnit,*) 'Fail to get seq_flds_x2i_fields '
    endif
@@ -3990,7 +4007,7 @@ contains
         seaSurfaceTemperature(i)       = x2i_im(n,index_x2i_So_t)
         seaSurfaceSalinity(i)          = x2i_im(n,index_x2i_So_s)
 
-        seaFreezingTemperature(i) = colpkg_sea_freezing_temperature(seaSurfaceSalinity(i))
+        seaFreezingTemperature(i) = icepack_sea_freezing_temperature(seaSurfaceSalinity(i))
 
         uOceanVelocity(i)              = x2i_im(n,index_x2i_So_u)
         vOceanVelocity(i)              = x2i_im(n,index_x2i_So_v)

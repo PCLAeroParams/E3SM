@@ -1,11 +1,11 @@
 #include "eamxx_spa_process_interface.hpp"
 
-#include "share/util/eamxx_data_interpolation.hpp"
-#include "share/io/eamxx_scorpio_interface.hpp"
+#include "share/algorithm/eamxx_data_interpolation.hpp"
+#include "share/scorpio_interface/eamxx_scorpio_interface.hpp"
 #include "share/property_checks/field_within_interval_check.hpp"
 
-#include <ekat/ekat_assert.hpp>
-#include <ekat/util/ekat_units.hpp>
+#include <ekat_assert.hpp>
+#include <ekat_units.hpp>
 
 namespace scream
 {
@@ -25,7 +25,7 @@ void SPA::set_grids(const std::shared_ptr<const GridsManager> grids_manager)
   constexpr auto nondim = Units::nondimensional();
   constexpr int ps = SCREAM_PACK_SIZE;
 
-  m_model_grid = grids_manager->get_grid("Physics");
+  m_model_grid = grids_manager->get_grid("physics");
   const auto& grid_name = m_model_grid->name();
 
   // Get bands info from file, and log it
@@ -88,26 +88,27 @@ void SPA::initialize_impl (const RunType /* run_type */)
   m_data_interpolation = std::make_shared<DataInterpolation>(m_model_grid,spa_fields);
   m_data_interpolation->setup_time_database ({spa_data_file},util::TimeLine::YearlyPeriodic, ref_ts);
 
-  DataInterpolation::RemapData remap_data;
-  remap_data.hremap_file = spa_map_file=="None" ? "" : spa_map_file;
   if (m_iop_data_manager!=nullptr) {
     // IOP cases cannot have a remap file. We will create a IOPRemapper as the horiz remapper
-    EKAT_REQUIRE_MSG(spa_map_file == "" or spa_map_file=="None",
+    EKAT_REQUIRE_MSG(spa_map_file == "" or spa_map_file=="none",
       "Error! Cannot define spa_remap_file for cases with an Intensive Observation Period defined. "
       "The IOP class defines it's own remap from file data -> model data.\n");
 
     // TODO: expose tgt lat/lon in IOPDataManager, to avoid injecting knowledge
     // of its param list structure in other places
-    remap_data.iop_lat = m_iop_data_manager->get_params().get<Real>("target_latitude");
-    remap_data.iop_lon = m_iop_data_manager->get_params().get<Real>("target_longitude");
-    remap_data.has_iop = true;
+    Real iop_lat = m_iop_data_manager->get_params().get<Real>("target_latitude");
+    Real iop_lon = m_iop_data_manager->get_params().get<Real>("target_longitude");
+    m_data_interpolation->create_horiz_remappers (iop_lat,iop_lon);
+  } else {
+    m_data_interpolation->create_horiz_remappers (spa_map_file=="none" ? "" : spa_map_file);
   }
-  remap_data.vr_type = DataInterpolation::Dynamic3DRef;
-  remap_data.pname = "PS";
-  remap_data.pmid = pmid;
-  remap_data.pint = pint;
-  m_data_interpolation->setup_remappers (remap_data);
-  m_data_interpolation->init_data_interval (timestamp());
+  DataInterpolation::VertRemapData vremap_data;
+  vremap_data.vr_type = DataInterpolation::Dynamic3DRef;
+  vremap_data.pname = "PS";
+  vremap_data.pmid = pmid;
+  vremap_data.pint = pint;
+  m_data_interpolation->create_vert_remapper (vremap_data);
+  m_data_interpolation->init_data_interval (start_of_step_ts());
 
   // Set property checks for fields in this process
   using FWI = FieldWithinIntervalCheck;
@@ -123,9 +124,9 @@ void SPA::initialize_impl (const RunType /* run_type */)
 }
 
 // =========================================================================================
-void SPA::run_impl (const double dt)
+void SPA::run_impl (const double /* dt */)
 {
-  m_data_interpolation->run(timestamp()+dt);
+  m_data_interpolation->run(end_of_step_ts());
 }
 
 } // namespace scream

@@ -48,6 +48,13 @@ else()
     set(USE_YAKL FALSE)
 endif()
 
+# Detect if partmc lib has to be used (whole-word match so -partmcsl does not trigger it)
+string(REGEX MATCH "(^| )-partmc( |$)" HAS_PARTMC "${CAM_CONFIG_OPTS}")
+if (HAS_PARTMC)
+  # The following is for partmc code:
+  set(USE_PARTMC TRUE)
+endif()
+
 #string(FIND "${CAM_CONFIG_OPTS}" "-partmcsl" HAS_PARTMCSL)
 #if (NOT HAS_PARTMCSL EQUAL -1)
 #  set(ENABLE_PARTMCSL TRUE)
