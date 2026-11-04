@@ -40,6 +40,8 @@ void Functions<S,D>::vd_lu_decomp(
       decomp_ze(k) = 0;
     });
 
+  team.team_barrier();
+
   // Determine superdiagonal (ca(k)) and subdiagonal (cc(k)) coeffs of the
   // tridiagonal diffusion matrix. The diagonal elements  (cb=1+ca+cc) are
   // a combination of ca and cc; they are not required by the solver.
@@ -53,7 +55,7 @@ void Functions<S,D>::vd_lu_decomp(
   // tridiagonal matrix as defined by the implicit diffusion equation.
   team.team_barrier();
   Kokkos::single(Kokkos::PerTeam(team), [&] {
-    const Real dnom = 1 / (1 + decomp_cc(nbot) + ksrf*ztodt*C::gravit*rpdel(nbot));
+    const Real dnom = 1 / (1 + decomp_cc(nbot) + ksrf*ztodt*C::gravit.value*rpdel(nbot));
     decomp_dnom(nbot) = dnom;
     decomp_ze(nbot)   = decomp_cc(nbot) * dnom;
 
@@ -67,6 +69,8 @@ void Functions<S,D>::vd_lu_decomp(
 
     decomp_dnom(ntop) = 1 / (1 + decomp_ca(ntop) + cc_top - decomp_ca(ntop)*decomp_ze(ntop+1));
   });
+
+  team.team_barrier();
 }
 
 } // namespace gw

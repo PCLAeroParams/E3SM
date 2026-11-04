@@ -227,10 +227,8 @@ module seq_comm_mct
   integer, public :: mbintxao ! iMOAB id for intersection mesh between ocean and atmosphere
   integer, public :: mbintxoa ! iMOAB id for intersection mesh between atmosphere and ocean
   integer, public :: mblxid   ! iMOAB id for land mesh migrated to coupler pes
-!!#ifdef MOABDEBUG
-  integer, public :: mblx2id   ! iMOAB id for land mesh instanced from MCT on coupler pes
-  integer, public :: mbox2id   ! iMOAB id for ocn mesh instanced from MCT on coupler pes
-!!#endif
+  logical, public :: mb_scm_land = .false. ! land will be migrated if this is true, for scm case; usually one point only
+  logical, public :: mb_dead_comps = .false. ! whether all components are dead (X compset); controls ent_type in I/O
   integer, public :: mbintxla ! iMOAB id for intersection mesh between land and atmosphere
   integer, public :: mbintxal ! iMOAB id for intersection mesh between atmosphere and land
   integer, public :: mpsiid   ! iMOAB id for sea-ice, mpas model
@@ -245,6 +243,10 @@ module seq_comm_mct
   integer, public :: mbintxlr ! iMOAB id for intersection mesh between land and river
   integer, public :: mbintxrl ! iMOAB id for intersection mesh between river and land
   integer, public :: mbintxri ! iMOAB id for intersection mesh between river and ice
+  integer, public :: mbglid   ! iMOAB id for glc (MALI land ice), on glc component pes
+  integer, public :: mbgxid   ! iMOAB id for glc migrated mesh to coupler pes
+  integer, public :: mbintxlg ! iMOAB id for read map between land and glc
+  integer, public :: mbintxgl ! iMOAB id for read map between glc and land
 
   integer, public :: num_moab_exports   ! iMOAB id for atm phys grid, on atm pes
 
@@ -268,7 +270,7 @@ contains
     ! Local variables
     !
     logical :: error_state
-    integer :: ierr, n, count
+    integer :: ierr, n, count, xcount
     character(*), parameter :: subName =   '(seq_comm_init) '
     integer :: mype,numpes,myncomps,max_threads,gloroot, global_numpes
     integer :: pelist(3,1)       ! start, stop, stride for group
@@ -542,14 +544,33 @@ contains
 
     call mpi_bcast(pelist, size(pelist), MPI_INTEGER, 0, DRIVER_COMM, ierr)
     call mpi_bcast(exlist, size(exlist), MPI_INTEGER, 0, DRIVER_COMM, ierr)
+    call mpi_comm_group(DRIVER_COMM, mpigrp_world, ierr)
+    call shr_mpi_chkerr(ierr,subname//' mpi_comm_group mpigrp_world')
     if (exlist(3) > 0) then
-       call mpi_comm_group(DRIVER_COMM, mpigrp_world, ierr)
-       call shr_mpi_chkerr(ierr,subname//' mpi_comm_group mpigrp_world')
        call mpi_group_range_incl(mpigrp_world, 1, exlist, exgrp, ierr)
        call shr_mpi_chkerr(ierr,subname//' mpi_group_range_incl CPLID')
        seq_comms(CPLID)%excl_group = exgrp
     endif
     call seq_comm_setcomm(CPLID,pelist,nthreads=cpl_nthreads,iname='CPL')
+
+    ! init excl-strides
+    xcount = CPLID + 2*num_inst_atm + 1
+    call comp_exstride_init(driver_comm, lnd_rootpe, lnd_ntasks, lnd_pestride, &
+         lnd_excl_stride, num_inst_lnd, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, ice_rootpe, ice_ntasks, ice_pestride, &
+         ice_excl_stride, num_inst_ice, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, ocn_rootpe, ocn_ntasks, ocn_pestride, &
+         ocn_excl_stride, num_inst_ocn, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, rof_rootpe, rof_ntasks, rof_pestride, &
+         rof_excl_stride, num_inst_rof, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, glc_rootpe, glc_ntasks, glc_pestride, &
+         glc_excl_stride, num_inst_glc, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, wav_rootpe, wav_ntasks, wav_pestride, &
+         wav_excl_stride, num_inst_wav, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, esp_rootpe, esp_ntasks, esp_pestride, &
+         esp_excl_stride, num_inst_esp, xcount, mpigrp_world)
+    call comp_exstride_init(driver_comm, iac_rootpe, iac_ntasks, iac_pestride, &
+         iac_excl_stride, num_inst_iac, xcount, mpigrp_world)
 
     call comp_comm_init(driver_comm, atm_rootpe, atm_nthreads, atm_layout, &
          atm_ntasks, atm_pestride, atm_excl_stride, num_inst_atm, &
@@ -666,10 +687,6 @@ contains
     mbintxao = -1 ! iMOAB id for atm intx with mpas ocean
     mbintxoa = -1 ! iMOAB id for  mpas ocean  intx with atm
     mblxid = -1   ! iMOAB id for land on coupler pes
-!!#ifdef MOABDEBUG
-    mbox2id = -1  ! iMOAB id for ocn from mct on coupler pes
-    mblx2id = -1
-!!#endif
     mbintxla = -1 ! iMOAB id for land intx with atm on coupler pes
     mbintxal = -1 ! iMOAB id for atm intx with lnd on coupler pes
     mpsiid = -1   ! iMOAB for sea-ice
@@ -682,6 +699,11 @@ contains
     mbintxar = -1 ! iMOAB id for intx mesh between atm and river
     mbintxlr = -1 ! iMOAB id for intx mesh between land and river
     mbintxrl = -1 ! iMOAB id for intx mesh between river and land
+    mbintxri = -1 ! iMOAB id for intx mesh between river and ice
+    mbglid = -1   ! iMOAB id for glc (MALI land ice) on component pes
+    mbgxid = -1   ! iMOAB id for glc migrated to coupler pes
+    mbintxlg = -1 ! iMOAB id of moab instance of map read from lnd2glc map file
+    mbintxgl = -1 ! iMOAB id of moab instance of map read from glc2lnd map file
     num_moab_exports = 0 ! mostly used in debugging
 
     deallocate(comps,comms)
@@ -690,6 +712,36 @@ contains
     call seq_comm_printcomms()
 
   end subroutine seq_comm_init
+
+  subroutine comp_exstride_init(driver_comm, comp_rootpe, comp_ntasks, comp_pestride, &
+       comp_exstride, num_inst_comp, xcount, drv_grp)
+    integer, intent(in) :: driver_comm
+    integer, intent(in) :: comp_rootpe
+    integer, intent(in) :: comp_ntasks
+    integer, intent(in) :: comp_pestride
+    integer, intent(in) :: comp_exstride
+    integer, intent(in) :: num_inst_comp
+    integer, intent(inout) :: xcount
+    integer, intent(in) :: drv_grp
+
+    character(len=*), parameter :: subname = "(comp_exstride_init) "
+    integer :: exlist(3), exgrp, ierr
+
+    xcount = xcount + 2*num_inst_comp + 2
+
+    exlist(1) = comp_rootpe
+    exlist(2) = comp_rootpe + (comp_ntasks - 1) * comp_pestride
+    exlist(3) = comp_exstride
+    call mpi_bcast(exlist, 3, MPI_INTEGER, 0, driver_comm, ierr)
+    call shr_mpi_chkerr(ierr,subname//' mpi_bcast exlist')
+
+    if (exlist(3) > 0) then
+       call mpi_group_range_incl(drv_grp, 1, exlist, exgrp, ierr)
+       call shr_mpi_chkerr(ierr,subname//' mpi_group_range_incl excl_group')
+       seq_comms(xcount)%excl_group = exgrp
+    endif
+
+  end subroutine comp_exstride_init
 
   subroutine comp_comm_init(driver_comm, comp_rootpe, comp_nthreads, comp_layout, &
        comp_ntasks, comp_pestride, comp_exstride, num_inst_comp, &
@@ -865,8 +917,8 @@ contains
     call shr_mpi_chkerr(ierr,subname//' mpi_group_range_incl mpigrp')
 
     ! exclude tasks dedicated to other components
-    do n = 3, ID
-       if (seq_comms(n)%excl_group >= 0) then
+    do n = 2, ncomps
+       if (seq_comms(n)%excl_group /= -1) then
           if (n == ID) cycle ! don't exclude self
           call mpi_group_difference(mpigrp, seq_comms(n)%excl_group, newgrp, ierr)
           call shr_mpi_chkerr(ierr,subname//' mpi_group_difference excl_group')

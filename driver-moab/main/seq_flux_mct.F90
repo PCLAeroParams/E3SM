@@ -1607,7 +1607,7 @@ contains
        index_xao_Faox_lwup = mct_aVect_indexRA(xao,'Faox_lwup')
        index_xao_Faox_swdn = mct_aVect_indexRA(xao,'Faox_swdn')
        index_xao_Faox_swup = mct_aVect_indexRA(xao,'Faox_swup')
-       index_xao_So_fswpen            = mct_aVect_indexRA(xao,'So_fswpen')
+       index_xao_So_fswpen            = mct_aVect_indexRA(xao,'So_fswpen_ao')
        index_xao_So_warm_diurn        = mct_aVect_indexRA(xao,'So_warm_diurn')
        index_xao_So_salt_diurn        = mct_aVect_indexRA(xao,'So_salt_diurn')
        index_xao_So_speed_diurn       = mct_aVect_indexRA(xao,'So_speed_diurn')
@@ -1935,51 +1935,9 @@ contains
     call mbSetCellTagVals(mbfid, 'So_u10', u10res, nloc)
     u10gust = sqrt(duu10n)
     call mbSetCellTagVals(mbfid, 'So_u10withgusts', u10gust, nloc)
-    call mbSetCellTagVals(mbfid, 'So_fswpen', fswpen, nloc)
-
-    do n = 1,nloc
-       if (mask(n) == 0) then
-          xao%rAttr(index_xao_Faox_sen ,n) = 0.0_r8
-          xao%rAttr(index_xao_Faox_lat ,n) = 0.0_r8
-          xao%rAttr(index_xao_Faox_taux,n) = 0.0_r8
-          xao%rAttr(index_xao_Faox_tauy,n) = 0.0_r8
-          xao%rAttr(index_xao_Faox_evap,n) = 0.0_r8
-          if ( index_xao_Faox_evap_16O /= 0 ) xao%rAttr(index_xao_Faox_evap_16O,n) = evap_16O(n)
-          if ( index_xao_Faox_evap_HDO /= 0 ) xao%rAttr(index_xao_Faox_evap_HDO,n) = evap_HDO(n)
-          if ( index_xao_Faox_evap_18O /= 0 ) xao%rAttr(index_xao_Faox_evap_18O,n) = evap_18O(n)
-          xao%rAttr(index_xao_So_tref  ,n) = 0.0_r8
-          xao%rAttr(index_xao_So_qref  ,n) = 0.0_r8
-          xao%rAttr(index_xao_So_ustar ,n) = 0.0_r8  ! friction velocity
-          xao%rAttr(index_xao_So_re    ,n) = 0.0_r8     ! reynolds number
-          xao%rAttr(index_xao_So_ssq   ,n) = 0.0_r8    ! s.hum. saturation at Ts
-          xao%rAttr(index_xao_Faox_lwup,n) = 0.0_r8
-          xao%rAttr(index_xao_So_duu10n,n) = 0.0_r8
-          xao%rAttr(index_xao_So_u10   ,n) = 0.0_r8
-          xao%rAttr(index_xao_So_u10withgusts   ,n) = 0.0_r8
-          if (flux_diurnal) then
-           xao%rAttr(index_xao_So_warm_diurn       ,n) = warm(n)
-           xao%rAttr(index_xao_So_salt_diurn       ,n) = salt(n)
-           xao%rAttr(index_xao_So_speed_diurn      ,n) = speed(n)
-           xao%rAttr(index_xao_So_regime_diurn     ,n) = regime(n)
-           xao%rAttr(index_xao_So_warmMax_diurn    ,n) = warmMax(n)
-           xao%rAttr(index_xao_So_windMax_diurn    ,n) = windMax(n)
-           xao%rAttr(index_xao_So_qSolAvg_diurn    ,n) = qSolAvg(n)
-           xao%rAttr(index_xao_So_windAvg_diurn    ,n) = windAvg(n)
-           xao%rAttr(index_xao_So_warmMaxInc_diurn ,n) = warmMaxInc(n)
-           xao%rAttr(index_xao_So_windMaxInc_diurn ,n) = windMaxInc(n)
-           xao%rAttr(index_xao_So_qSolInc_diurn    ,n) = qSolInc(n)
-           xao%rAttr(index_xao_So_windInc_diurn    ,n) = windInc(n)
-           xao%rAttr(index_xao_So_nInc_diurn       ,n) = nInc(n)
-           xao%rAttr(index_xao_So_tbulk_diurn      ,n) = tbulk(n)
-           xao%rAttr(index_xao_So_tskin_diurn      ,n) = tskin(n)
-           xao%rAttr(index_xao_So_tskin_day_diurn  ,n) = tskin_day(n)
-           xao%rAttr(index_xao_So_tskin_night_diurn,n) = tskin_night(n)
-           xao%rAttr(index_xao_So_cskin_diurn      ,n) = cskin(n)
-           xao%rAttr(index_xao_So_cskin_night_diurn,n) = cskin_night(n)
-           xao%rAttr(index_xao_So_fswpen           ,n) = fswpen(n)
-          endif
-       end if
-    enddo
+    ! xao copy of fswpen: renamed So_fswpen_ao so it does not collide with the o2x So_fswpen
+    ! tag on the shared (aliased) ocn coupler mesh. See seq_flds_mod / cplcomp_moab_init_ocn.
+    call mbSetCellTagVals(mbfid, 'So_fswpen_ao', fswpen, nloc)
 
 #ifdef MOABDEBUG
         ! debug out file

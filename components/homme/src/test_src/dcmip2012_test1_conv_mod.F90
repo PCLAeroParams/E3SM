@@ -48,8 +48,8 @@ contains
     v = k0*sin(2.d0*lonp)*cos(lat)*cos(pi*time/tau)
   end subroutine get_nondiv2d_uv
 
-  subroutine get_nondiv3d_uv(bs, pbot, ptop, zbot, ztop, ztaper, time, lon, lat, p, z, u, v, w)
-    real(rt), intent(in ) :: bs, pbot, ptop, zbot, ztop, ztaper, time, lon, lat, p, z
+  subroutine get_nondiv3d_uv( pbot, ptop, ztaper, time, lon, lat, p, u, v, w)
+    real(rt), intent(in ) :: pbot, ptop, ztaper, time, lon, lat, p
     real(rt), intent(out) :: u, v, w
 
     real(rt), parameter :: omega0  = (2*23000.d0*pi)/tau
@@ -312,12 +312,17 @@ contains
           tau_topo = tau_h
        end if
        u_topo_fac = -u0_topo/two
+       ! The mountain center moves with velocity
+       !    u(time) = cos(pi time/tau_topo) u_topo_fac
+       ! Then the position is
+       !    p(time) = int_0^time u(t) dt
+       !            = sin(pi time/tau_topo) (tau_topo/pi) u_topo_fac
        lambdam_t = lambdam_t + &
-            &      sin(pi*time/tau_topo)*(tau_topo/pi)*u_topo_fac & ! integral of u at lat = 0
+            &      sin(pi*time/tau_topo)*(tau_topo/pi)*u_topo_fac &
             &      /a ! to radians
     end if
     r = great_circle_dist(lambdam_t, phim, lon, lat)
-    if (r .lt. Rm) then
+    if (r < Rm) then
        zs = (h0/2.d0)*(one+cos(pi*r/Rm))*cos(pi*r/zetam)**2.d0
     else
        zs = zero
@@ -364,8 +369,8 @@ contains
        ! 3D nondiv flow.
        ptop_t = p0*exp(-ztop_t/H)
        ptop = p0*exp(-ztop/H)
-       call get_nondiv3d_uv(bs_a, ptop_t, ptop, ztop_t, ztop, ztaper, &
-            &               time, lon + lon_offset, lat, p, z, u, v, w)
+       call get_nondiv3d_uv( ptop_t, ptop, ztaper, &
+            &               time, lon + lon_offset, lat, p, u, v, w)
     case('e')
        ! Similar to Hadley-like flow but with more smoothness in derivatives.
        u = u0_h*cos(lat)*cos(pi*time/tau_h)*ztaper
@@ -381,8 +386,9 @@ contains
           fz_z = -3*sin(gz)**2*cos(gz)*gz_z
        end if
        c0 = w0_h*(rho0/rho)*cos(pi*time/tau_h)
-       w =    c0*(cos(lat)*fl_lat - 2*sin(lat)*fl)*fz
-       v = -a*c0*(cos(lat)*fl                    )*fz_z
+       ! Don't use this because !use_w:
+       !   w = c0*(cos(lat)*fl_lat - 2*sin(lat)*fl)*fz
+       v = -a*c0*(cos(lat)*fl)*fz_z
     case default
        call abortmp('test1_conv_advection_orography: invalid case')
     end select
@@ -470,6 +476,7 @@ contains
     use parallel_mod, only: global_shared_buf, global_shared_sum
     use global_norms_mod, only: wrap_repro_sum
     use physical_constants, only: Rd => Rgas, p0
+    use kinds, only: iulog
 
     character(len=*), intent(in) :: test_case
     type(element_t), intent(in) :: elem(:)
@@ -534,13 +541,14 @@ contains
     end do
     
     if (par%masterproc) then
-       print '(a)', 'test1_conv>                          l2                    linf'
+       write(iulog, '(a)') &
+            'test1_conv>                          l2                    linf'
        do iq = 1,qsize
           a = global_shared_sum(2*iq-1)
           b = global_shared_sum(2*iq)
           reldif = sqrt(a/b)
-          print '(a,i2,es24.16,es24.16)', 'test1_conv> Q', &
-               iq, reldif, linf_num(iq)/linf_den(iq)
+          write(iulog, '(a,i2,es24.16,es24.16)') &
+               'test1_conv> Q', iq, reldif, linf_num(iq)/linf_den(iq)
        end do
     end if
   end subroutine test1_conv_print_results

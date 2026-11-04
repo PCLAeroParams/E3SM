@@ -61,7 +61,6 @@ OPTIONS
                            (Needed to run build-namelist from SourceMods dir)
      -inst_string          inst_string variable
      -ocn_bgc              ocean BGC configuration
-     -ocn_wave             ocean wave coupling flag
      -ocn_co2_type         how atm co2 is set within MPASO
      -atm_co2_const_val    value of atm co2 if ocn_co2_type = constant
      -ice_bgc              check for coupling with sea ice BGC
@@ -118,7 +117,6 @@ my %opts = ( help          => 0,
              decomp_prefix => undef,
              date_stamp    => undef,
              ocn_bgc       => undef,
-             ocn_wave      => undef,
              ocn_co2_type      => undef,
              atm_co2_const_val => undef,
              ice_bgc       => undef,
@@ -146,7 +144,6 @@ GetOptions(
     "decomp_prefix=s" => \$opts{'decomp_prefix'},
     "date_stamp=s"    => \$opts{'date_stamp'},
     "ocn_bgc=s"       => \$opts{'ocn_bgc'},
-    "ocn_wave=s"      => \$opts{'ocn_wave'},
     "ocn_co2_type=s"      => \$opts{'ocn_co2_type'},
     "atm_co2_const_val=s" => \$opts{'atm_co2_const_val'},
     "ice_bgc=s"       => \$opts{'ice_bgc'},
@@ -191,7 +188,6 @@ my $OCN_SGR       = $opts{'ocn_sgr'};
 my $decomp_prefix = $opts{'decomp_prefix'};
 my $date_stamp    = $opts{'date_stamp'};
 my $ocn_bgc       = $opts{'ocn_bgc'};
-my $ocn_wave      = $opts{'ocn_wave'};
 my $ocn_co2_type      = $opts{'ocn_co2_type'};
 my $atm_co2_const_val = $opts{'atm_co2_const_val'};
 my $ice_bgc       = $opts{'ice_bgc'};
@@ -448,6 +444,8 @@ my $RUN_STARTDATE          = "$xmlvars{'RUN_STARTDATE'}";
 my $START_TOD              = "$xmlvars{'START_TOD'}";
 my $RUN_REFDATE            = "$xmlvars{'RUN_REFDATE'}";
 my $CONTINUE_RUN           = "$xmlvars{'CONTINUE_RUN'}";
+my $COMP_OCN               = "$xmlvars{'COMP_OCN'}";
+my $COMP_WAV               = "$xmlvars{'COMP_WAV'}";
 
 my $output_r = "./${CASE}.mpaso.r";
 my $output_h = "./${CASE}.mpaso.h";
@@ -528,6 +526,12 @@ add_default($nl, 'config_dt');
 add_default($nl, 'config_time_integrator');
 add_default($nl, 'config_number_of_time_levels');
 
+#################################
+# Namelist group: lateral_walls #
+#################################
+
+add_default($nl, 'config_wall_slip_factor');
+
 ########################
 # Namelist group: hmix #
 ########################
@@ -562,9 +566,14 @@ add_default($nl, 'config_tracer_del4');
 ##############################
 
 add_default($nl, 'config_use_Leith_del2');
-add_default($nl, 'config_Leith_parameter');
+add_default($nl, 'config_use_Leith_del4');
+add_default($nl, 'config_Leith_del2_parameter');
+add_default($nl, 'config_Leith_del4_parameter');
+add_default($nl, 'config_Leith_del2_div_scaler');
+add_default($nl, 'config_Leith_del4_div_scaler');
 add_default($nl, 'config_Leith_dx');
 add_default($nl, 'config_Leith_visc2_max');
+add_default($nl, 'config_Leith_visc4_max');
 
 #########################################
 # Namelist group: Redi_isopycnal_mixing #
@@ -593,6 +602,8 @@ add_default($nl, 'config_submesoscale_tau');
 add_default($nl, 'config_submesoscale_Ce');
 add_default($nl, 'config_submesoscale_Lfmin');
 add_default($nl, 'config_submesoscale_ds_max');
+add_default($nl, 'config_submesoscale_ice_aware');
+add_default($nl, 'config_submesoscale_ice_aware_crit_conc');
 
 ############################################
 # Namelist group: GM_eddy_parameterization #
@@ -612,6 +623,11 @@ add_default($nl, 'config_GM_EG_riMin');
 add_default($nl, 'config_GM_EG_kappa_factor');
 add_default($nl, 'config_GM_EG_Rossby_factor');
 add_default($nl, 'config_GM_EG_Rhines_factor');
+add_default($nl, 'config_GM_geometric_alpha');
+add_default($nl, 'config_GM_geometric_eddyDiff');
+add_default($nl, 'config_GM_geometric_dissipation');
+add_default($nl, 'config_GM_geometric_backgroundEddyEnergy');
+add_default($nl, 'config_GM_geometric_maximumEddyEnergy');
 add_default($nl, 'config_GM_horizontal_taper');
 add_default($nl, 'config_GM_horizontal_ramp_min');
 add_default($nl, 'config_GM_horizontal_ramp_max');
@@ -643,6 +659,7 @@ add_default($nl, 'config_use_cvmix');
 add_default($nl, 'config_cvmix_prandtl_number');
 add_default($nl, 'config_cvmix_background_scheme');
 add_default($nl, 'config_cvmix_background_diffusion');
+add_default($nl, 'config_cvmix_background_diffusion_max_latitude');
 add_default($nl, 'config_cvmix_background_diffusion_passive');
 add_default($nl, 'config_cvmix_background_diffusion_passive_enable');
 add_default($nl, 'config_cvmix_background_viscosity');
@@ -681,7 +698,7 @@ add_default($nl, 'configure_cvmix_kpp_minimum_OBL_under_sea_ice');
 add_default($nl, 'config_cvmix_kpp_stop_OBL_search');
 add_default($nl, 'config_cvmix_kpp_use_enhanced_diff');
 add_default($nl, 'config_cvmix_kpp_nonlocal_with_implicit_mix');
-if ($ocn_wave eq 'true' ) {
+if ($COMP_WAV eq 'ww3' and $COMP_OCN eq 'mpaso' ) {
 	add_default($nl, 'config_cvmix_kpp_use_theory_wave', 'val'=>'.false.');
 	add_default($nl, 'config_cvmix_kpp_use_active_wave', 'val'=>'.true.');
 	add_default($nl, 'config_cvmix_kpp_langmuir_mixing_opt', 'val'=>'LWF16');
@@ -696,10 +713,12 @@ if ($ocn_wave eq 'true' ) {
 # Namelist group: wave_coupling #
 #################################
 
-if ($ocn_wave eq 'true' ) {
+if ($COMP_WAV eq 'ww3' and $COMP_OCN eq 'mpaso' ) {
 	add_default($nl, 'config_use_active_wave', 'val'=>'.true.');
+	add_default($nl, 'config_momentum_use_active_wave', 'val'=>'.true.');
 } else {
 	add_default($nl, 'config_use_active_wave', 'val'=>'.false.');
+	add_default($nl, 'config_momentum_use_active_wave', 'val'=>'.false.');
 }
 add_default($nl, 'config_n_stokes_drift_wavenumber_partitions');
 
@@ -751,26 +770,26 @@ add_default($nl, 'config_precip_scaling_write_to_logfile');
 # Namelist group: coupling #
 ############################
 
-# When we have a data representation of icebergs, remove ice runoff
-if ($OCN_ICEBERG eq 'true') {
-	add_default($nl, 'config_remove_ais_ice_runoff', 'val'=>".true.");
+# handling of config_remove_ais_ice_runoff:
+if ($OCN_FORCING eq 'active_atm') {
+  # For fully coupled B-cases with active ATM/LND/ROF:
+  if ($OCN_ICEBERG eq 'true') {
+    # When we have a data representation of icebergs, remove ice runoff
+    add_default($nl, 'config_remove_ais_ice_runoff', 'val'=>".true.");
+  } else {
+    add_default($nl, 'config_remove_ais_ice_runoff', 'val'=>".false.");
+  }
 } else {
-	add_default($nl, 'config_remove_ais_ice_runoff', 'val'=>".false.");
+  # For cases without active ATM/LND/ROF (i.e. G cases),
+  # removal of AIS ice runoff is handled in the DROF component,
+  # so this option should be set to false in MPAS-O.
+  add_default($nl, 'config_remove_ais_ice_runoff', 'val'=>".false.");
 }
-# Assume river runoff corresponds to ISMF in Southern Ocean only for G-cases
-# (true for JRA). When atm active, we assume liquid runoff corresonds to precip
-# or snow melt so we do not remove it. In either case, the energy for melting
-# doesn't come from the ocean.
-if ((   ($OCN_GLC_ISMF_COUPLING eq 'coupler')
-     || ($OCN_GLC_ISMF_COUPLING eq 'internal_mpaso')
-     || ($OCN_GLC_ISMF_COUPLING eq 'data_mpaso')
-    )
-    && ($OCN_FORCING ne 'active_atm'))
-{
-	add_default($nl, 'config_remove_ais_river_runoff', 'val'=>".true.");
-} else {
-	add_default($nl, 'config_remove_ais_river_runoff', 'val'=>".false.");
-}
+# The functionality of config_remove_ais_river_runoff is now handled in
+# the DROF component at components/data_comps/drof/cime_config/buildnml,
+# so there no longer is a situation where it needs to change from its
+# default value of false.
+add_default($nl, 'config_remove_ais_river_runoff');
 add_default($nl, 'config_scale_dismf_by_removed_ice_runoff');
 add_default($nl, 'config_ais_ice_runoff_history_days');
 add_default($nl, 'config_n_glc_z_levels', 'val'=>"$GLC_NZOC");
@@ -833,6 +852,8 @@ add_default($nl, 'config_use_frazil_ice_porosity');
 add_default($nl, 'config_frazil_ice_density');
 add_default($nl, 'config_frazil_ice_porosity');
 add_default($nl, 'config_frazil_fractional_thickness_limit');
+add_default($nl, 'config_include_sensible_heat_frazil');
+add_default($nl, 'config_expel_excess_frazil_salt');
 add_default($nl, 'config_specific_heat_sea_water');
 add_default($nl, 'config_frazil_maximum_depth');
 add_default($nl, 'config_frazil_sea_ice_reference_salinity');
@@ -1231,6 +1252,8 @@ if ($ice_bgc eq 'ice_bgc' ) {
         add_default($nl, 'config_use_ecosysTracers_sea_ice_coupling', 'val'=>".false.");
 }
 add_default($nl, 'config_use_ecosysTracers_river_inputs_from_coupler');
+add_default($nl, 'config_use_ecosysTracers_atm_dust_from_coupler');
+add_default($nl, 'config_use_ecosysTracers_iron_solubility_file');
 
 ####################################################
 # Namelist group: tracer_forcing_freshwaterTracers #
@@ -1899,6 +1922,7 @@ my @groups = qw(run_modes
                 io
                 decomposition
                 time_integration
+                lateral_walls
                 hmix
                 hmix_del2
                 hmix_del4

@@ -68,14 +68,7 @@ void Functions<S,D>::gwd_compute_tendencies_from_stress_divergence(
 
       // Determine the wind tendency, including excess stress carried down
       // from above.
-      Real ubtl = C::gravit * (tau(pl_idx,k+1)-tau(pl_idx,k)) * rdpm(k);
-
-      if (init.orographic_only) {
-        // Require that the tendency be no larger than the analytic
-        // solution for a saturated region [proportional to (u-c)^3].
-        Real ubtlsat = init.effkwv * std::abs(bfb_cube(c(pl_idx)-ubm(k))) / (2*GWC::rog*t(k)*nm(k));
-        ubtl = ekat::impl::min(ubtl, ubtlsat);
-      }
+      Real ubtl = C::gravit.value * (tau(pl_idx,k+1)-tau(pl_idx,k)) * rdpm(k);
 
       // Apply tendency limits to maintain numerical stability.
       // 1. du/dt < |c-u|/dt  so u-c cannot change sign
@@ -93,12 +86,7 @@ void Functions<S,D>::gwd_compute_tendencies_from_stress_divergence(
         // atomic_sum for a workspace item ubt(k) are another option here. It works
         // but, since the order of operations is non-deterministic, there are
         // non-deterministic round-off differences from run to run.
-        if (!init.orographic_only) {
-          work(k, pl_idx) = gwut(k,pl_idx);
-        }
-        else {
-          work(k, pl_idx) = Kokkos::copysign(ubtl, c(pl_idx)-ubm(k));
-        }
+        work(k, pl_idx) = gwut(k,pl_idx);
 
         // Redetermine the effective stress on the interface below from
         // the wind tendency. If the wind tendency was limited above,
@@ -106,7 +94,7 @@ void Functions<S,D>::gwd_compute_tendencies_from_stress_divergence(
         // causing stress divergence in the next layer down. This
         // smoothes large stress divergences downward while conserving
         // total stress.
-        tau(pl_idx,k+1) = tau(pl_idx,k) + ubtl * dpm(k) / C::gravit;
+        tau(pl_idx,k+1) = tau(pl_idx,k) + ubtl * dpm(k) / C::gravit.value;
       }
     }
   });
@@ -122,15 +110,15 @@ void Functions<S,D>::gwd_compute_tendencies_from_stress_divergence(
     }
 
     // Project the mean wind tendency onto the components.
-    if (!init.orographic_only) {
-      utgw(k) = ubt * xv;
-      vtgw(k) = ubt * yv;
-    }
-    else {
-      utgw(k) = ubt * xv * effgw * ptaper;
-      vtgw(k) = ubt * yv * effgw * ptaper;
-    }
+    utgw(k) = ubt * xv;
+    vtgw(k) = ubt * yv;
   });
+
+  // All team threads must be done reading `work` before the slot goes back to
+  // the pool: only (tend_level-ktop) threads take an iteration of the sum loop
+  // above, so the rest fall straight through into the next routine, which takes
+  // this same memory and writes it immediately.
+  team.team_barrier();
 
   // Release temporary variables from the workspace
   workspace.release(work_1d);

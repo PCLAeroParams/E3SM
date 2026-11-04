@@ -56,8 +56,26 @@ TEST_CASE("point_grid", "") {
     REQUIRE (dcopy_gids[i]==grid_gids[i]);
   }
 
-  shallow_copy->reset_num_vertical_lev(4);
+  shallow_copy->reset_vertical_configuration(4, AbstractGrid::VKind::Model);
   REQUIRE (shallow_copy->get_num_vertical_levels()==4);
+
+  // Same gids, whether shared or copied, and regardless of nlevs
+  REQUIRE (shallow_copy->has_same_gids_as(*grid));
+  REQUIRE (deep_copy->has_same_gids_as(*grid));
+
+  // Different number of gids
+  auto smaller = create_point_grid("smaller", num_global_cols-1, num_levels, comm);
+  REQUIRE (not smaller->has_same_gids_as(*grid));
+
+  // Same gids in a different order on rank 0 only: all ranks must say no
+  auto swapped = grid->clone("swapped",false);
+  if (comm.rank()==0) {
+    auto gids = swapped->get_dofs_gids();
+    auto gids_h = gids.get_view<gid_type*,Host>();
+    std::swap(gids_h(0),gids_h(1));
+    gids.sync_to_dev();
+  }
+  REQUIRE (not swapped->has_same_gids_as(*grid));
 }
 
 } // namespace scream

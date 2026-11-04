@@ -101,7 +101,7 @@ void Functions<S,D>::gw_ediff(
   // Calculate dt * (gravit*rho)^2/dp at interior interfaces.
   Kokkos::parallel_for(
     Kokkos::TeamVectorRange(team, ktop+2, kbot+2), [&] (const int k) {
-      tmpi2(k) = dt * bfb_square(C::gravit * rho(k)) / (pmid(k) - pmid(k-1));
+      tmpi2(k) = dt * bfb_square(C::gravit.value * rho(k)) / (pmid(k) - pmid(k-1));
   });
 
   team.team_barrier();
@@ -111,6 +111,8 @@ void Functions<S,D>::gw_ediff(
   // in vd_lu_decomp they are expected as midpoints.
   vd_lu_decomp(team, pver,
                zero, egwdffi, tmpi2, rdpm, dt, zero, ktop+1, kbot+1, decomp_ca, decomp_cc, decomp_dnom, decomp_ze);
+
+  team.team_barrier();
 
   workspace.template release_many_contiguous<2>(
     {&egwdffm, &tmpi2});

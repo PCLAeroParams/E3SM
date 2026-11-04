@@ -2,17 +2,14 @@
 
 #include "share/io/eamxx_output_manager.hpp"
 #include "share/io/scorpio_output.hpp"
-#include "share/io/scorpio_input.hpp"
 #include "share/scorpio_interface/eamxx_scorpio_interface.hpp"
 
 #include "share/data_managers/mesh_free_grids_manager.hpp"
 #include "share/grid/point_grid.hpp"
 
-#include "share/field/field_identifier.hpp"
-#include "share/field/field_header.hpp"
-#include "share/field/field.hpp"
 #include "share/data_managers/field_manager.hpp"
 #include "share/field/field_utils.hpp"
+#include "share/field/field.hpp"
 #include "share/core/eamxx_setup_random_test.hpp"
 
 #include "share/core/eamxx_types.hpp"
@@ -36,11 +33,10 @@ clone_fm (const std::shared_ptr<const FieldManager>& fm);
 std::shared_ptr<GridsManager>
 get_test_gm(const ekat::Comm& comm, const Int num_gcols, const Int num_levs);
 
-template<typename Engine>
-void randomize_fields (const FieldManager& fm, Engine& engine);
+void randomize_fields (const FieldManager& fm, int seed);
 
 void time_advance (const FieldManager& fm,
-                   const std::list<ekat::CaseInsensitiveString>& fnames,
+                   const std::vector<std::string>& fnames,
                    const int dt);
 
 TEST_CASE("output_restart","io")
@@ -53,7 +49,7 @@ TEST_CASE("output_restart","io")
   int num_levs = 3;
   int dt = 1;
 
-  auto engine = setup_random_test(&comm);
+  auto seed = get_random_test_seed(&comm);
 
   // First set up a field manager and grids manager to interact with the output functions
   auto gm = get_test_gm(comm,num_gcols,num_levs);
@@ -61,9 +57,12 @@ TEST_CASE("output_restart","io")
 
   // The the IC field manager
   auto fm0 = get_test_fm(grid);
-  randomize_fields(*fm0,engine);
+  randomize_fields(*fm0,seed);
 
-  const auto& out_fields = fm0->get_group_info("output").m_fields_names;
+  auto out_group = fm0->get_field_group("output");
+  std::vector<std::string> out_fields;
+  for (auto it : out_group.individual_fields())
+    out_fields.push_back(it.first);
 
   // Initialize the pio_subsystem for this test:
   scorpio::init_subsystem(comm);
@@ -164,11 +163,11 @@ get_test_fm(const std::shared_ptr<const AbstractGrid>& grid)
   // Create a fm
   auto fm = std::make_shared<FieldManager>(grid);
 
-  auto scalar_1d = grid->get_vertical_layout(true);
+  auto scalar_1d = grid->get_vertical_layout(LEV);
   auto scalar_2d = grid->get_2d_scalar_layout();
-  auto scalar_3d = grid->get_3d_scalar_layout(true);
-  auto vector_3d = grid->get_3d_vector_layout(true,2);
-  auto rad_vector_3d = grid->get_3d_vector_layout(true,3,"SWBND");
+  auto scalar_3d = grid->get_3d_scalar_layout(LEV);
+  auto vector_3d = grid->get_3d_vector_layout(LEV,2);
+  auto rad_vector_3d = grid->get_3d_vector_layout(LEV,3,"SWBND");
 
   const std::string& gn = grid->name();
 
@@ -201,30 +200,26 @@ std::shared_ptr<FieldManager>
 clone_fm(const std::shared_ptr<const FieldManager>& src) {
   auto copy = std::make_shared<FieldManager>(src->get_grid(),RepoState::Closed);
   for (auto it : src->get_repo()) {
-    copy->add_field(it.second->clone());
+    copy->add_field(it.second->clone(CloneFlags::All));
   }
 
   return copy;
 }
 
 /*=================================================================================================*/
-template<typename Engine>
-void randomize_fields (const FieldManager& fm, Engine& engine)
+void randomize_fields (const FieldManager& fm, int seed)
 {
-  using RPDF = std::uniform_real_distribution<Real>;
-  RPDF pdf(0.01,0.99);
-
   // Initialize these fields
   const auto& f1 = fm.get_field("field_1");
   const auto& f2 = fm.get_field("field_2");
   const auto& f3 = fm.get_field("field_3");
   const auto& f4 = fm.get_field("field_4");
   const auto& f5 = fm.get_field("field_5");
-  randomize(f1,engine,pdf);
-  randomize(f2,engine,pdf);
-  randomize(f3,engine,pdf);
-  randomize(f4,engine,pdf);
-  randomize(f5,engine,pdf);
+  randomize_uniform(f1,seed++);
+  randomize_uniform(f2,seed++);
+  randomize_uniform(f3,seed++);
+  randomize_uniform(f4,seed++);
+  randomize_uniform(f5,seed++);
 }
 
 /*=============================================================================================*/
@@ -237,7 +232,7 @@ get_test_gm(const ekat::Comm& comm, const Int num_gcols, const Int num_levs)
 }
 /*===================================================================================================*/
 void time_advance (const FieldManager& fm,
-                   const std::list<ekat::CaseInsensitiveString>& fnames,
+                   const std::vector<std::string>& fnames,
                    const int dt) {
   for (const auto& fname : fnames) {
     auto f  = fm.get_field(fname);

@@ -40,7 +40,8 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     restartdir,    &       ! name of the restart directory for OUTPUT
     runtype,       &
     integration,   &       ! integration method
-    theta_hydrostatic_mode,       &   
+    theta_hydrostatic_mode,       &
+    do_3d_turbulence,   &
     transport_alg , &      ! SE Eulerian, classical SL, cell-integrated SL
     semi_lagrange_cdr_alg, &     ! see control_mod for semi_lagrange_* descriptions
     semi_lagrange_cdr_check, &
@@ -75,11 +76,14 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     dcmip16_pbl_type,&
     interp_lon0,    &
     hypervis_scaling,   &  ! use tensor HV instead of scalar coefficient
+    laplace_scaling,   &   ! use tensor laplace instead of scalar coefficient
     disable_diagnostics, & ! use to disable diagnostics for timing reasons
     hypervis_order,       &
     hypervis_subcycle,    &
+    horiz_turb_subcycle,&
     hypervis_subcycle_tom,&
     hypervis_subcycle_q,  &
+    horiz_turb_subcycle_q, &
     smooth_phis_numcycle, &
     smooth_phis_p2filt, &
     smooth_phis_nudt,     &
@@ -204,19 +208,21 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use mesh_mod, only : MeshOpen
 #endif
+    use mpi
     character(len=*), intent(in) :: NLFilename  ! namelist filename
 #else
   subroutine readnl(par)
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use mesh_mod, only : MeshOpen
 #endif
+    use mpi
 #endif
     type (parallel_t), intent(in) ::  par
     character(len=MAX_FILE_LEN) :: mesh_file
     integer :: se_ftype, se_limiter_option
     integer :: se_nsplit
     integer :: interp_nlat, interp_nlon, interp_gridtype
-    integer :: i, ii
+    integer :: i
 #if !defined(CAM) && !defined(SCREAM)
 #if !defined(HOMME_WITHOUT_PIOLIBRARY)
     integer :: j
@@ -224,7 +230,6 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     integer :: interp_type
 #endif
     integer  :: ierr
-    character(len=80) :: errstr, arg
     real(kind=real_kind) :: dt_max, se_tstep
 #if defined(CAM) || defined(SCREAM)
     character(len=MAX_STRING_LEN) :: se_topology, se_geometry
@@ -273,7 +278,8 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
       ne_y,            &             ! element resolution factor in y-dir for planar
       statefreq,     &             ! number of steps per printstate call
       integration,   &             ! integration method
-      theta_hydrostatic_mode,       &   
+      theta_hydrostatic_mode,       &
+      do_3d_turbulence, &
       transport_alg , &      ! SE Eulerian, classical SL, cell-integrated SL
       semi_lagrange_cdr_alg, &
       semi_lagrange_cdr_check, &
@@ -309,9 +315,12 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
       dcmip16_pbl_type,&
       hypervis_order,    &
       hypervis_subcycle, &
+      horiz_turb_subcycle, &
       hypervis_subcycle_tom, &
       hypervis_subcycle_q, &
+      horiz_turb_subcycle_q, &
       hypervis_scaling, &
+      laplace_scaling, &
       smooth_phis_numcycle, &
       smooth_phis_p2filt, &
       smooth_phis_nudt, &
@@ -460,21 +469,11 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     ne              = 0
     ne_x              = 0
     ne_y              = 0
-    transport_alg = 0
-    semi_lagrange_cdr_alg = 3
-    semi_lagrange_cdr_check = .false.
-    semi_lagrange_hv_q = 1
-    semi_lagrange_nearest_point_lev = 256
-    semi_lagrange_halo = 2
-    semi_lagrange_trajectory_nsubstep = 0
-    semi_lagrange_trajectory_nvelocity = -1
-    semi_lagrange_diagnostics = 0
     disable_diagnostics = .false.
-    se_fv_phys_remap_alg = 1
-    internal_diagnostics_level = 0
     planar_slice = .false.
 
     theta_hydrostatic_mode = .true.    ! for preqx, this must be .true.
+    do_3d_turbulence = .false.
 #if ( defined MODEL_THETA_C || defined MODEL_THETA_L ) 
     theta_hydrostatic_mode = .false.   ! default NH
 #endif
@@ -582,20 +581,7 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
            test_case(1:13)== "jw_baroclinic"  .or. &
            test_case(1:5) == "dcmip"          .or. &
            test_case(1:5) == "mtest"          .or. &
-           test_case      == "planar_hydro_gravity_wave"            .or. &
-           test_case      == "planar_nonhydro_gravity_wave"           .or. &
-           test_case      == "planar_hydro_mtn_wave"            .or. &
-           test_case      == "planar_nonhydro_mtn_wave"           .or. &
-           test_case      == "planar_schar_mtn_wave"            .or. &
-           test_case      == "planar_rising_bubble"             .or. &
-           test_case      == "planar_rising_bubble_pg2"         .or. &
-           test_case      == "planar_density_current"             .or. &
-           test_case      == "planar_baroclinic_instab"             .or. &
-           test_case      == "planar_moist_rising_bubble"            .or. &
-           test_case      == "planar_moist_density_current"            .or. &
-           test_case      == "planar_moist_baroclinic_instab"            .or. &
-           test_case      == "planar_tropical_cyclone"             .or. &
-           test_case      == "planar_supercell"             .or. &
+           test_case(1:6) == "planar"         .or. &
            test_case(1:4) == "asp_")  then
          write(iulog,*) "reading vertical namelist..."
 
@@ -834,9 +820,12 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
     call MPI_bcast(disable_diagnostics,1,MPIlogical_t,par%root,par%comm,ierr)
     call MPI_bcast(hypervis_order,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(hypervis_scaling,1,MPIreal_t   ,par%root,par%comm,ierr)
+    call MPI_bcast(laplace_scaling,1,MPIreal_t   ,par%root,par%comm,ierr)
     call MPI_bcast(hypervis_subcycle,1,MPIinteger_t   ,par%root,par%comm,ierr)
+    call MPI_bcast(horiz_turb_subcycle,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(hypervis_subcycle_tom,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(hypervis_subcycle_q,1,MPIinteger_t   ,par%root,par%comm,ierr)
+    call MPI_bcast(horiz_turb_subcycle_q,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(smooth_phis_numcycle,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(smooth_phis_p2filt,1,MPIinteger_t   ,par%root,par%comm,ierr)
     call MPI_bcast(smooth_phis_nudt,1,MPIreal_t   ,par%root,par%comm,ierr)
@@ -874,6 +863,7 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
 #endif
 
     call MPI_bcast(theta_hydrostatic_mode ,1,MPIlogical_t,par%root,par%comm,ierr)
+    call MPI_bcast(do_3d_turbulence, 1, MPIlogical_t,par%root,par%comm,ierr)
     call MPI_bcast(transport_alg ,1,MPIinteger_t,par%root,par%comm,ierr)
     call MPI_bcast(semi_lagrange_cdr_alg ,1,MPIinteger_t,par%root,par%comm,ierr)
     call MPI_bcast(semi_lagrange_cdr_check ,1,MPIlogical_t,par%root,par%comm,ierr)
@@ -979,6 +969,8 @@ use physical_constants, only : Sx, Sy, Lx, Ly, dx, dy, dx_ref, dy_ref
           call abortmp('hypervis_subcycle auto determine only supported for nv==4 and topology==cube')
        endif
     endif
+    if (horiz_turb_subcycle == -1) horiz_turb_subcycle = hypervis_subcycle
+    if (horiz_turb_subcycle_q < 0) horiz_turb_subcycle_q = hypervis_subcycle_q
 #endif
     ! set defautl for dynamics remap
     if (vert_remap_u_alg == -2) vert_remap_u_alg = vert_remap_q_alg
@@ -1194,6 +1186,7 @@ end if
           write(iulog,*)"readnl: rk_stage_user   = ",rk_stage_user
        endif
        write(iulog,*)"readnl: theta_hydrostatic_mode = ",theta_hydrostatic_mode
+       write(iulog,*)"readnl: do_3d_turbulence = ",do_3d_turbulence
        write(iulog,*)"readnl: transport_alg   = ",transport_alg
        write(iulog,*)"readnl: semi_lagrange_cdr_alg   = ",semi_lagrange_cdr_alg
        write(iulog,*)"readnl: semi_lagrange_cdr_check   = ",semi_lagrange_cdr_check
@@ -1213,6 +1206,9 @@ end if
        write(iulog,*)"readnl: hv_theta_thresh   = ",hv_theta_thresh
        if (hv_ref_profiles==0 .and. hv_theta_correction==1) then
           call abortmp("hv_theta_correction=1 requires hv_ref_profiles=1 or 2")
+       endif
+       if (theta_advect_form==2 .and. pgrad_correction /= 0) then
+          call abortmp("theta_advect_form=2 (splitform) should not be used with pgrad_correction/=0")
        endif
        
        write(iulog,*)"readnl: vert_remap_q_alg  = ",vert_remap_q_alg
@@ -1237,14 +1233,21 @@ end if
        write(iulog,*)"readnl: internal_diagnostics_level = ",internal_diagnostics_level
 
        if(hypervis_scaling /=0)then
-          write(iulog,*)"Tensor hyperviscosity:  hypervis_scaling=",hypervis_scaling
+          write(iulog,*)"Tensor hyperviscosity: hypervis_scaling=",hypervis_scaling
        else
-          write(iulog,*)"Constant (hyper)viscosity used."
+          write(iulog,*)"Constant (hyper)viscosity.  hypervis_scaling=",hypervis_scaling
+       endif
+       if(laplace_scaling /=0)then
+          write(iulog,*)"Sponge layer viscosity: laplace_scaling=",laplace_scaling
+       else
+          write(iulog,*)"Sponge layer Constant viscosity. laplace_scaling=",laplace_scaling
        endif
 
        write(iulog,*)"hypervis_subcycle     = ",hypervis_subcycle
+       write(iulog,*)"horiz_turb_subcycle = ",horiz_turb_subcycle
        write(iulog,*)"hypervis_subcycle_tom = ",hypervis_subcycle_tom
        write(iulog,*)"hypervis_subcycle_q   = ",hypervis_subcycle_q
+       write(iulog,*)"horiz_turb_subcycle_q = ",horiz_turb_subcycle_q
        write(iulog,'(a,2e9.2)')"viscosity:  nu (vor/div) = ",nu,nu_div
        write(iulog,'(a,2e9.2)')"viscosity:  nu_s      = ",nu_s
        write(iulog,'(a,2e9.2)')"viscosity:  nu_q      = ",nu_q

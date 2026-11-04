@@ -33,9 +33,6 @@ module atm_comp_mct
   ! Public interfaces
   !--------------------------------------------------------------------------
 
-#if defined(MPINIT_WORKAROUND) && (MPINIT_WORKAROUND == 1)
-  public :: atm_init_hip_mct
-#endif
   public :: atm_init_mct
   public :: atm_run_mct
   public :: atm_final_mct
@@ -67,16 +64,6 @@ module atm_comp_mct
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 CONTAINS
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-#if defined(MPINIT_WORKAROUND) && (MPINIT_WORKAROUND == 1)
-  !===============================================================================
-  subroutine atm_init_hip_mct()
-    use eamxx_f2c_mod, only: scream_init_hip_atm
-
-    call scream_init_hip_atm()
-
-  end subroutine atm_init_hip_mct
-#endif
 
   !===============================================================================
   subroutine atm_init_mct( EClock, cdata, x2a, a2x, NLFilename )
@@ -263,17 +250,19 @@ CONTAINS
 #endif
 
     call scream_setup_surface_coupling (c_loc(import_field_names), c_loc(import_cpl_indices), &
-                                        c_loc(x2a%rAttr), &
 #ifdef HAVE_MOAB
                                         c_loc(x2a_am),  &
+#else
+                                        c_loc(x2a%rAttr), &
 #endif
                                         c_loc(import_vector_components), &
                                         c_loc(import_constant_multiple), c_loc(do_import_during_init), &
                                         num_cpl_imports, num_scream_imports, import_field_size, &
                                         c_loc(export_field_names), c_loc(export_cpl_indices), &
-                                        c_loc(a2x%rAttr), &
 #ifdef HAVE_MOAB
                                         c_loc(a2x_am),  &
+#else
+                                        c_loc(a2x%rAttr), &
 #endif
                                         c_loc(export_vector_components), &
                                         c_loc(export_constant_multiple), c_loc(do_export_during_init), &
@@ -554,9 +543,9 @@ CONTAINS
     real(r8)       :: latv, lonv
     !-------------------------------------------------------------------
 
-    appname="ATM_PHYS_SCREAM"//C_NULL_CHAR
+    appname="ATM_PHYS_SCREAM"
     ATM_PHYS = 200 + ATM_ID !
-    ierr = iMOAB_RegisterApplication(appname, mpicom_atm, ATM_PHYS, mphaid)
+    ierr = iMOAB_RegisterApplication(trim(appname)//C_NULL_CHAR, mpicom_atm, ATM_PHYS, mphaid)
     if (ierr > 0 )  then
       call mpi_abort(mpicom_atm,ierr,mpi_ierr)
     endif

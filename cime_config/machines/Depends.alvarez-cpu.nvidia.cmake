@@ -1,10 +1,10 @@
 list(APPEND REDUCE_OPT_LIST
-  homme/src/share/derivative_mod_base.F90
+  homme/src/share/derivative_mod.F90
 )
 
-# Can use this flag to avoid internal compiler error for this file (with nvidia/21.11)
-# Still needed with nvidia/22.5
-if (NOT DEBUG)
+# -Mnovect avoids an internal compiler error in this file (still needed with nvidia/22.5).
+# NVHPC >= 25.9 has fixed the ICE; skip the flag for those versions.
+if (NOT DEBUG AND CMAKE_Fortran_COMPILER_VERSION VERSION_LESS "25.9")
   foreach(ITEM IN LISTS REDUCE_OPT_LIST)
     e3sm_add_flags("${ITEM}" " -Mnovect")
   endforeach()
@@ -14,8 +14,8 @@ endif()
 set(PERFOBJS
   homme/src/share/prim_advection_base.F90
   homme/src/share/vertremap_base.F90
-  homme/src/share/edge_mod_base.F90
-  homme/src/share/bndry_mod_base.F90
+  homme/src/share/edge_mod.F90
+  homme/src/share/bndry_mod.F90
   homme/src/theta-l/share/prim_advance_mod.F90
   homme/src/preqx/share/prim_advance_mod.F90
   homme/src/preqx/share/viscosity_preqx_base.F90

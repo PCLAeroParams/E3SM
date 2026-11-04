@@ -48,7 +48,10 @@ void calc_q (const IslMpi<MT>& cm, const Int& src_lid, const Int& lev,
       }
     }
   } else {
-    // q from calc_q_extrema is being overwritten, so have to use qdp/dp.
+    // NOTE: we used to have a calc_q_tgt overload that took qdp and dp,
+    //       computing qdp/dp on the fly. This was not bit-for-bit identical
+    //       to the "remote" path. Hence, we removed that overload, and
+    //       pre-compute qdp/dp
     const Real* const dp = ed.dp + levos;
     const Real* const qdp0 = ed.qdp + levos;
     for (Int iqo = 0; iqo < qsize; iqo += blocksize) {
@@ -56,14 +59,18 @@ void calc_q (const IslMpi<MT>& cm, const Int& src_lid, const Int& lev,
         Real tmp[blocksize];
         for (Int iqi = 0; iqi < blocksize; ++iqi) {
           const Real* const qdp = qdp0 + (iqo + iqi)*np2nlev;
-          tmp[iqi] = calc_q_tgt(rx, ry, qdp, dp);
+          Real qs[16];
+          for (Int k = 0; k < 16; ++k) qs[k] = qdp[k]/dp[k];
+          tmp[iqi] = calc_q_tgt(rx, ry, qs);
         }
         for (Int iqi = 0; iqi < blocksize; ++iqi)
           q_tgt[iqo + iqi] = tmp[iqi];
       } else {
         for (Int iq = iqo; iq < qsize; ++iq) {
           const Real* const qdp = qdp0 + iq*np2nlev;
-          q_tgt[iq] = calc_q_tgt(rx, ry, qdp, dp);
+          Real qs[16];
+          for (Int k = 0; k < 16; ++k) qs[k] = qdp[k]/dp[k];
+          q_tgt[iq] = calc_q_tgt(rx, ry, qs);
         }
       }
     }
@@ -200,7 +207,10 @@ void calc_own_q (IslMpi<MT>& cm, const Int& nets, const Int& nete,
     Real rx[4], ry[4];
     calc_coefs<np,MT>(s2r, local_meshes(slid), alg, slid, tgt_lev,
                       &dep_points(tci, tgt_lev, tgt_k, 0), rx, ry);
-    // q from calc_q_extrema is being overwritten, so have to use qdp/dp.
+    // NOTE: we used to have a calc_q_tgt overload that took qdp and dp,
+    //       computing qdp/dp on the fly. This was not bit-for-bit identical
+    //       to the "remote" path. Hence, we removed that overload, and
+    //       pre-compute qdp/dp
     Real dp[16];
     for (Int k = 0; k < 16; ++k) dp[k] = dp_src(slid, k, tgt_lev);
     // Block for auto-vectorization.
@@ -209,17 +219,19 @@ void calc_own_q (IslMpi<MT>& cm, const Int& nets, const Int& nete,
         Real tmp[blocksize];
         for (Int iqi = 0; iqi < blocksize; ++iqi) {
           const Int iq = iqo + iqi;
-          Real qdp[16];
+          Real qdp[16], qs[16];
           for (Int k = 0; k < 16; ++k) qdp[k] = qdp_src(slid, qtl, iq, k, tgt_lev);
-          tmp[iqi] = calc_q_tgt(rx, ry, qdp, dp);
+          for (Int k = 0; k < 16; ++k) qs[k] = qdp[k]/dp[k];
+          tmp[iqi] = calc_q_tgt(rx, ry, qs);
         }
         for (Int iqi = 0; iqi < blocksize; ++iqi)
           q_tgt(tci, iqo + iqi, tgt_k, tgt_lev) = tmp[iqi];
       } else {
         for (Int iq = iqo; iq < qsize; ++iq) {
-          Real qdp[16];
+          Real qdp[16], qs[16];
           for (Int k = 0; k < 16; ++k) qdp[k] = qdp_src(slid, qtl, iq, k, tgt_lev);
-          q_tgt(tci, iq, tgt_k, tgt_lev) = calc_q_tgt(rx, ry, qdp, dp);
+          for (Int k = 0; k < 16; ++k) qs[k] = qdp[k]/dp[k];
+          q_tgt(tci, iq, tgt_k, tgt_lev) = calc_q_tgt(rx, ry, qs);
         }
       }
     }
@@ -276,7 +288,7 @@ struct Accum {
   Int cnt, qcnt, qos, xos;
   SLMM_KIF  Accum () : cnt(0), qcnt(0), qos(0), xos(0) {}
   SLMM_KIF void operator+= (const volatile Accum& o) volatile {
-    cnt += o.cnt; qcnt += o.qcnt; qos += o.qos; xos += o.xos;
+    cnt = cnt + o.cnt; qcnt = qcnt + o.qcnt; qos = qos + o.qos; xos = xos + o.xos;
   }
 };
 
@@ -286,7 +298,7 @@ void calc_rmt_q_pass1_scan (IslMpi<MT>& cm, const bool trajectory) {
   const auto& rmt_xs = cm.rmt_xs;
   const auto& rmt_qs_extrema = cm.rmt_qs_extrema;
   const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
-  const Int ndim = trajectory ? cm.dep_points_ndim : 3;
+  const Int xsz = trajectory ? cm.traj_msg_sz : 3;
   Int cnt = 0, qcnt = 0;
   for (Int ri = 0; ri < nrmtrank; ++ri) {
     const auto get_xos = COMPOSE_LAMBDA (const Int, Int& xos) {
@@ -326,18 +338,18 @@ void calc_rmt_q_pass1_scan (IslMpi<MT>& cm, const bool trajectory) {
           rmt_xs(5*cnt_tot + 3) = xos + a.xos;
           rmt_xs(5*cnt_tot + 4) = a.qos;
           a.cnt += 1;
-          a.xos += ndim;
+          a.xos += xsz;
           a.qos += 1;
         }
       } else {
         a.cnt += nx;
-        a.xos += ndim*nx;
+        a.xos += xsz*nx;
         a.qos += nx;
       }
     };
     Accum a;
     ko::parallel_scan(ko::RangePolicy<typename MT::DES>(0, xos/nreal_per_2int - 1), f, a);
-    cm.sendcount_h(ri) = (trajectory ? ndim : cm.qsize)*a.qos;
+    cm.sendcount_h(ri) = (trajectory ? xsz : cm.qsize)*a.qos;
     cnt += a.cnt;
     qcnt += a.qcnt;
   }
@@ -412,7 +424,7 @@ void calc_rmt_q_pass2 (IslMpi<MT>& cm) {
 template <typename MT>
 void calc_rmt_q_pass1_noscan (IslMpi<MT>& cm, const bool trajectory) {
   const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
-  const Int ndim = trajectory ? cm.dep_points_ndim : 3;
+  const Int xsz = trajectory ? cm.traj_msg_sz : 3;
 #ifdef COMPOSE_PORT_SEPARATE_VIEWS
 #ifdef COMPOSE_HORIZ_OPENMP
 # pragma omp for
@@ -454,7 +466,7 @@ void calc_rmt_q_pass1_noscan (IslMpi<MT>& cm, const bool trajectory) {
           Int lev, nx;
           mos += getbuf(xs, mos, lev, nx);
           slmm_assert(nx > 0);
-          if ( ! trajectory) {
+          if (not trajectory) {
             cm.rmt_qs_extrema_h(4*qcnt + 0) = ri;
             cm.rmt_qs_extrema_h(4*qcnt + 1) = lid;
             cm.rmt_qs_extrema_h(4*qcnt + 2) = lev;
@@ -469,7 +481,7 @@ void calc_rmt_q_pass1_noscan (IslMpi<MT>& cm, const bool trajectory) {
             cm.rmt_xs_h(5*cnt + 3) = xos;
             cm.rmt_xs_h(5*cnt + 4) = qos;
             ++cnt;
-            xos += ndim;
+            xos += xsz;
             ++qos;
           }
           nx_in_lid -= nx;
@@ -480,7 +492,7 @@ void calc_rmt_q_pass1_noscan (IslMpi<MT>& cm, const bool trajectory) {
         if (nx_in_rank == 0) break;
       }
       slmm_assert(nx_in_rank == 0);
-      cm.sendcount_h(ri) = (trajectory ? ndim : cm.qsize)*qos;
+      cm.sendcount_h(ri) = (trajectory ? xsz : cm.qsize)*qos;
     }
     cm.nrmt_xs = cnt;
     cm.nrmt_qs_extrema = trajectory ? 0 : qcnt;
