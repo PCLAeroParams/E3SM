@@ -74,3 +74,6 @@
 [submodule "externals/mam4xx"]
 	path = externals/mam4xx
 	url = git@github.com:E3SM-Project/mam4xx.git
+[submodule "externals/partmc"]
+	path = externals/partmc
+	url = git@github.com:PCLAeroParams/partmc.git

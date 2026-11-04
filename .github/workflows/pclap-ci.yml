@@ -9,10 +9,9 @@ name: pclap-ci
 #
 # Jobs:
 # - eam:        EAM built without PartMC (catches PartMC code leaking into the default build).
-# - eam-partmc: PartMC built from PCLAeroParams/partmc at PARTMC_REF inside the container, then
-#               EAM built with -partmc (the urban_plume testmod) and run for a few steps.
-#               PartMC is built without MOSAIC (not public) and without its own MPI, so the
-#               machine sets PARTMC_PATH only (see components/cmake/build_model.cmake).
+# - eam-partmc: EAM built with -partmc (the urban_plume testmod) and run for a few steps. The
+#               case builds PartMC from the externals/partmc submodule (see
+#               components/cmake/build_model.cmake), without MOSAIC, which is not public.
 #
 # No baselines yet: a test passes if it builds and runs. Inputdata is kept in this repo's
 # Actions cache, one entry per test, saved only from runs on the default branch (entries saved
@@ -41,10 +40,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # PartMC commit to build (branch oscar/e3sm of PCLAeroParams/partmc)
-  PARTMC_REF: 1a7b83c1b6802799490cd1c5b40a4b1ea1fed7aa
-
 jobs:
   tests:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
@@ -58,17 +53,14 @@ jobs:
           # EAM's config_pes.xml asks for 96 tasks on ne4pg2.
           - name: eam
             test: SMS_P4_Ln5.ne4pg2_oQU480.F2010
-            partmc: false
           - name: eam-partmc
             # The testmod eam-partmc-urban_plume is testmods_dirs/eam/partmc/urban_plume
             test: SMS_P4_Ln5.ne4pg2_oQU480.F2010.eam-partmc-urban_plume
-            partmc: true
     name: ${{ matrix.name }}
     env:
       IMAGE: ghcr.io/e3sm-project/e3sm-image:gnu13-openmpi4
       COMPILER: gnu
       TEST: ${{ matrix.test }}
-      PARTMC: ${{ matrix.partmc }}
       INPUTDATA_KEY: pclap-ci-inputdata-${{ matrix.name }}
     steps:
       # Hosted runners start with ~20 GB free; the image, E3SM with submodules, inputdata
@@ -86,15 +78,6 @@ jobs:
           persist-credentials: false
           show-progress: false
           submodules: recursive
-      - name: Check out PartMC
-        if: matrix.partmc
-        uses: actions/checkout@v7
-        with:
-          repository: PCLAeroParams/partmc
-          ref: ${{ env.PARTMC_REF }}
-          path: partmc
-          persist-credentials: false
-          show-progress: false
       - name: Restore inputdata
         id: inputdata
         uses: actions/cache/restore@v6
@@ -110,7 +93,7 @@ jobs:
       - name: Run the test
         id: run-test
         run: |
-          mkdir -p inputdata scratch partmc
+          mkdir -p inputdata scratch
           # EAM lists micro_p3_lookup_dir (atm/cam/physprops, no trailing slash) as input data,
           # and CIME's check_input_data treats a path without a trailing slash as a file: it
           # fetches the directory URL with wget and saves the response as a plain file named
@@ -121,38 +104,19 @@ jobs:
           fi
           mkdir -p inputdata/atm/cam/physprops
           find inputdata -type f | wc -l > inputdata.count
-          sudo chown -R 1000:1000 E3SM inputdata scratch partmc
+          sudo chown -R 1000:1000 E3SM inputdata scratch
           # The machine and compiler go in the test name (TEST.GRID.COMPSET.MACHINE_COMPILER[.TESTMODS])
           export TESTS=$(awk -F. -v OFS=. -v m="e3sm-container_$COMPILER" '{ $3 = $3 "." m } 1' <<< "$TEST")
           rc=0
-          docker run --rm -e TESTS -e COMPILER -e PARTMC \
+          docker run --rm -e TESTS -e COMPILER \
             -v "$PWD/E3SM:/projects/e3sm/work/E3SM" \
-            -v "$PWD/partmc:/projects/e3sm/work/partmc" \
             -v "$PWD/inputdata:/projects/e3sm/data/inputdata" \
             -v "$PWD/scratch:/home/e3sm/e3sm_scratch" \
             "$IMAGE" bash -lc 'set -e
               . /projects/e3sm/cime/enable.sh
-              if [ "$PARTMC" = true ]; then
-                # Only the library (libpartmc.a and its .mod files, in the build directory);
-                # E3SM links netCDF itself, so only netcdf.mod has to be found here
-                inc=$(nf-config --includedir 2>/dev/null || true)
-                if [ -z "$inc" ]; then
-                  inc=$(dirname "$(find / -name netcdf.mod -path "*include*" 2>/dev/null | head -n1)")
-                fi
-                echo "netcdf.mod in: $inc"
-                cmake -S /projects/e3sm/work/partmc -B /projects/e3sm/work/partmc/build \
-                  -DCMAKE_BUILD_TYPE=Release -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_C_COMPILER=gcc \
-                  -DNETCDF_INCLUDE_DIR="$inc"
-                cmake --build /projects/e3sm/work/partmc/build --target partmclib -j "$(nproc)"
-                macros=~/.cime/e3sm-container_$COMPILER.cmake
-                if [ ! -f "$macros" ]; then
-                  echo "expected the machine cmake file at $macros"; exit 1
-                fi
-                echo "set(PARTMC_PATH \"/projects/e3sm/work/partmc/build\")" >> "$macros"
-              fi
               cd /projects/e3sm/work/E3SM/cime/scripts
               ./create_test $TESTS --wait --test-id gh --parallel-jobs "$(nproc)"' || rc=$?
-          sudo chown -R "$(id -u):$(id -g)" E3SM inputdata scratch partmc
+          sudo chown -R "$(id -u):$(id -g)" E3SM inputdata scratch
           if [ "$(find inputdata -type f | wc -l)" -gt "$(cat inputdata.count)" ]; then
             echo "new_inputdata=true" >> "$GITHUB_OUTPUT"
           fi
@@ -160,7 +124,7 @@ jobs:
           {
             echo "### ${{ matrix.name }}: \`$TESTS\`"
             echo
-            echo "Image \`$image\`$( [ "$PARTMC" = true ] && echo ", PartMC \`$PARTMC_REF\`")"
+            echo "Image \`$image\`, PartMC \`$(git -C E3SM rev-parse HEAD:externals/partmc)\`"
             echo
             echo '```'
             cat scratch/*.gh/TestStatus 2>/dev/null || echo "no TestStatus"

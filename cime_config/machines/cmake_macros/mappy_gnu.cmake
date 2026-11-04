@@ -1,9 +1,5 @@
-# PartMC (-partmc): each user builds their own PartMC with this machine's modules and
-# exports PARTMC_PATH (its build directory) before building a case. Export MOSAIC_PATH too
-# only if that PartMC was built with ENABLE_MOSAIC=ON. See components/cmake/build_model.cmake.
-if (DEFINED ENV{PARTMC_PATH})
-  set(PARTMC_PATH "$ENV{PARTMC_PATH}")
-endif()
+# PartMC (-partmc) is built from externals/partmc with the case (components/cmake/build_model.cmake).
+# To build it with MOSAIC, export MOSAIC_PATH (the directory with libmosaic and its .mod files).
 if (DEFINED ENV{MOSAIC_PATH})
   set(MOSAIC_PATH "$ENV{MOSAIC_PATH}")
 endif()
