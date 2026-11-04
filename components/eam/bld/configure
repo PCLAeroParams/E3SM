@@ -1457,6 +1457,10 @@ if ($bc_dep_to_snow_updates == 1) {
 if ($rain_evap_to_coarse_aero == 1 && ($chem_pkg =~ '_mam3' || $chem_pkg =~ '_mam4' || $chem_pkg eq 'trop_mam4_resus' || $chem_pkg eq 'trop_mam4_resus_soag' || $chem_pkg eq 'trop_mam4_resus_mom' || $chem_pkg =~ 'linoz_mam7_resus_mom' ||  $chem_pkg =~ 'trop_strat_mam7_resus_mom'||  $chem_pkg =~ '_mam5')) {
     $chem_cppdefs = "$chem_cppdefs  -DRAIN_EVAP_TO_COARSE_AERO "
 }
+if ($opts{'partmc'}) {
+    # Compile the PartMC calls in chemistry.F90 (partmc_interface is added to Filepath below)
+    $chem_cppdefs = "$chem_cppdefs -DUSE_PARTMC "
+}
 #-----------------------------------------------------------------------------------------------
 # Number of advected constituents
 my $nadv;
