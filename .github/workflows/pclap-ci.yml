@@ -54,12 +54,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # _P4: 4 MPI tasks (create_newcase --pecount 4). Hosted runners have 4 cores, while
+          # EAM's config_pes.xml asks for 96 tasks on ne4pg2.
           - name: eam
-            test: SMS_Ln5.ne4pg2_oQU480.F2010
+            test: SMS_P4_Ln5.ne4pg2_oQU480.F2010
             partmc: false
           - name: eam-partmc
             # The testmod eam-partmc-urban_plume is testmods_dirs/eam/partmc/urban_plume
-            test: SMS_Ln5.ne4pg2_oQU480.F2010.eam-partmc-urban_plume
+            test: SMS_P4_Ln5.ne4pg2_oQU480.F2010.eam-partmc-urban_plume
             partmc: true
     name: ${{ matrix.name }}
     env:
