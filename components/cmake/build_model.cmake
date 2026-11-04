@@ -345,29 +345,71 @@ macro(build_model COMP_CLASS COMP_NAME)
         if (USE_RRTMGPXX)
           target_link_libraries(${TARGET_NAME} PRIVATE rrtmgp rrtmgp_interface)
         endif()
+        if (USE_PARTMC)
+          # PartMC (externals/partmc) is configured and built as its own CMake project, with
+          # this case's compilers, library target only, and linked into EAM. It is not pulled
+          # in with add_subdirectory because its CMakeLists.txt also builds executables and
+          # tests and sets global include directories.
+          set(PARTMC_SOURCE_DIR ${SRCROOT}/externals/partmc)
+          if (NOT EXISTS ${PARTMC_SOURCE_DIR}/CMakeLists.txt)
+            message(FATAL_ERROR "-partmc is set, but ${PARTMC_SOURCE_DIR} is empty: run 'git submodule update --init externals/partmc'")
+          endif()
+          set(PARTMC_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/partmc)
+          set(PARTMC_LIB ${PARTMC_BINARY_DIR}/libpartmc.a)
+
+          # PartMC needs only netcdf.mod; the netcdf libraries come in through csm_share
+          find_package(NETCDF REQUIRED)
+          get_target_property(PARTMC_NETCDF_INCLUDE_DIRS netcdf INTERFACE_INCLUDE_DIRECTORIES)
+          set(PARTMC_NETCDF_MOD_DIR "")
+          foreach (dir IN LISTS PARTMC_NETCDF_INCLUDE_DIRS)
+            if (NOT PARTMC_NETCDF_MOD_DIR AND EXISTS "${dir}/netcdf.mod")
+              set(PARTMC_NETCDF_MOD_DIR "${dir}")
+            endif()
+          endforeach()
+          if (NOT PARTMC_NETCDF_MOD_DIR)
+            message(FATAL_ERROR "-partmc is set, but no netcdf.mod was found in the netcdf include directories: ${PARTMC_NETCDF_INCLUDE_DIRS}")
+          endif()
+
+          set(PARTMC_CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            # PartMC asks for cmake_minimum_required(VERSION 2.6.4), which CMake 4 rejects
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+            -DNETCDF_INCLUDE_DIR=${PARTMC_NETCDF_MOD_DIR})
+
+          # MOSAIC is optional: a machine that has it sets MOSAIC_PATH (the directory with
+          # libmosaic and its .mod files) in its cmake macros, and PartMC is built with it.
+          if (MOSAIC_PATH)
+            find_library(MOSAIC_LIB NAMES mosaic PATHS ${MOSAIC_PATH} NO_DEFAULT_PATH)
+            if (NOT MOSAIC_LIB)
+              message(FATAL_ERROR "MOSAIC_PATH='${MOSAIC_PATH}' is set, but libmosaic was not found there")
+            endif()
+            list(APPEND PARTMC_CMAKE_ARGS
+              -DENABLE_MOSAIC=ON -DMOSAIC_INCLUDE_DIR=${MOSAIC_PATH} -DMOSAIC_LIB=${MOSAIC_LIB})
+          endif()
+          message(STATUS "PartMC: building ${PARTMC_SOURCE_DIR} in ${PARTMC_BINARY_DIR} (MOSAIC: ${MOSAIC_LIB})")
+
+          include(ExternalProject)
+          ExternalProject_Add(partmc_build
+            SOURCE_DIR ${PARTMC_SOURCE_DIR}
+            BINARY_DIR ${PARTMC_BINARY_DIR}
+            CMAKE_ARGS ${PARTMC_CMAKE_ARGS}
+            BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target partmclib
+            # Rerun the (incremental) inner build every time, so a submodule update is picked up
+            BUILD_ALWAYS TRUE
+            INSTALL_COMMAND ""
+            BUILD_BYPRODUCTS ${PARTMC_LIB})
+          # Build PartMC (and its .mod files) before compiling EAM's partmc_interface
+          add_dependencies(${TARGET_NAME} partmc_build)
+          target_include_directories(${TARGET_NAME} PRIVATE ${PARTMC_BINARY_DIR})
+          target_link_libraries(${TARGET_NAME} PRIVATE ${PARTMC_LIB})
+          if (MOSAIC_PATH)
+            target_include_directories(${TARGET_NAME} PRIVATE ${MOSAIC_PATH})
+            target_link_libraries(${TARGET_NAME} PRIVATE ${MOSAIC_LIB})
+          endif()
+        endif()
       endif()
-  if (USE_PARTMC)
-    message(STATUS "PARTMC root DIR: ${PARTMC_PATH}")
-    find_library(PARTMC_LIB NAMES partmc PATHS ${PARTMC_PATH} NO_DEFAULT_PATH)
-    if (NOT PARTMC_LIB)
-      message(FATAL_ERROR "-partmc is set, but libpartmc was not found in PARTMC_PATH='${PARTMC_PATH}'")
-    endif()
-    message(STATUS "PARTMC_LIB: ${PARTMC_LIB}")
-    include_directories(${PARTMC_PATH})
-    target_link_libraries(${TARGET_NAME} PRIVATE ${PARTMC_LIB})
-    # MOSAIC is needed only if libpartmc was built with ENABLE_MOSAIC=ON.
-    # Machines whose PartMC has MOSAIC set MOSAIC_PATH in their cmake macros.
-    if (MOSAIC_PATH)
-      message(STATUS "MOSAIC root DIR: ${MOSAIC_PATH}")
-      find_library(MOSAIC_LIB NAMES mosaic PATHS ${MOSAIC_PATH} NO_DEFAULT_PATH)
-      if (NOT MOSAIC_LIB)
-        message(FATAL_ERROR "MOSAIC_PATH='${MOSAIC_PATH}' is set, but libmosaic was not found there")
-      endif()
-      message(STATUS "MOSAIC_LIB: ${MOSAIC_LIB}")
-      include_directories(${MOSAIC_PATH})
-      target_link_libraries(${TARGET_NAME} PRIVATE ${MOSAIC_LIB})
-    endif()
-  endif()
       if (COMP_NAME STREQUAL "elm")
         if (USE_PETSC)
           target_link_libraries(${TARGET_NAME} PRIVATE "${PETSC_LIBRARIES}")
