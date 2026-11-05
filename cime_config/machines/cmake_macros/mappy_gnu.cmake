@@ -1,5 +1,8 @@
-set(PARTMC_PATH "/home/odiazib/v3/partmc/partmc/build")
-set(MOSAIC_PATH "/home/odiazib/v3/partmc/mosaic")
+# PartMC (-partmc) is built from externals/partmc with the case (components/cmake/build_model.cmake).
+# To build it with MOSAIC, export MOSAIC_PATH (the directory with libmosaic and its .mod files).
+if (DEFINED ENV{MOSAIC_PATH})
+  set(MOSAIC_PATH "$ENV{MOSAIC_PATH}")
+endif()
 if (COMP_NAME STREQUAL gptl)
   string(APPEND CPPDEFS " -DHAVE_SLASHPROC")
 endif()
