@@ -412,6 +412,11 @@
 </compset>
 
 <compset>
+  <alias>CRYO1850-CMIP7</alias>
+  <lname>1850SOI%CMIP7_EAM_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
+</compset>
+
+<compset>
   <alias>CRYO1850-4xCO2</alias>
   <lname>1850SOI_EAM%CMIP6-4xCO2_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
 </compset>
@@ -422,13 +427,28 @@
 </compset>
 
 <compset>
+  <alias>CRYO1850-CMIP7-1pctCO2</alias>
+  <lname>1850SOI%CMIP7-1pctCO2_EAM_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
+</compset>
+
+<compset>
   <alias>CRYO1950</alias>
   <lname>1950SOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
 </compset>
 
 <compset>
+  <alias>CRYO2010</alias>
+  <lname>2010SOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
+</compset>
+
+<compset>
   <alias>CRYO1850-DISMF</alias>
   <lname>1850SOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBDISMF_MOSART_SGLC_SWAV</lname>
+</compset>
+
+<compset>
+  <alias>CRYO1850-DISMF-CMIP7</alias>
+  <lname>1850SOI%CMIP7_EAM_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBDISMF_MOSART_SGLC_SWAV</lname>
 </compset>
 
 <compset>
@@ -439,6 +459,11 @@
 <compset>
   <alias>CRYO20TR</alias>
   <lname>20TRSOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
+</compset>
+
+<compset>
+  <alias>CRYO20TR-CMIP7</alias>
+  <lname>20TRSOI%CMIP7_EAM_ELM%CNPRDCTCBCTOP_MPASSI%DIB_MPASO%IBPISMF_MOSART_SGLC_SWAV</lname>
 </compset>
 
 <compset>
@@ -466,12 +491,6 @@
   <lname>20TRSOI_EAM%CMIP6_ELM%CNPECACNTBC_MPASSI_MPASO_MOSART_SGLC_SWAV_BGC%BDRD</lname>
 </compset>
 
-<!-- SCREAM DYAMOND compsets -->
-<compset>
-  <alias>A_SCREAM-HR-DYAMOND2</alias>
-  <lname>2010_EAM%SCREAM-HR-DYAMOND2_ELM45%SPBC_MPASSI_MPASO_MOSART_SGLC_SWAV</lname>
-</compset>
-
 <!-- E3SM BG compsets -->
 
 <compset>
@@ -489,7 +508,17 @@
   <lname>20TRSOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI_MPASO_MOSART_MALI_SWAV</lname>
 </compset>
 
+<compset>
+  <alias>BGWCYCL2010</alias>
+  <lname>2010SOI_EAM%CMIP6_ELM%CNPRDCTCBCTOP_MPASSI_MPASO_MOSART_MALI_SWAV</lname>
+</compset>
+
 <!-- EAMXX fully coupled compset -->
+
+<compset>
+  <alias>WCYCLXX1850</alias>
+  <lname>1850SOI%CMIP7_SCREAM%BETA_ELM%CNPRDCTCBCTOP_MPASSI_MPASO_MOSART_SGLC_SWAV</lname>
+</compset>
 
 <compset>
   <alias>WCYCLXX2010</alias>
@@ -539,9 +568,9 @@
   <entry id="RUN_STARTDATE">
     <values>
       <value  compset="20TR_EAM">1850-01-01</value>
-      <value  compset="SSP585.*_EAM">2015-01-01</value>
-      <value  compset="SSP370.*_EAM">2015-01-01</value>
-      <value  compset="SSP245.*_EAM">2015-01-01</value>
+      <value  compset="SSP585[^_]*_EAM">2015-01-01</value>
+      <value  compset="SSP370[^_]*_EAM">2015-01-01</value>
+      <value  compset="SSP245[^_]*_EAM">2015-01-01</value>
     </values>
   </entry>
 

@@ -6,7 +6,7 @@ module elm_varpar
   !
   ! !USES:
   use shr_kind_mod , only: r8 => shr_kind_r8
-  use elm_varctl   , only: use_extralakelayers, use_vertsoilc, use_crop, use_betr
+  use elm_varctl   , only: use_extralakelayers, use_vertsoilc, use_crop
   use elm_varctl   , only: use_century_decomp, use_c13, use_c14, use_fates
   use elm_varctl   , only: iulog, create_crop_landunit, irrigate
   use elm_varctl   , only: use_vichydro
@@ -35,8 +35,6 @@ module elm_varpar
   integer            :: nlevdecomp            ! number of biogeochemically active soil layers
   integer            :: nlevdecomp_full       ! number of biogeochemical layers 
                                               ! (includes lower layers that are biogeochemically inactive)
-  integer            :: nlevtrc_soil
-  integer            :: nlevtrc_full
   
   integer            :: nlevsno               ! maximum number of snow layers
   integer, parameter :: ngases      =   3     ! CH4, O2, & CO2
@@ -72,6 +70,25 @@ module elm_varpar
 
   integer, parameter :: nlevslp = 11          ! number of slope percentile levels
 
+  !   Parameters that define the thickness of the soil layers. By default, we define the 
+  ! mid-point of the soil layers as:
+  !
+  !    zsoi(j) = scalez * ( exp( zecoeff * (j - 0.5_r8) ) - 1.0_r8 )
+  !
+  !   The default values scalez = 0.025_r8 and zecoeff = 0.50_r8 trace back to the original
+  ! ELM configuration, but depending on the specific needs by the user, these can be
+  ! modified.
+  real(r8), parameter :: scalez  = 0.025_r8
+  real(r8), parameter :: zecoeff = 0.50_r8
+
+  integer, parameter :: ndir_horizon_angle = 8    ! number of directions for horizon angle
+
+  ! These strings define the elm-fates nutrient coupling, i.e. which chemical species
+  ! are cycled between the two, see corresponding values for fates_parteh_mode:
+  ! bld/namelist_files/namelist_definition.xml
+  character(len=256), public, parameter :: elmfates_carbon_only = 'carbon_only'
+  character(len=256), public, parameter :: elmfates_cnp         = 'cnp'
+  
   ! constants for decomposition cascade
 
   integer :: i_met_lit 
@@ -225,10 +242,6 @@ contains
        nlevdecomp_full = 1
     end if
     
-    nlevtrc_full   = nlevsoi
-    if(use_betr) then
-      nlevtrc_soil = nlevsoi
-    endif
 
     if (.not. use_extralakelayers) then
        nlevlak     =  10     ! number of lake layers

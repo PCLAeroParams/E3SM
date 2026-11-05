@@ -25,26 +25,20 @@ contains
     ! !DESCRIPTION:
     ! Finalize land surface model
     !
-#ifdef USE_PETSC_LIB
-#include <petsc/finclude/petsc.h>
+#ifdef MOAB_LATERAL
+    use MOABGridType, only : elm_moab_finalize
 #endif
     ! !USES:
-    use elm_varctl             , only : use_vsfm, use_cn
-#ifdef USE_PETSC_LIB
-    use petscsys
-#endif
+    use elm_varctl             , only : use_cn
     !
     ! !ARGUMENTS
     implicit none
     !
 
-#ifdef USE_PETSC_LIB
-    PetscErrorCode        :: ierr
-
-    if (use_vsfm) then
-       call PetscFinalize(ierr)
-    endif
+#ifdef MOAB_LATERAL
+    call elm_moab_finalize()
 #endif
+
     if (use_cn) then
        call cleanupLitterTransportList()
     endif

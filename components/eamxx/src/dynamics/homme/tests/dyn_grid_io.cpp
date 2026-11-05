@@ -7,11 +7,11 @@
 #include "dynamics/homme/interface/eamxx_homme_interface.hpp"
 
 #include "share/io/eamxx_output_manager.hpp"
-#include "share/io/scorpio_input.hpp"
 
-#include "share/field/field_utils.hpp"
 #include "share/data_managers/grids_manager.hpp"
 #include "share/data_managers/field_manager.hpp"
+#include "share/field/field_reader.hpp"
+#include "share/field/field_utils.hpp"
 #include "share/util/eamxx_time_stamp.hpp"
 
 #include "share/core/eamxx_setup_random_test.hpp"
@@ -71,15 +71,15 @@ TEST_CASE("dyn_grid_io")
   EKAT_REQUIRE_MSG(get_num_local_elems_f90()>0, "Internal test error! Fix dyn_grid_io, please.\n");
 
   // Create physics and dynamics fields
-  auto dyn_scalar3d_mid = dyn_grid->get_3d_scalar_layout(true);
-  auto dyn_vector3d_mid = dyn_grid->get_3d_vector_layout(true,2);
+  auto dyn_scalar3d_mid = dyn_grid->get_3d_scalar_layout(LEV);
+  auto dyn_vector3d_mid = dyn_grid->get_3d_vector_layout(LEV,2);
   auto dyn_scalar2d     = dyn_grid->get_2d_scalar_layout();
 
-  auto phys_scalar3d_mid = phys_grid->get_3d_scalar_layout(true);
-  auto phys_vector3d_mid = phys_grid->get_3d_vector_layout(true,2);
+  auto phys_scalar3d_mid = phys_grid->get_3d_scalar_layout(LEV);
+  auto phys_vector3d_mid = phys_grid->get_3d_vector_layout(LEV,2);
   auto phys_scalar2d     = phys_grid->get_2d_scalar_layout();
 
-  auto nondim = ekat::units::Units::nondimensional();
+  auto nondim = ekat::units::none;
   FieldIdentifier fid_dyn_1 ("field_1",dyn_scalar3d_mid,nondim,dyn_grid->name());
   FieldIdentifier fid_dyn_2 ("field_2",dyn_vector3d_mid,nondim,dyn_grid->name());
   FieldIdentifier fid_dyn_3 ("field_3",dyn_scalar2d    ,nondim,dyn_grid->name());
@@ -116,14 +116,13 @@ TEST_CASE("dyn_grid_io")
   std::vector<std::string> fnames = {"field_1", "field_2", "field_3"};
 
   // Randomize dyn fields, then remap to ctrl fields
-  std::uniform_real_distribution<Real> pdf(0.01,100.0);
-  auto engine = setup_random_test(&comm);
+  auto seed = get_random_test_seed(&comm);
   auto dyn2ctrl = gm->create_remapper(dyn_grid,phys_grid);
   for (const auto& fn : fnames) {
     auto fd = fm->get_field(fn,dyn_grid->name());
     auto fc = fm_ctrl->get_field(fn,phys_grid->name());
     dyn2ctrl->register_field(fd,fc);
-    randomize(fd,engine,pdf);
+    randomize_uniform(fd,seed++);
 
     // Init phys field to something obviously wrong
     auto fp = fm->get_field(fn,phys_grid->name());
@@ -159,13 +158,12 @@ TEST_CASE("dyn_grid_io")
 
   // AtmosphereInput expects a FM on a single grid, create
   // a phys FM and add fields.
-  auto fm_phys = std::make_shared<FieldManager>(phys_grid);
+  std::vector<Field> fields_phys;
+  auto phys_gids = phys_grid->get_partitioned_dim_gids();
   for (auto& f_it : fm->get_repo(phys_grid->name())) {
-    fm_phys->add_field(*f_it.second);
+    fields_phys.push_back(*f_it.second);
   }
-  AtmosphereInput input (in_params,fm_phys);
-  input.read_variables();
-  input.finalize();
+  read_fields (filename,fields_phys,phys_gids,comm);
 
   // Compare against ctrl fields
   for (const auto& fn : fnames) {

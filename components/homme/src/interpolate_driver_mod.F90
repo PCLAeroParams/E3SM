@@ -176,7 +176,7 @@ contains
     type(io_desc_t), pointer :: iodesc
     character(len=80), allocatable :: varnames_list(:)
     
-    integer :: ndims, nvars,  varcnt
+    integer :: ndims, nvars,  varcnt, iotype
     integer :: ret, i, ncid, n
     integer :: varid, ncols, lev
     integer :: ne_file, np_file, nlev_file
@@ -188,13 +188,9 @@ contains
 
     if (par%masterproc) print *,'initializing input file: ',trim(infilename)
 
-!    call pio_setdebuglevel(1)
-    if(output_type.eq.'netcdf') then
-       ret = PIO_OpenFile(PIOFS, InFile%FileID, iotype_netcdf, infilename)
-    else
-       ret = PIO_OpenFile(PIOFS, InFile%FileID, iotype_pnetcdf, infilename)
-    end if
-
+    !    call pio_setdebuglevel(1)
+    iotype = get_iotype()
+    ret = PIO_OpenFile(PIOFS, InFile%FileID, iotype, infilename)
     ret = PIO_inquire(InFile%FileID, nDimensions=ndims, nVariables=nvars, &
          nAttributes=infile%natts, unlimitedDimId=InFile%unlimid)
 
@@ -1238,7 +1234,7 @@ contains
     use element_mod, only: element_t
     use parallel_mod, only: parallel_t
     use kinds, only: real_kind
-    use dimensions_mod, only: nelemd, nlev, np, npsq
+    use dimensions_mod, only: nelemd, np, npsq
     use common_io_mod, only: varname_len
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use dof_mod, only: putuniquepoints
@@ -1314,7 +1310,7 @@ contains
     use element_mod, only: element_t
     use parallel_mod, only: parallel_t
     use kinds, only: real_kind
-    use common_io_mod, only: varname_len, io_stride, num_io_procs, num_agg
+    use common_io_mod, only: varname_len
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use dimensions_mod, only: nelemd, nlev, np, npsq, nelem
     use control_mod, only: max_string_len
@@ -1401,7 +1397,7 @@ contains
     use element_mod, only: element_t
     use parallel_mod, only: parallel_t
     use kinds, only: real_kind
-    use dimensions_mod, only: nelemd, nlev, np, npsq, nelem
+    use dimensions_mod, only: nelemd, np
     use common_io_mod, only: varname_len
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use pio_io_mod, only: nf_output_init_complete, nf_output_register_variables, nf_put_var_pio
@@ -1486,7 +1482,7 @@ contains
     use element_mod, only: element_t
     use parallel_mod, only: parallel_t
     use kinds, only: real_kind
-    use dimensions_mod, only: nelemd, nlev, np, npsq, nelem
+    use dimensions_mod, only: nelemd
 #ifndef HOMME_WITHOUT_PIOLIBRARY
     use common_io_mod, only: varname_len
     use pio_io_mod, only: nf_output_init_complete, nf_output_register_variables, nf_put_var_pio
@@ -1562,12 +1558,22 @@ contains
 
 #ifndef HOMME_WITHOUT_PIOLIBRARY
   function get_iotype() result(iotype)
-    use pio, only: iotype_netcdf, iotype_pnetcdf
+  ! used when opening a file
+  ! need to pick between netcdf and pnetcdf options
+  ! netcdf4 can read all formats
+  ! pnetcdf cant read the newest netcdf4/hdf formats
+  
+    use pio, only: iotype_netcdf, iotype_pnetcdf, pio_iotype_netcdf4p,&
+    pio_iotype_netcdf4p_nczarr, pio_iotype_netcdf4c,pio_iotype_pnetcdf,pio_iotype_netcdf
 
     integer :: iotype
 
     if (output_type == 'netcdf') then
+       iotype = iotype_netcdf   ! default
+    else if (output_type == 'netcdf4p') then
        iotype = iotype_netcdf
+    else if (output_type == 'netcdf64') then
+       iotype = iotype_pnetcdf
     else
        iotype = iotype_pnetcdf
     end if

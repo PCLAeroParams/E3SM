@@ -263,17 +263,34 @@ macro(build_model COMP_CLASS COMP_NAME)
     add_executable(${TARGET_NAME})
     target_sources(${TARGET_NAME} PRIVATE ${REAL_SOURCES})
 
-    separate_arguments(ALL_LIBS_LIST UNIX_COMMAND "${SLIBS}")
-
     foreach(ITEM IN LISTS COMP_CLASSES)
       if (NOT ITEM STREQUAL "cpl")
         target_link_libraries(${TARGET_NAME} ${ITEM})
       endif()
     endforeach()
 
-    foreach(ITEM IN LISTS ALL_LIBS_LIST)
-      target_link_libraries(${TARGET_NAME} ${ITEM})
-    endforeach()
+    if (TARGET hdf5 AND MPILIB STREQUAL "openmpi" AND MACH MATCHES "^(pm|muller|alvarez)-")
+      target_link_libraries(${TARGET_NAME} hdf5)
+    endif()
+
+    # driver-mct/main sources (e.g. cime_comp_mod.F90) use netcdf directly, but
+    # the component libraries only link netcdf PRIVATEly (via csm_share), so
+    # its usage requirements (e.g. include dirs for netcdf.mod) do not
+    # propagate up to this exe target. Pull in just the include dirs here.
+    #
+    # Deliberately NOT using target_link_libraries(${TARGET_NAME} netcdf):
+    # CMake treats "netcdf" as a single graph node, so linking it directly to
+    # this executable pins its (and PnetCDF's) position to wherever it's
+    # first encountered, ahead of the component libraries below that also
+    # transitively link it via csm_share -> spio. But piof/pioc (also pulled
+    # in via csm_share -> spio) reference PnetCDF symbols, so libpnetcdf.a
+    # must come after them on the link line, or the linker drops its symbols
+    # before piof/pioc need them. Only requesting the include dirs avoids
+    # adding that extra, mis-ordering link edge, while the link libraries
+    # still reach this target correctly ordered via csm_share -> spio.
+    find_package(NETCDF REQUIRED)
+    get_target_property(NETCDF_INTERFACE_INCLUDE_DIRS netcdf INTERFACE_INCLUDE_DIRECTORIES)
+    target_include_directories(${TARGET_NAME} PRIVATE ${NETCDF_INTERFACE_INCLUDE_DIRS})
 
     if (USE_MOAB)
       target_link_libraries(${TARGET_NAME} ${MOAB_LIBRARIES})
@@ -282,22 +299,22 @@ macro(build_model COMP_CLASS COMP_NAME)
 
     # Make sure we link blas/lapack
     if (NOT DEFINED ENV{SKIP_BLAS})
-      target_link_libraries(${TARGET_NAME} BLAS::BLAS LAPACK::LAPACK)
+      target_link_libraries(${TARGET_NAME} LAPACK::LAPACK)
     endif()
 
     if (E3SM_LINK_WITH_FORTRAN)
       set_target_properties(${TARGET_NAME} PROPERTIES LINKER_LANGUAGE Fortran)
 
       # A bit hacky, some platforms need help with the fortran linker
-      if (COMPILER STREQUAL "intel" OR COMPILER STREQUAL "oneapi-ifx")
+      if (COMPILER STREQUAL "intel")
         string(APPEND CMAKE_EXE_LINKER_FLAGS " -cxxlib")
       endif()
 
     else()
       set_target_properties(${TARGET_NAME} PROPERTIES LINKER_LANGUAGE CXX)
 
-      if (COMPILER STREQUAL "oneapi-ifxgpu")
-        string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-\-defsym,main=MAIN_\_ -lifcore -\-intel -fsycl -lsycl -Xsycl-target-backend \"-device 12.60.7\" ")
+      if (COMPILER STREQUAL "intelgpu")
+        string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-\-defsym,main=MAIN_\_ -lifcore -fsycl -Xsycl-target-backend \"-device pvc\" ")
       endif()
 
     endif()
@@ -328,23 +345,79 @@ macro(build_model COMP_CLASS COMP_NAME)
         if (USE_RRTMGPXX)
           target_link_libraries(${TARGET_NAME} PRIVATE rrtmgp rrtmgp_interface)
         endif()
+        if (USE_PARTMC)
+          # PartMC (externals/partmc) is configured and built as its own CMake project, with
+          # this case's compilers, library target only, and linked into EAM. It is not pulled
+          # in with add_subdirectory because its CMakeLists.txt also builds executables and
+          # tests and sets global include directories.
+          set(PARTMC_SOURCE_DIR ${SRCROOT}/externals/partmc)
+          if (NOT EXISTS ${PARTMC_SOURCE_DIR}/CMakeLists.txt)
+            message(FATAL_ERROR "-partmc is set, but ${PARTMC_SOURCE_DIR} is empty: run 'git submodule update --init externals/partmc'")
+          endif()
+          set(PARTMC_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/partmc)
+          set(PARTMC_LIB ${PARTMC_BINARY_DIR}/libpartmc.a)
+
+          # PartMC needs only netcdf.mod; the netcdf libraries come in through csm_share
+          find_package(NETCDF REQUIRED)
+          get_target_property(PARTMC_NETCDF_INCLUDE_DIRS netcdf INTERFACE_INCLUDE_DIRECTORIES)
+          set(PARTMC_NETCDF_MOD_DIR "")
+          foreach (dir IN LISTS PARTMC_NETCDF_INCLUDE_DIRS)
+            if (NOT PARTMC_NETCDF_MOD_DIR AND EXISTS "${dir}/netcdf.mod")
+              set(PARTMC_NETCDF_MOD_DIR "${dir}")
+            endif()
+          endforeach()
+          if (NOT PARTMC_NETCDF_MOD_DIR)
+            message(FATAL_ERROR "-partmc is set, but no netcdf.mod was found in the netcdf include directories: ${PARTMC_NETCDF_INCLUDE_DIRS}")
+          endif()
+
+          set(PARTMC_CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            # PartMC asks for cmake_minimum_required(VERSION 2.6.4), which CMake 4 rejects
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+            -DNETCDF_INCLUDE_DIR=${PARTMC_NETCDF_MOD_DIR})
+
+          # MOSAIC is optional: a machine that has it sets MOSAIC_PATH (the directory with
+          # libmosaic and its .mod files) in its cmake macros, and PartMC is built with it.
+          if (MOSAIC_PATH)
+            find_library(MOSAIC_LIB NAMES mosaic PATHS ${MOSAIC_PATH} NO_DEFAULT_PATH)
+            if (NOT MOSAIC_LIB)
+              message(FATAL_ERROR "MOSAIC_PATH='${MOSAIC_PATH}' is set, but libmosaic was not found there")
+            endif()
+            list(APPEND PARTMC_CMAKE_ARGS
+              -DENABLE_MOSAIC=ON -DMOSAIC_INCLUDE_DIR=${MOSAIC_PATH} -DMOSAIC_LIB=${MOSAIC_LIB})
+          endif()
+          message(STATUS "PartMC: building ${PARTMC_SOURCE_DIR} in ${PARTMC_BINARY_DIR} (MOSAIC: ${MOSAIC_LIB})")
+
+          include(ExternalProject)
+          ExternalProject_Add(partmc_build
+            SOURCE_DIR ${PARTMC_SOURCE_DIR}
+            BINARY_DIR ${PARTMC_BINARY_DIR}
+            CMAKE_ARGS ${PARTMC_CMAKE_ARGS}
+            BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target partmclib
+            # Rerun the (incremental) inner build every time, so a submodule update is picked up
+            BUILD_ALWAYS TRUE
+            INSTALL_COMMAND ""
+            BUILD_BYPRODUCTS ${PARTMC_LIB})
+          # Build PartMC (and its .mod files) before compiling EAM's partmc_interface
+          add_dependencies(${TARGET_NAME} partmc_build)
+          target_include_directories(${TARGET_NAME} PRIVATE ${PARTMC_BINARY_DIR})
+          target_link_libraries(${TARGET_NAME} PRIVATE ${PARTMC_LIB})
+          if (MOSAIC_PATH)
+            target_include_directories(${TARGET_NAME} PRIVATE ${MOSAIC_PATH})
+            target_link_libraries(${TARGET_NAME} PRIVATE ${MOSAIC_LIB})
+          endif()
+        endif()
       endif()
-  if (USE_PARTMC)
-	 message ("PARTMC root DIR: ${PARTMC_PATH}")
-	 find_library(PARTMC_LIB NAMES partmc PATHS ${PARTMC_PATH})
-	 message ("PARTMC_LIB: ${PARTMC_LIB}")
-	 include_directories(${PARTMC_PATH})
-	 target_link_libraries(${TARGET_NAME} PRIVATE ${PARTMC_LIB})
-	 message ("MOSAIC root DIR: ${MOSAIC_PATH}")
-	 find_library(MOSAIC_LIB NAMES mosaic PATHS ${MOSAIC_PATH})
-	 message ("MOSAIC_LIB: ${MOSAIC_LIB}")
-	 include_directories(${MOSAIC_PATH})
-	 target_link_libraries(${TARGET_NAME} PRIVATE ${MOSAIC_LIB})
-  endif()
       if (COMP_NAME STREQUAL "elm")
         if (USE_PETSC)
           target_link_libraries(${TARGET_NAME} PRIVATE "${PETSC_LIBRARIES}")
           target_include_directories(${TARGET_NAME} PRIVATE "${PETSC_INCLUDES}")
+        endif()
+        if (USE_MOAB)
+          target_link_libraries(${TARGET_NAME} PRIVATE ${MOAB_LIBRARIES})
+          target_include_directories(${TARGET_NAME} PRIVATE ${MOAB_INCLUDE_DIRS})
         endif()
       endif()
       if (COMP_NAME STREQUAL "ww3")

@@ -12,7 +12,6 @@ module ColumnDataType
   use shr_log_mod     , only : errMsg => shr_log_errMsg
   use shr_sys_mod     , only : shr_sys_flush
   use abortutils      , only : endrun
-  use MathfuncMod     , only : dot_sum
   use elm_varpar      , only : nlevsoi, nlevsno, nlevgrnd, nlevlak, nlevurb
   use elm_varpar      , only : ndecomp_cascade_transitions, ndecomp_pools, nlevcan
   use elm_varpar      , only : nlevdecomp_full, crop_prog, nlevdecomp
@@ -30,6 +29,7 @@ module ColumnDataType
   use elm_varctl      , only : pf_hmode, nu_com
   use elm_varctl      , only : use_extrasnowlayers, use_polygonal_tundra
   use elm_varctl      , only : use_fan
+  use elm_varctl      , only : use_ocn_lnd_one_way
   use ch4varcon       , only : allowlakeprod
   use pftvarcon       , only : VMAX_MINSURF_P_vr, KM_MINSURF_P_vr, pinit_beta1, pinit_beta2
   use soilorder_varcon, only : smax, ks_sorption
@@ -44,7 +44,6 @@ module ColumnDataType
   use spmdMod         , only : masterproc
   use restUtilMod
   use CNStateType     , only: cnstate_type
-  use tracer_varcon   , only : is_active_betr_bgc
   use CNDecompCascadeConType , only : decomp_cascade_con
   use ColumnType      , only : col_pp
   use LandunitType    , only : lun_pp
@@ -88,6 +87,7 @@ module ColumnDataType
     ! heat content variables (diagnostic)
     real(r8), pointer :: hc_soi        (:)   => null() ! soil heat content (MJ/m2)
     real(r8), pointer :: hc_soisno     (:)   => null() ! soil plus snow heat content (MJ/m2)
+    real(r8), pointer :: hc_lake       (:)   => null() ! lake-water heat content (MJ/m2; zero for non-lake columns)
     ! other quantities related to energy state
     real(r8), pointer :: emg           (:)   => null() ! ground emissivity (unitless)
     real(r8), pointer :: fact          (:,:) => null() ! factors used in computing tridiagonal matrix
@@ -169,6 +169,7 @@ module ColumnDataType
     real(r8), pointer :: vsfm_soilp_col_1d  (:)   => null() ! 1D soil liquid pressure from VSFM [Pa]
     real(r8), pointer :: h2orof             (:)   => null() ! floodplain inundation volume received from rof (mm)
     real(r8), pointer :: frac_h2orof        (:)   => null() ! floodplain inundation fraction received from rof (-)
+    real(r8), pointer :: frac_h2oocn        (:)   => null() ! coastal inundation fraction received from ocn (-)
    ! polygonal tundra (NGEE Arctic IM1)
     real(r8), pointer :: iwp_microrel     (:) => null() ! ice wedge polygon microtopographic relief (m)
     real(r8), pointer :: iwp_exclvol      (:) => null() ! ice wedge polygon excluded volume (m)
@@ -218,7 +219,6 @@ module ColumnDataType
     real(r8), pointer :: totecosysc           (:)    => null() ! (gC/m2) total ecosystem carbon, incl veg but excl cpool
     real(r8), pointer :: totcolc              (:)    => null() ! (gC/m2) total column carbon, incl veg and cpool
     real(r8), pointer :: totabgc              (:)    => null() ! (gC/m2) total column above ground carbon, excluding som
-    real(r8), pointer :: totblgc              (:)    => null() ! (gc/m2) total column non veg carbon
     real(r8), pointer :: totvegc_abg          (:)    => null() ! (gC/m2) total above vegetation carbon, excluding cpool averaged to column (p2c)
     real(r8), pointer :: begcb                (:)    => null() ! (gC/m2) carbon mass, beginning of time step
     real(r8), pointer :: endcb                (:)    => null() ! (gc/m2) carbon mass, end of time step
@@ -274,7 +274,6 @@ module ColumnDataType
     real(r8), pointer :: totvegn                  (:)     => null() ! (gN/m2) total vegetation nitrogen (p2c)
     real(r8), pointer :: totpftn                  (:)     => null() ! (gN/m2) total pft-level nitrogen (p2c)
     real(r8), pointer :: plant_n_buffer           (:)     => null() ! (gN/m2) col-level abstract N storage
-    real(r8), pointer :: plant_nbuffer            (:)     => null() ! (gN/m2) plant nitrogen buffer, (gN/m2), used to exchange info with betr
     real(r8), pointer :: seedn                    (:)     => null() ! (gN/m2) column-level pool for seeding new Patches
     real(r8), pointer :: cropseedn_deficit        (:)     => null() ! (gN/m2) column-level pool for seed N deficit (negative pool)
     real(r8), pointer :: prod1n                   (:)     => null() ! (gN/m2) crop product N pool, 1-year lifespan
@@ -519,6 +518,7 @@ module ColumnDataType
     real(r8), pointer :: qflx_h2osfc2topsoi   (:)   => null() ! liquid water coming from surface standing water top soil (mm H2O/s)
     real(r8), pointer :: qflx_snow2topsoi     (:)   => null() ! liquid water coming from residual snow to topsoil (mm H2O/s)
     real(r8), pointer :: qflx_lateral         (:)   => null() ! lateral subsurface flux (mm H2O /s)
+    real(r8), pointer :: qflx_lnd2ocn         (:)   => null() ! lateral flux between water table and sea surface height (mm H2O/s)
     real(r8), pointer :: snow_sources         (:)   => null() ! snow sources (mm H2O/s)
     real(r8), pointer :: snow_sinks           (:)   => null() ! snow sinks (mm H2O/s)
 
@@ -528,6 +528,7 @@ module ColumnDataType
     real(r8), pointer :: qflx_irr_demand      (:)   => null() ! col surface irrigation demand (mm H2O /s)
     real(r8), pointer :: qflx_over_supply     (:)   => null() ! col over supplied irrigation
     real(r8), pointer :: qflx_h2orof_drain    (:)   => null() ! drainage from floodplain inundation volume (mm H2O/s))
+    real(r8), pointer :: qflx_h2oocn_drain    (:)   => null() ! drainage from coastal inundation volume (mm H2O/s)
     real(r8), pointer :: qflx_from_uphill     (:)   => null() ! input to top soil layer from uphill topounit(s) (mm H2O/s))
     real(r8), pointer :: qflx_to_downhill     (:)   => null() ! output from column to the downhill topounit (mm H2O/s))
 
@@ -1097,7 +1098,7 @@ contains
   !------------------------------------------------------------------------
   ! Subroutines to initialize and clean column energy state data structure
   !------------------------------------------------------------------------
-  subroutine col_es_init(this, begc, endc)
+  subroutine col_es_init(this, begc, endc, endc_owned)
     !
     ! !USES:
     use landunit_varcon, only : istice, istwet, istsoil, istdlak, istice_mec
@@ -1107,7 +1108,7 @@ contains
     !
     ! !ARGUMENTS:
     class(column_energy_state) :: this
-    integer, intent(in) :: begc,endc
+    integer, intent(in) :: begc,endc, endc_owned
     !------------------------------------------------------------------------
     !
     ! !LOCAL VARIABLES:
@@ -1135,6 +1136,7 @@ contains
     allocate(this%thv              (begc:endc))                     ; this%thv                (:)   = spval
     allocate(this%hc_soi           (begc:endc))                     ; this%hc_soi             (:)   = spval
     allocate(this%hc_soisno        (begc:endc))                     ; this%hc_soisno          (:)   = spval
+    allocate(this%hc_lake          (begc:endc))                     ; this%hc_lake            (:)   = spval
     allocate(this%emg              (begc:endc))                     ; this%emg                (:)   = spval
     allocate(this%fact             (begc:endc, -nlevsno+1:nlevgrnd)); this%fact               (:,:) = spval
     allocate(this%c_h2osfc         (begc:endc))                     ; this%c_h2osfc           (:)   = spval
@@ -1223,7 +1225,7 @@ contains
     !-----------------------------------------------------------------------
 
     ! Initialize soil+snow temperatures
-    do c = begc,endc
+    do c = begc,endc_owned
        l = col_pp%landunit(c)
 
        ! Snow level temperatures - all land points
@@ -1236,7 +1238,7 @@ contains
        ! Below snow temperatures - nonlake points (lake points are set below)
        if (.not. lun_pp%lakpoi(l)) then
 
-          if (lun_pp%itype(l)==istice .or. lun_pp%itype(l)==istice_mec) then
+          if (lun_pp%itype(l) == istice .or. lun_pp%itype(l) == istice_mec) then
              this%t_soisno(c,1:nlevgrnd) = 250._r8
 
           else if (lun_pp%itype(l) == istwet) then
@@ -1381,12 +1383,12 @@ contains
   !------------------------------------------------------------------------
   ! Subroutines to initialize and clean column water state data structure
   !------------------------------------------------------------------------
-  subroutine col_ws_init(this, begc, endc, h2osno_input, snow_depth_input, watsat_input)
+  subroutine col_ws_init(this, begc, endc, endc_owned, h2osno_input, snow_depth_input, watsat_input)
     !
     use elm_varctl  , only : use_lake_wat_storage, use_arctic_init
     ! !ARGUMENTS:
     class(column_water_state) :: this
-    integer , intent(in)      :: begc,endc
+    integer , intent(in)      :: begc,endc, endc_owned
     real(r8), intent(in)      :: h2osno_input(begc:)
     real(r8), intent(in)      :: snow_depth_input(begc:)
     real(r8), intent(in)      :: watsat_input(begc:, 1:)          ! volumetric soil water at saturation (porosity)
@@ -1461,6 +1463,7 @@ contains
     allocate(this%vsfm_soilp_col_1d  (ncells))                        ; this%vsfm_soilp_col_1d  (:)   = spval
     allocate(this%h2orof             (begc:endc))                     ; this%h2orof             (:)   = spval
     allocate(this%frac_h2orof        (begc:endc))                     ; this%frac_h2orof        (:)   = spval
+    allocate(this%frac_h2oocn        (begc:endc))                     ; this%frac_h2oocn        (:)   = nan
     if (use_polygonal_tundra) then
       ! polygonal tundra/ice wedge polygons:
       allocate(this%iwp_microrel       (begc:endc))                   ; this%iwp_microrel     (:) = spval
@@ -1675,7 +1678,7 @@ contains
     ! Arrays that are initialized from input arguments
     this%wslake_col(begc:endc) = 0._r8
 
-    do c = begc,endc
+    do c = begc,endc_owned
        l = col_pp%landunit(c)
        this%h2osno(c)                 = h2osno_input(c)
        this%int_snow(c)               = h2osno_input(c)
@@ -1690,6 +1693,7 @@ contains
        this%frac_h2osfc_act(c)        = 0._r8
        this%h2orof(c)                 = 0._r8
        this%frac_h2orof(c)            = 0._r8
+       this%frac_h2oocn(c)            = 0._r8
 
        if (lun_pp%urbpoi(l)) then
           ! From Bonan 1996 (LSM technical note)
@@ -1736,7 +1740,7 @@ contains
        if (.not. lun_pp%lakpoi(l)) then  !not lake
 	       nlevbed = col_pp%nlevbed(c)
           ! volumetric water
-          if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+          if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
              nlevs = nlevgrnd
              do j = 1, nlevs
                 if (j > nlevbed) then
@@ -2019,7 +2023,7 @@ contains
 
     call restartvar(ncid=ncid, flag=flag, varname='FH2OSFC', xtype=ncd_double,  &
          dim1name='column',&
-         long_name='fraction of ground covered by h2osfc (0 to 1)', units='', &
+         long_name='fraction of ground covered by h2osfc (0 to 1)', units='1', &
          interpinic_flag='interp', readvar=readvar, data=this%frac_h2osfc)
     if (flag == 'read' .and. .not. readvar) then
        this%frac_h2osfc(bounds%begc:bounds%endc) = 0.0_r8
@@ -2071,7 +2075,7 @@ contains
              end if
              do j = 1,nlevs
                 l = col_pp%landunit(c)
-                if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+                if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
                    this%h2osoi_liq(c,j) = max(0._r8,this%h2osoi_liq(c,j))
                    this%h2osoi_ice(c,j) = max(0._r8,this%h2osoi_ice(c,j))
                    this%h2osoi_vol(c,j) = this%h2osoi_liq(c,j)/(col_pp%dz(c,j)*denh2o) &
@@ -2158,7 +2162,6 @@ contains
     allocate(this%totabgc              (begc:endc))     ; this%totabgc              (:)     = spval
     allocate(this%totecosysc           (begc:endc))     ; this%totecosysc           (:)     = spval
     allocate(this%totcolc              (begc:endc))     ; this%totcolc              (:)     = spval
-    allocate(this%totblgc              (begc:endc))     ; this%totblgc              (:)     = spval
     allocate(this%totvegc_abg          (begc:endc))     ; this%totvegc_abg          (:)     = spval
     allocate(this%begcb                (begc:endc))     ; this%begcb                (:)     = spval 
     allocate(this%endcb                (begc:endc))     ; this%endcb                (:)     = spval 
@@ -2482,7 +2485,7 @@ contains
 
     do c = begc, endc
        l = col_pp%landunit(c)
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
           if (.not. present(c12_carbonstate_vars)) then ! initializing a c12 type
              do j = 1, nlevdecomp
                 do k = 1, ndecomp_pools
@@ -2703,15 +2706,6 @@ contains
                errMsg(__FILE__, __LINE__))
        end if
 
-       if(is_active_betr_bgc)then
-          call restartvar(ncid=ncid, flag=flag, varname='totblgc', xtype=ncd_double,  &
-               dim1name='column', long_name='', units='', &
-               interpinic_flag='interp', readvar=readvar, data=this%totblgc)
-
-          call restartvar(ncid=ncid, flag=flag, varname='cwdc', xtype=ncd_double,  &
-               dim1name='column', long_name='', units='', &
-               interpinic_flag='interp', readvar=readvar, data=this%cwdc)
-       endif
 
        call restartvar(ncid=ncid, flag=flag, varname='totlitc', xtype=ncd_double,  &
             dim1name='column', long_name='', units='', &
@@ -3366,7 +3360,6 @@ contains
     allocate(this%totvegn               (begc:endc))                     ; this%totvegn               (:)   = spval
     allocate(this%totpftn               (begc:endc))                     ; this%totpftn               (:)   = spval
     allocate(this%plant_n_buffer        (begc:endc))                     ; this%plant_n_buffer        (:)   = spval
-    allocate(this%plant_nbuffer         (begc:endc))                     ; this%plant_nbuffer         (:)   = spval
     allocate(this%seedn                 (begc:endc))                     ; this%seedn                 (:)   = spval
     allocate(this%cropseedn_deficit     (begc:endc))                     ; this%cropseedn_deficit     (:)   = spval
     allocate(this%prod1n                (begc:endc))                     ; this%prod1n                (:)   = spval
@@ -3703,7 +3696,7 @@ contains
 
     do c = begc, endc
        l = col_pp%landunit(c)
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
 
           ! column nitrogen state variables
           this%ntrunc(c) = 0._r8
@@ -4858,7 +4851,7 @@ contains
 
     do c = begc, endc
        l = col_pp%landunit(c)
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
 
           ! column phosphorus state variables
           this%ptrunc(c) = 0._r8
@@ -5768,11 +5761,11 @@ contains
   !------------------------------------------------------------------------
   ! Subroutines to initialize and clean column water flux data structure
   !------------------------------------------------------------------------
-  subroutine col_wf_init(this, begc, endc)
+  subroutine col_wf_init(this, begc, endc, endc_owned)
     !
     ! !ARGUMENTS:
     class(column_water_flux) :: this
-    integer, intent(in) :: begc,endc
+    integer, intent(in) :: begc,endc, endc_owned
     ! !LOCAL VARIABLES:
     integer  :: l,c
     integer  :: ncells
@@ -5840,6 +5833,7 @@ contains
     allocate(this%qflx_h2osfc2topsoi     (begc:endc))             ; this%qflx_h2osfc2topsoi   (:)   = spval
     allocate(this%qflx_snow2topsoi       (begc:endc))             ; this%qflx_snow2topsoi     (:)   = spval
     allocate(this%qflx_lateral           (begc:endc))             ; this%qflx_lateral         (:)   = 0._r8
+    allocate(this%qflx_lnd2ocn           (begc:endc))             ; this%qflx_lnd2ocn         (:)   = spval
     allocate(this%snow_sources           (begc:endc))             ; this%snow_sources         (:)   = spval
     allocate(this%snow_sinks             (begc:endc))             ; this%snow_sinks           (:)   = spval
     allocate(this%qflx_irrig             (begc:endc))             ; this%qflx_irrig           (:)   = spval
@@ -5848,6 +5842,7 @@ contains
     allocate(this%qflx_over_supply       (begc:endc))             ; this%qflx_over_supply     (:)   = spval
     allocate(this%qflx_irr_demand        (begc:endc))             ; this%qflx_irr_demand      (:)   = spval
     allocate(this%qflx_h2orof_drain      (begc:endc))             ; this%qflx_h2orof_drain    (:)   = spval
+    allocate(this%qflx_h2oocn_drain      (begc:endc))             ; this%qflx_h2oocn_drain    (:)   = spval
     allocate(this%qflx_from_uphill       (begc:endc))             ; this%qflx_from_uphill     (:)   = spval
     allocate(this%qflx_to_downhill       (begc:endc))             ; this%qflx_to_downhill     (:)   = spval
 
@@ -5904,6 +5899,17 @@ contains
     call hist_addfld1d (fname='QDRAI',  units='mm/s',  &
          avgflag='A', long_name='sub-surface drainage', &
          ptr_col=this%qflx_drain, c2l_scale_type='urbanf')
+
+    if (use_ocn_lnd_one_way) then
+      call hist_addfld1d (fname='QH2OOCN',  units='mm/s',  &
+           avgflag='A', long_name='Ocean inundation infiltration', &
+           ptr_col=this%qflx_h2oocn_drain, c2l_scale_type='urbanf')
+
+      this%qflx_lnd2ocn(begc:endc) = spval
+      call hist_addfld1d (fname='QLND2OCN',  units='mm/s',  &
+           avgflag='A', long_name='land to ocean drainage', &
+           ptr_col=this%qflx_lnd2ocn, c2l_scale_type='urbanf')
+    endif
 
     this%qflx_irr_demand(begc:endc) = spval
     call hist_addfld1d (fname='QIRRIG_WM',  units='mm/s',  &
@@ -6039,14 +6045,18 @@ contains
     this%qflx_grnd_irrig(begc:endc) = 0._r8
     this%qflx_over_supply(begc:endc) = 0._r8
     this%qflx_h2orof_drain(begc:endc)= 0._r8
+    this%qflx_h2oocn_drain(begc:endc)= 0._r8
+
     this%qflx_from_uphill(begc:endc) = 0._r8
     this%qflx_to_downhill(begc:endc) = 0._r8
+
     ! needed for CNNLeaching
-    do c = begc, endc
+    do c = begc, endc_owned
        l = col_pp%landunit(c)
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
           this%qflx_drain(c) = 0._r8
           this%qflx_surf(c)  = 0._r8
+          this%qflx_lnd2ocn(c) = 0._r8
        end if
     end do
 
@@ -6455,113 +6465,111 @@ contains
                 avgflag='A', long_name=longname, &
                  ptr_col=data2dptr, default='inactive')
        end do
-       if(.not. is_active_betr_bgc )then
-          this%decomp_cascade_hr(begc:endc,:)             = spval
-          this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
-          this%decomp_cascade_ctransfer(begc:endc,:)      = spval
-          this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
-          do l = 1, ndecomp_cascade_transitions
+       this%decomp_cascade_hr(begc:endc,:)             = spval
+       this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
+       this%decomp_cascade_ctransfer(begc:endc,:)      = spval
+       this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
+       do l = 1, ndecomp_cascade_transitions
 
-             ! output the vertically integrated fluxes only as  default
+          ! output the vertically integrated fluxes only as  default
+          !-- HR fluxes (none from CWD)
+          if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
+             data1dptr => this%decomp_cascade_hr(:,l)
+             ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
+             ii = 0
+             do jj = 1, ndecomp_cascade_transitions
+                if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
+             end do
+             if ( ii == 1 ) then
+                fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR'
+             else
+                fieldname = trim( &
+                     decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR_'//&
+                     trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))
+             endif
+             longname =  'Het. Resp. from '//&
+                  trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
+              call hist_addfld1d (fname=fieldname, units='gC/m^2/s',  &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data1dptr)
+          endif
+
+          !-- transfer fluxes (none from terminal pool, if present)
+          if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
+             data1dptr => this%decomp_cascade_ctransfer(:,l)
+             fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'C_TO_'//&
+                  trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'C'
+             longname =  &
+                  'decomp. of '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
+                  ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
+              call hist_addfld1d (fname=fieldname, units='gC/m^2/s', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data1dptr)
+          endif
+
+          ! output the vertically resolved fluxes
+          if ( nlevdecomp_full > 1 ) then
              !-- HR fluxes (none from CWD)
              if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
-                data1dptr => this%decomp_cascade_hr(:,l)
+                data2dptr => this%decomp_cascade_hr_vr(:,:,l)
                 ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
                 ii = 0
                 do jj = 1, ndecomp_cascade_transitions
                    if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
                 end do
                 if ( ii == 1 ) then
-                   fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR'
+                   fieldname = &
+                        trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
+                        //'_HR'//trim(vr_suffix)
                 else
-                   fieldname = trim( &
-                        decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR_'//&
-                        trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))
+                   fieldname = &
+                        trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR_'//&
+                        trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))&
+                        //trim(vr_suffix)
                 endif
                 longname =  'Het. Resp. from '//&
                      trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
-                 call hist_addfld1d (fname=fieldname, units='gC/m^2/s',  &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data1dptr)
-             endif
-
-             !-- transfer fluxes (none from terminal pool, if present)
-             if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
-                data1dptr => this%decomp_cascade_ctransfer(:,l)
-                fieldname = trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'C_TO_'//&
-                     trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))//'C'
-                longname =  &
-                     'decomp. of '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
-                     ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
-                 call hist_addfld1d (fname=fieldname, units='gC/m^2/s', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data1dptr)
-             endif
-
-             ! output the vertically resolved fluxes
-             if ( nlevdecomp_full > 1 ) then
-                !-- HR fluxes (none from CWD)
-                if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
-                   data2dptr => this%decomp_cascade_hr_vr(:,:,l)
-                   ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
-                   ii = 0
-                   do jj = 1, ndecomp_cascade_transitions
-                      if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
-                   end do
-                   if ( ii == 1 ) then
-                      fieldname = &
-                           trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                           //'_HR'//trim(vr_suffix)
-                   else
-                      fieldname = &
-                           trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'_HR_'//&
-                           trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))&
-                           //trim(vr_suffix)
-                   endif
-                   longname =  'Het. Resp. from '//&
-                        trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
-                    call hist_addfld_decomp (fname=fieldname, units='gC/m^3/s',  type2d='levdcmp', &
-                         avgflag='A', long_name=longname, &
-                          ptr_col=data2dptr, default='inactive')
-                endif
-
-                !-- transfer fluxes (none from terminal pool, if present)
-                if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
-                   data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
-                   fieldname = trim( &
-                        decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'C_TO_'//&
-                        trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
-                        //'C'//trim(vr_suffix)
-                   longname =  'decomp. of '//&
-                        trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
-                        ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
-                    call hist_addfld_decomp (fname=fieldname, units='gC/m^3/s',  type2d='levdcmp', &
-                         avgflag='A', long_name=longname, &
-                          ptr_col=data2dptr, default='inactive')
-                endif
-             end if  ! nlevdecomp_full > 1
-          end do ! ndecomp_cascade_transitions
-
-          this%decomp_cpools_leached(begc:endc,:) = spval
-          this%decomp_cpools_transport_tendency(begc:endc,:,:) = spval
-          do k = 1, ndecomp_pools
-             if ( .not. decomp_cascade_con%is_cwd(k) ) then
-                data1dptr => this%decomp_cpools_leached(:,k)
-                fieldname = 'M_'//trim(decomp_cascade_con%decomp_pool_name_history(k))//'C_TO_LEACHING'
-                longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' C leaching loss'
-                 call hist_addfld1d (fname=fieldname, units='gC/m^2/s', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data1dptr)!, default='inactive')
-
-                data2dptr => this%decomp_cpools_transport_tendency(:,:,k)
-                fieldname = trim(decomp_cascade_con%decomp_pool_name_history(k))//'C_TNDNCY_VERT_TRANSPORT'
-                longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' C tendency due to vertical transport'
                  call hist_addfld_decomp (fname=fieldname, units='gC/m^3/s',  type2d='levdcmp', &
                       avgflag='A', long_name=longname, &
                        ptr_col=data2dptr, default='inactive')
              endif
-          end do
-       endif ! .not. is_active_betr_bgc
+
+             !-- transfer fluxes (none from terminal pool, if present)
+             if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
+                data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
+                fieldname = trim( &
+                     decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))//'C_TO_'//&
+                     trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
+                     //'C'//trim(vr_suffix)
+                longname =  'decomp. of '//&
+                     trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
+                     ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
+                 call hist_addfld_decomp (fname=fieldname, units='gC/m^3/s',  type2d='levdcmp', &
+                      avgflag='A', long_name=longname, &
+                       ptr_col=data2dptr, default='inactive')
+             endif
+          end if  ! nlevdecomp_full > 1
+       end do ! ndecomp_cascade_transitions
+
+       this%decomp_cpools_leached(begc:endc,:) = spval
+       this%decomp_cpools_transport_tendency(begc:endc,:,:) = spval
+       do k = 1, ndecomp_pools
+          if ( .not. decomp_cascade_con%is_cwd(k) ) then
+             data1dptr => this%decomp_cpools_leached(:,k)
+             fieldname = 'M_'//trim(decomp_cascade_con%decomp_pool_name_history(k))//'C_TO_LEACHING'
+             longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' C leaching loss'
+              call hist_addfld1d (fname=fieldname, units='gC/m^2/s', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data1dptr)!, default='inactive')
+
+             data2dptr => this%decomp_cpools_transport_tendency(:,:,k)
+             fieldname = trim(decomp_cascade_con%decomp_pool_name_history(k))//'C_TNDNCY_VERT_TRANSPORT'
+             longname =  trim(decomp_cascade_con%decomp_pool_name_long(k))//' C tendency due to vertical transport'
+              call hist_addfld_decomp (fname=fieldname, units='gC/m^3/s',  type2d='levdcmp', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data2dptr, default='inactive')
+          endif
+       end do
        ! still in C12 block
 
        this%t_scalar(begc:endc,:) = spval
@@ -6797,52 +6805,50 @@ contains
              end if
           endif
        end do
-       if(.not. is_active_betr_bgc)then
-          this%decomp_cascade_hr(begc:endc,:)             = spval
-          this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
-          this%decomp_cascade_ctransfer(begc:endc,:)      = spval
-          this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
-          do l = 1, ndecomp_cascade_transitions
-             !-- HR fluxes (none from CWD)
-             if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
-                data2dptr => this%decomp_cascade_hr_vr(:,:,l)
-                ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
-                ii = 0
-                do jj = 1, ndecomp_cascade_transitions
-                   if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
-                end do
-                if ( ii == 1 ) then
-                   fieldname = 'C13_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                        //'_HR'//trim(vr_suffix)
-                else
-                   fieldname = 'C13_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                        //'_HR_'//&
-                        trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))//&
-                        trim(vr_suffix)
-                endif
-                longname =  'C13 Het. Resp. from '&
-                     //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
-                 call hist_addfld_decomp (fname=fieldname, units='gC13/m^3',  type2d='levdcmp', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data2dptr, default='inactive')
-             endif
-             !-- transfer fluxes (none from terminal pool, if present)
-             if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
-                data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
+       this%decomp_cascade_hr(begc:endc,:)             = spval
+       this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
+       this%decomp_cascade_ctransfer(begc:endc,:)      = spval
+       this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
+       do l = 1, ndecomp_cascade_transitions
+          !-- HR fluxes (none from CWD)
+          if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
+             data2dptr => this%decomp_cascade_hr_vr(:,:,l)
+             ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
+             ii = 0
+             do jj = 1, ndecomp_cascade_transitions
+                if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
+             end do
+             if ( ii == 1 ) then
                 fieldname = 'C13_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                     //'C_TO_'//&
-                     trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
-                     //'C'//trim(vr_suffix)
-                longname =  'C13 decomp. of '&
-                     //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))&
-                     //' C to '//&
-                     trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
-                 call hist_addfld_decomp (fname=fieldname, units='gC13/m^3',  type2d='levdcmp', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data2dptr, default='inactive')
+                     //'_HR'//trim(vr_suffix)
+             else
+                fieldname = 'C13_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
+                     //'_HR_'//&
+                     trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))//&
+                     trim(vr_suffix)
              endif
-          end do
-       endif ! .not. is_active_betr_bgc
+             longname =  'C13 Het. Resp. from '&
+                  //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
+              call hist_addfld_decomp (fname=fieldname, units='gC13/m^3',  type2d='levdcmp', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data2dptr, default='inactive')
+          endif
+          !-- transfer fluxes (none from terminal pool, if present)
+          if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
+             data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
+             fieldname = 'C13_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
+                  //'C_TO_'//&
+                  trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
+                  //'C'//trim(vr_suffix)
+             longname =  'C13 decomp. of '&
+                  //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))&
+                  //' C to '//&
+                  trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
+              call hist_addfld_decomp (fname=fieldname, units='gC13/m^3',  type2d='levdcmp', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data2dptr, default='inactive')
+          endif
+       end do
 
        this%lithr(begc:endc) = spval
         call hist_addfld1d (fname='C13_LITHR', units='gC13/m^2/s', &
@@ -6999,52 +7005,50 @@ contains
              end if
           endif
        end do
-       if(.not. is_active_betr_bgc)then
-          this%decomp_cascade_hr(begc:endc,:)             = spval
-          this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
-          this%decomp_cascade_ctransfer(begc:endc,:)      = spval
-          this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
-          do l = 1, ndecomp_cascade_transitions
-             !-- HR fluxes (none from CWD)
-             if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
-                data2dptr => this%decomp_cascade_hr_vr(:,:,l)
-                ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
-                ii = 0
-                do jj = 1, ndecomp_cascade_transitions
-                   if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
-                end do
-                if ( ii == 1 ) then
-                   fieldname = 'C14_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                        //'_HR'//trim(vr_suffix)
-                else
-                   fieldname = 'C14_'//&
-                        trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                        //'_HR_'//&
-                        trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))&
-                        //trim(vr_suffix)
-                endif
-                longname =  'C14 Het. Resp. from '&
-                     //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
-                 call hist_addfld_decomp (fname=fieldname, units='gC14/m^3',  type2d='levdcmp', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data2dptr, default='inactive')
-             endif
-             !-- transfer fluxes (none from terminal pool, if present)
-             if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
-                data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
+       this%decomp_cascade_hr(begc:endc,:)             = spval
+       this%decomp_cascade_hr_vr(begc:endc,:,:)        = spval
+       this%decomp_cascade_ctransfer(begc:endc,:)      = spval
+       this%decomp_cascade_ctransfer_vr(begc:endc,:,:) = spval
+       do l = 1, ndecomp_cascade_transitions
+          !-- HR fluxes (none from CWD)
+          if ( .not. decomp_cascade_con%is_cwd(decomp_cascade_con%cascade_donor_pool(l)) ) then
+             data2dptr => this%decomp_cascade_hr_vr(:,:,l)
+             ! check to see if there are multiple pathways that include respiration, and if so, note that in the history file
+             ii = 0
+             do jj = 1, ndecomp_cascade_transitions
+                if ( decomp_cascade_con%cascade_donor_pool(jj) == decomp_cascade_con%cascade_donor_pool(l) ) ii = ii+1
+             end do
+             if ( ii == 1 ) then
                 fieldname = 'C14_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
-                     //'C_TO_'//&
-                     trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
-                     //'C'//trim(vr_suffix)
-                longname =  'C14 decomp. of '&
-                     //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
-                     ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
-                 call hist_addfld_decomp (fname=fieldname, units='gC14/m^3',  type2d='levdcmp', &
-                      avgflag='A', long_name=longname, &
-                       ptr_col=data2dptr, default='inactive')
+                     //'_HR'//trim(vr_suffix)
+             else
+                fieldname = 'C14_'//&
+                     trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
+                     //'_HR_'//&
+                     trim(decomp_cascade_con%decomp_pool_name_short(decomp_cascade_con%cascade_receiver_pool(l)))&
+                     //trim(vr_suffix)
              endif
-          end do
-       endif ! .not. is_active_betr_bgc
+             longname =  'C14 Het. Resp. from '&
+                  //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))
+              call hist_addfld_decomp (fname=fieldname, units='gC14/m^3',  type2d='levdcmp', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data2dptr, default='inactive')
+          endif
+          !-- transfer fluxes (none from terminal pool, if present)
+          if ( decomp_cascade_con%cascade_receiver_pool(l) /= 0 ) then
+             data2dptr => this%decomp_cascade_ctransfer_vr(:,:,l)
+             fieldname = 'C14_'//trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_donor_pool(l)))&
+                  //'C_TO_'//&
+                  trim(decomp_cascade_con%decomp_pool_name_history(decomp_cascade_con%cascade_receiver_pool(l)))&
+                  //'C'//trim(vr_suffix)
+             longname =  'C14 decomp. of '&
+                  //trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_donor_pool(l)))//&
+                  ' C to '//trim(decomp_cascade_con%decomp_pool_name_long(decomp_cascade_con%cascade_receiver_pool(l)))//' C'
+              call hist_addfld_decomp (fname=fieldname, units='gC14/m^3',  type2d='levdcmp', &
+                   avgflag='A', long_name=longname, &
+                    ptr_col=data2dptr, default='inactive')
+          endif
+       end do
 
        this%lithr(begc:endc) = spval
         call hist_addfld1d (fname='C14_LITHR', units='gC14/m^2/s', &
@@ -7206,9 +7210,9 @@ contains
        end if
 
        this%fphr(c,nlevdecomp+1:nlevgrnd) = 0._r8 !used to be in ch4Mod
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
           this%fphr(c,nlevdecomp+1:nlevgrnd) = 0._r8
-       else if (lun_pp%itype(l) == istdlak .and. allowlakeprod) then
+       else if (col_pp%is_lake(c) .and. allowlakeprod) then
           this%fphr(c,:) = spval
        else  ! Inactive CH4 columns
           this%fphr(c,:) = spval
@@ -7216,7 +7220,7 @@ contains
 
        ! also initialize dynamic landcover fluxes so that they have
        ! real values on first timestep, prior to calling pftdyn_cnbal
-       if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+       if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
           this%dwt_conv_cflux(c)        = 0._r8
           this%dwt_prod10c_gain(c)      = 0._r8
           this%dwt_prod100c_gain(c)     = 0._r8
@@ -7398,8 +7402,7 @@ contains
        this%somc_yield(c)         = 0._r8
     end do
 
-    if ( (.not. is_active_betr_bgc           ) .and. &
-         (.not. (use_pflotran .and. pf_cmode))) then
+    if ((.not. (use_pflotran .and. pf_cmode))) then
 
        ! vertically integrate HR and decomposition cascade fluxes
        do k = 1, ndecomp_cascade_transitions
@@ -7422,12 +7425,6 @@ contains
                this%somhr(c)
        end do
 
-    elseif (is_active_betr_bgc) then
-
-       do fc = 1, num_soilc
-          c = filter_soilc(fc)
-          this%hr(c) = dot_sum(this%hr_vr(c,1:nlevdecomp),dzsoi_decomp(1:nlevdecomp))
-       enddo
     endif
 
     ! some zeroing
@@ -7624,96 +7621,94 @@ contains
        end do
     end if
 
-    if  (.not. is_active_betr_bgc) then
 
-       ! (cWDC_HR) - coarse woody debris heterotrophic respiration
-       do fc = 1,num_soilc
-          c = filter_soilc(fc)
-          this%cwdc_hr(c) = 0._r8
-       end do
+    ! (cWDC_HR) - coarse woody debris heterotrophic respiration
+    do fc = 1,num_soilc
+       c = filter_soilc(fc)
+       this%cwdc_hr(c) = 0._r8
+    end do
 
-       ! (cWDC_LOSS) - coarse woody debris C loss
-       do l = 1, ndecomp_pools
-          if ( is_cwd(l) ) then
-             do fc = 1,num_soilc
-                c = filter_soilc(fc)
-                this%cwdc_loss(c) = &
-                     this%cwdc_loss(c) + &
-                     this%m_decomp_cpools_to_fire(c,l)
-             end do
-          end if
-       end do
-
-       do k = 1, ndecomp_cascade_transitions
-          if ( is_cwd(decomp_cascade_con%cascade_donor_pool(k)) ) then
-             do fc = 1,num_soilc
-                c = filter_soilc(fc)
-                this%cwdc_loss(c) = &
-                     this%cwdc_loss(c) + &
-                     this%decomp_cascade_ctransfer(c,k)
-             end do
-          end if
-       end do
-
-       if (.not.(use_pflotran .and. pf_cmode)) then
-          ! (LITTERC_LOSS) - litter C loss
+    ! (cWDC_LOSS) - coarse woody debris C loss
+    do l = 1, ndecomp_pools
+       if ( is_cwd(l) ) then
           do fc = 1,num_soilc
              c = filter_soilc(fc)
-             this%litterc_loss(c) = this%lithr(c)
-          end do
-       end if !(.not.(use_pflotran .and. pf_cmode))
-
-       do l = 1, ndecomp_pools
-          if ( is_litter(l) ) then
-             do fc = 1,num_soilc
-                 c = filter_soilc(fc)
-                 this%litterc_loss(c) = &
-                    this%litterc_loss(c) + &
-                    this%m_decomp_cpools_to_fire(c,l)
-             end do
-          end if
-       end do
-
-
-       do k = 1, ndecomp_cascade_transitions
-         if ( is_litter(decomp_cascade_con%cascade_donor_pool(k)) ) then
-           do fc = 1,num_soilc
-             c = filter_soilc(fc)
-             this%litterc_loss(c) = &
-                  this%litterc_loss(c) + &
-                  this%decomp_cascade_ctransfer(c,k)
-           end do
-         end if
-       end do
-
-       if (use_pflotran .and. pf_cmode) then
-          ! note: the follwoing should be useful to non-pflotran-coupled, but seems cause 1 BFB test unmatching.
-          ! add up all vertical transport tendency terms and calculate total som leaching loss as the sum of these
-          do l = 1, ndecomp_pools
-             do fc = 1,num_soilc
-                c = filter_soilc(fc)
-                this%decomp_cpools_leached(c,l) = 0._r8
-             end do
-             if(l /= i_cwd)then
-               do j = 1, nlev
-                 do fc = 1,num_soilc
-                   c = filter_soilc(fc)
-                   this%decomp_cpools_leached(c,l) = &
-                     this%decomp_cpools_leached(c,l) + &
-                     this%decomp_cpools_transport_tendency(c,j,l) * dzsoi_decomp(j)
-                 end do
-               end do
-             endif
-             do fc = 1,num_soilc
-                c = filter_soilc(fc)
-                this%som_c_leached(c) = &
-                   this%som_c_leached(c) + &
-                   this%decomp_cpools_leached(c,l)
-             end do
+             this%cwdc_loss(c) = &
+                  this%cwdc_loss(c) + &
+                  this%m_decomp_cpools_to_fire(c,l)
           end do
        end if
+    end do
 
-    end if ! .not. is_active_betr_bgc
+    do k = 1, ndecomp_cascade_transitions
+       if ( is_cwd(decomp_cascade_con%cascade_donor_pool(k)) ) then
+          do fc = 1,num_soilc
+             c = filter_soilc(fc)
+             this%cwdc_loss(c) = &
+                  this%cwdc_loss(c) + &
+                  this%decomp_cascade_ctransfer(c,k)
+          end do
+       end if
+    end do
+
+    if (.not.(use_pflotran .and. pf_cmode)) then
+       ! (LITTERC_LOSS) - litter C loss
+       do fc = 1,num_soilc
+          c = filter_soilc(fc)
+          this%litterc_loss(c) = this%lithr(c)
+       end do
+    end if !(.not.(use_pflotran .and. pf_cmode))
+
+    do l = 1, ndecomp_pools
+       if ( is_litter(l) ) then
+          do fc = 1,num_soilc
+              c = filter_soilc(fc)
+              this%litterc_loss(c) = &
+                 this%litterc_loss(c) + &
+                 this%m_decomp_cpools_to_fire(c,l)
+          end do
+       end if
+    end do
+
+
+    do k = 1, ndecomp_cascade_transitions
+      if ( is_litter(decomp_cascade_con%cascade_donor_pool(k)) ) then
+        do fc = 1,num_soilc
+          c = filter_soilc(fc)
+          this%litterc_loss(c) = &
+               this%litterc_loss(c) + &
+               this%decomp_cascade_ctransfer(c,k)
+        end do
+      end if
+    end do
+
+    if (use_pflotran .and. pf_cmode) then
+       ! note: the follwoing should be useful to non-pflotran-coupled, but seems cause 1 BFB test unmatching.
+       ! add up all vertical transport tendency terms and calculate total som leaching loss as the sum of these
+       do l = 1, ndecomp_pools
+          do fc = 1,num_soilc
+             c = filter_soilc(fc)
+             this%decomp_cpools_leached(c,l) = 0._r8
+          end do
+          if(l /= i_cwd)then
+            do j = 1, nlev
+              do fc = 1,num_soilc
+                c = filter_soilc(fc)
+                this%decomp_cpools_leached(c,l) = &
+                  this%decomp_cpools_leached(c,l) + &
+                  this%decomp_cpools_transport_tendency(c,j,l) * dzsoi_decomp(j)
+              end do
+            end do
+          endif
+          do fc = 1,num_soilc
+             c = filter_soilc(fc)
+             this%som_c_leached(c) = &
+                this%som_c_leached(c) + &
+                this%decomp_cpools_leached(c,l)
+          end do
+       end do
+    end if
+
 
     do fc = 1,num_soilc
         c = filter_soilc(fc)
@@ -7777,8 +7772,7 @@ contains
        end if
     enddo
 
-    if ( (.not. is_active_betr_bgc           ) .and. &
-         (.not. (use_pflotran .and. pf_cmode))) then
+    if ((.not. (use_pflotran .and. pf_cmode))) then
       ! vertically integrate HR and decomposition cascade fluxes
       do k = 1, ndecomp_cascade_transitions
 
@@ -9778,7 +9772,7 @@ contains
     end do
 
     if (  (.not. (use_pflotran .and. pf_cmode)) ) then
-       ! BeTR is off AND PFLOTRAN's pf_cmode is false
+       ! PFLOTRAN's pf_cmode is false
        ! vertically integrate decomposing N cascade fluxes and
        !soil mineral N fluxes associated with decomposition cascade
        do k = 1, ndecomp_cascade_transitions

@@ -20,12 +20,15 @@ module mpaso_cpl_indices
   integer :: index_o2x_So_dhdy
   integer :: index_o2x_Fioo_q
   integer :: index_o2x_Foxo_q_li
-  integer :: index_o2x_Fioo_frazil
+  integer :: index_o2x_Fioo_frazilm
+  integer :: index_o2x_Fioo_frazils
+  integer :: index_o2x_Fioo_frazilh
   integer :: index_o2x_Foxo_frazil_li
   integer :: index_o2x_Faoo_h2otemp
   integer :: index_o2x_Faoo_fco2_ocn
   integer :: index_o2x_Faoo_fdms_ocn
   integer :: index_o2x_So_ssh
+  integer :: index_o2x_So_frac_h2oocn
   integer :: index_o2x_Foxo_ismw
   integer :: index_o2x_Foxo_rrofl
   integer :: index_o2x_Foxo_rrofi
@@ -137,6 +140,15 @@ module mpaso_cpl_indices
   integer :: index_x2o_Sw_Hs         ! Significant wave height
   integer :: index_x2o_Sw_Fp         ! Peak wave frequency
   integer :: index_x2o_Sw_Dp         ! Peak wave direction
+  integer :: index_x2o_Sw_Z0         ! surface roughness length from WW3
+  integer :: index_x2o_Sw_Ustar      ! Friction velocity from WW3
+  integer :: index_x2o_Sw_Charn      !Charnock coefficient accounting for the wave stress
+  integer :: index_x2o_Faww_Tawx     !Wave supported stress 
+  integer :: index_x2o_Faww_Tawy     !Wave supported stress
+  integer :: index_x2o_Fwow_Twox     !Wave to Ocean momentum flux
+  integer :: index_x2o_Fwow_Twoy     !Wave to Ocean momentum flux
+  integer :: index_x2o_Faow_Tocx     !Wave Net Ocean momentum flux
+  integer :: index_x2o_Faow_Tocy     !Wave Net Ocean momentum flux
 
   ! drv -> glc and internal drv fields
 
@@ -204,12 +216,17 @@ contains
     index_o2x_So_dhdy       = mct_avect_indexra(o2x,'So_dhdy')
     index_o2x_Fioo_q        = mct_avect_indexra(o2x,'Fioo_q',perrWith='quiet')
     index_o2x_Foxo_q_li     = mct_avect_indexra(o2x,'Foxo_q_li',perrWith='quiet')
-    index_o2x_Fioo_frazil   = mct_avect_indexra(o2x,'Fioo_frazil',perrWith='quiet')
+    index_o2x_Fioo_frazilm  = mct_avect_indexra(o2x,'Fioo_frazilm',perrWith='quiet')
+    index_o2x_Fioo_frazils  = mct_avect_indexra(o2x,'Fioo_frazils',perrWith='quiet')
+    index_o2x_Fioo_frazilh  = mct_avect_indexra(o2x,'Fioo_frazilh',perrWith='quiet')
     index_o2x_Foxo_frazil_li= mct_avect_indexra(o2x,'Foxo_frazil_li',perrWith='quiet')
     index_o2x_Faoo_h2otemp  = mct_avect_indexra(o2x,'Faoo_h2otemp',perrWith='quiet')
     index_o2x_Faoo_fco2_ocn = mct_avect_indexra(o2x,'Faoo_fco2_ocn',perrWith='quiet')
     index_o2x_Faoo_fdms_ocn = mct_avect_indexra(o2x,'Faoo_fdms_ocn',perrWith='quiet')
     index_o2x_So_ssh        = mct_avect_indexra(o2x,'So_ssh')
+    if (ocn_lnd_one_way) then
+      index_o2x_So_frac_h2oocn= mct_avect_indexra(o2x,'So_ssh')
+    endif
 
     index_o2x_Foxo_ismw     = mct_avect_indexra(o2x,'Foxo_ismw',perrWith='quiet')
     index_o2x_Foxo_rrofl    = mct_avect_indexra(o2x,'Foxo_rrofl',perrWith='quiet')
@@ -357,6 +374,15 @@ contains
        index_x2o_Sw_Hs = mct_avect_indexra(x2o,'Sw_Hs')
        index_x2o_Sw_Fp = mct_avect_indexra(x2o,'Sw_Fp')
        index_x2o_Sw_Dp = mct_avect_indexra(x2o,'Sw_Dp')
+       index_x2o_Sw_Z0 = mct_avect_indexra(x2o,'Sw_Z0')
+       index_x2o_Sw_Ustar = mct_avect_indexra(x2o,'Sw_Ustar')
+       index_x2o_Sw_Charn = mct_avect_indexra(x2o,'Sw_Charn')
+       index_x2o_Faww_Tawx = mct_avect_indexra(x2o,'Faww_Tawx')
+       index_x2o_Faww_Tawy = mct_avect_indexra(x2o,'Faww_Tawy')
+       index_x2o_Fwow_Twox = mct_avect_indexra(x2o,'Fwow_Twox')
+       index_x2o_Fwow_Twoy = mct_avect_indexra(x2o,'Fwow_Twoy')
+       index_x2o_Faow_Tocx = mct_avect_indexra(x2o,'Faow_Tocx')
+       index_x2o_Faow_Tocy = mct_avect_indexra(x2o,'Faow_Tocy')
     endif
     call mct_aVect_clean(x2o)
     call mct_aVect_clean(o2x)

@@ -38,10 +38,10 @@ struct UnitWrap::UnitTest<D>::TestGwConvectGwSources : public UnitWrap::UnitTest
     // Set up inputs
     GwConvectGwSourcesData baseline_data[] = {
       //                   ncol, hdepth_min
-      GwConvectGwSourcesData(10,     0, front_init_data[0]),
-      GwConvectGwSourcesData(11,     0, front_init_data[1]),
-      GwConvectGwSourcesData(12,     0, front_init_data[2]),
-      GwConvectGwSourcesData(13,     0, front_init_data[3]),
+      GwConvectGwSourcesData(10,     0.5, front_init_data[0]),
+      GwConvectGwSourcesData(11,     0.5, front_init_data[1]),
+      GwConvectGwSourcesData(12,     0.5, front_init_data[2]),
+      GwConvectGwSourcesData(13,     0.5, front_init_data[3]),
     };
 
     static constexpr Int num_runs = sizeof(baseline_data) / sizeof(GwConvectGwSourcesData);
@@ -70,12 +70,7 @@ struct UnitWrap::UnitTest<D>::TestGwConvectGwSources : public UnitWrap::UnitTest
 
     // Get data from test
     for (auto& d : test_data) {
-      if (this->m_baseline_action == GENERATE) {
-        gw_convect_gw_sources_f(d);
-      }
-      else {
-        gw_convect_gw_sources(d);
-      }
+      gw_convect_gw_sources(d);
     }
 
     // Verify BFB results, all data should be in C layout

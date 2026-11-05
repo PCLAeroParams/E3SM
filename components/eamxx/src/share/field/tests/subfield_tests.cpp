@@ -13,9 +13,7 @@ TEST_CASE("field", "") {
   using namespace ShortFieldTagsNames;
   using namespace ekat::units;
 
-  auto engine = setup_random_test();
-  using RPDF = std::uniform_real_distribution<Real>;
-  RPDF pdf(0.01, 0.99);
+  auto seed = get_random_test_seed();
 
   // Subfields
   SECTION("subfield") {
@@ -26,12 +24,17 @@ TEST_CASE("field", "") {
 
     Field f1(fid1);
     f1.allocate_view();
-    randomize(f1, engine, pdf);
+    randomize_uniform(f1, seed++, 0.01, 0.99);
 
     const int idim = 1;
     const int ivar = 2;
 
     auto f2 = f1.subfield(idim, ivar);
+
+    // A single-slice subfield along dim1 of a rank>=3 parent is not contiguous,
+    // but is still LayoutRight-compatible (Kokkos allows non-trivial stride in dim0).
+    REQUIRE(f2.get_header().get_alloc_properties().contiguous() == false);
+    REQUIRE(f2.get_header().get_alloc_properties().allows_layout_right() == true);
 
     // Wrong rank for the subfield f2
     REQUIRE_THROWS(f2.get_view<Real****>());
@@ -43,6 +46,17 @@ TEST_CASE("field", "") {
         for (int k = 0; k < d1[3]; ++k) {
           REQUIRE(v4d_h(i, ivar, j, k) == v3d_h(i, j, k));
         }
+
+    // Check that the mask is kept in sync
+    auto mask = f1.create_valid_mask();
+
+    auto f3 = f1.subfield(idim,ivar);
+    randomize_uniform(mask,seed++,0,1);
+
+    REQUIRE (f3.has_valid_mask());
+    auto f3_mask = f3.get_valid_mask();
+    auto mask_sf = mask.subfield(idim,ivar);
+    REQUIRE (views_are_equal(f3_mask,mask_sf));
   }
 
   SECTION("multi-sliced subfield") {
@@ -56,7 +70,7 @@ TEST_CASE("field", "") {
 
       Field f1(fid1);
       f1.allocate_view();
-      randomize(f1, engine, pdf);
+      randomize_uniform(f1, seed++, 0.01, 0.99);
 
       const int idim = {0};
       const int sl_beg = {3};
@@ -64,7 +78,7 @@ TEST_CASE("field", "") {
 
       auto v1d_h = f1.get_view<Real*, Host>();
       auto sf = f1.subfield(idim, sl_beg, sl_end);
-      REQUIRE(sf.get_header().get_alloc_properties().contiguous() == false);
+      REQUIRE(sf.get_header().get_alloc_properties().allows_layout_right() == false);
       auto sv_h = sf.get_strided_view<Real*, Host>();
       REQUIRE(sv_h.extent_int(idim) == (sl_end - sl_beg));
 
@@ -80,7 +94,7 @@ TEST_CASE("field", "") {
 
       Field f2(fid2);
       f2.allocate_view();
-      randomize(f2, engine, pdf);
+      randomize_uniform(f2, seed++, 0.01, 0.99);
 
       const int idim[2] = {0, 1};
       const int sl_beg[2] = {0, 3};
@@ -113,7 +127,7 @@ TEST_CASE("field", "") {
 
       Field f3(fid3);
       f3.allocate_view();
-      randomize(f3, engine, pdf);
+      randomize_uniform(f3, seed++, 0.01, 0.99);
 
       const int idim[3] = {0, 1, 2};
       const int sl_beg[3] = {2, 3, 0};
@@ -163,7 +177,7 @@ TEST_CASE("field", "") {
 
       Field f4(fid4);
       f4.allocate_view();
-      randomize(f4, engine, pdf);
+      randomize_uniform(f4, seed++, 0.01, 0.99);
 
       const int idim[4] = {0, 1, 2, 3};
       const int sl_beg[4] = {2, 3, 0, 9};
@@ -205,7 +219,7 @@ TEST_CASE("field", "") {
 
       Field f5(fid5);
       f5.allocate_view();
-      randomize(f5, engine, pdf);
+      randomize_uniform(f5, seed++, 0.01, 0.99);
 
       const int idim[5] = {0, 1, 2, 3, 4};
       const int sl_beg[5] = {2, 3, 1, 0, 9};
@@ -251,7 +265,7 @@ TEST_CASE("field", "") {
 
       Field f6(fid6);
       f6.allocate_view();
-      randomize(f6, engine, pdf);
+      randomize_uniform(f6, seed++, 0.01, 0.99);
 
       const int idim[6] = {0, 1, 2, 3, 4, 5};
       const int sl_beg[6] = {2, 3, 1, 0, 5, 9};
@@ -262,7 +276,7 @@ TEST_CASE("field", "") {
 
       for (int ens = 0; ens < 6; ens++) {
         auto sf = f6.subfield(idim[ens], sl_beg[ens], sl_end[ens]);
-        REQUIRE(sf.get_header().get_alloc_properties().contiguous() == false);
+        REQUIRE(sf.get_header().get_alloc_properties().allows_layout_right() == false);
         auto sv_h = sf.get_strided_view<Real******, Host>();
         i1 = (ens == 0) ? sl_beg[0] : 0;
         i2 = (ens == 0) ? sl_end[0] : d6[0];
@@ -309,11 +323,11 @@ TEST_CASE("field", "") {
 
       Field f3a(fid3);
       f3a.allocate_view();
-      randomize(f3a, engine, pdf);
+      randomize_uniform(f3a, seed++, 0.01, 0.99);
 
       Field f3b(fid3);
       f3b.allocate_view();
-      randomize(f3b, engine, pdf);
+      randomize_uniform(f3b, seed++, 0.01, 0.99);
 
       const int idim = 1;
       const int sl_beg = 3;
@@ -325,7 +339,8 @@ TEST_CASE("field", "") {
       auto sfb = f3b.subfield(idim, sl_beg, sl_end);
       auto sv_b = sfb.get_strided_view<Real***, Host>();
 
-      sfb.deep_copy<Host>(sfa);
+      sfb.deep_copy(sfa);
+      sfb.sync_to_host();
 
       for (int i = 0; i < d3[0]; i++) {
         for (int j = sl_beg; j < sl_end; j++) {
@@ -346,7 +361,7 @@ TEST_CASE("field", "") {
 
     Field f1(fid1);
     f1.allocate_view();
-    randomize(f1, engine, pdf);
+    randomize_uniform(f1, seed++, 0.01, 0.99);
 
     const int idim = 1;
     const int ivar = 0;
@@ -363,7 +378,7 @@ TEST_CASE("field", "") {
 
     // Fill f1 with random numbers, and verify corresponding subviews get same
     // values
-    randomize(f1, engine, pdf);
+    randomize_uniform(f1, seed++, 0.01, 0.99);
 
     for (int ivar_dyn = 0; ivar_dyn < vec_dim; ++ivar_dyn) {
       // Reset slice idx
@@ -430,7 +445,7 @@ TEST_CASE ("sync_subfields") {
   constexpr int nlevs = 8;
 
   // Create field with (col, cmp, lev)
-  FID fid ("V",FL({COL,CMP,LEV},{ncols,ndims,nlevs}),Units::nondimensional(),"the_grid",DataType::IntType);
+  FID fid ("V",FL({COL,CMP,LEV},{ncols,ndims,nlevs}),none,"the_grid",DataType::IntType);
   Field f (fid);
   f.allocate_view();
 
@@ -459,30 +474,6 @@ TEST_CASE ("sync_subfields") {
       if (shared_mem_space) REQUIRE(host_subview(icol, ilev) == c);
       else                  REQUIRE(host_subview(icol, ilev) == ndims);
     }
-  }
-
-  // Deep copy all values to ndims on device and host
-  f.deep_copy(ndims);
-  f.sync_to_host();
-
-  // Set subfield values to their index on host
-  for (int c=0; c<ndims; ++c) {
-    f.get_component(c).deep_copy<Host>(c);
-  }
-
-  // Sync only component 0 to device
-  f.get_component(0).sync_to_dev();
-
-  // For components 1,...,ndims-1, if device and host do not share a
-  // memory space, device values should be equal to ndims, else device
-  // values should be equal to component index
-  for (int c=1; c<ndims; ++c) {
-    auto device_subview = f.get_component(c).get_view<int**, Device>();
-    Kokkos::parallel_for(Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {ncols,nlevs}),
-                         KOKKOS_LAMBDA (const int icol, const int ilev) {
-      if (shared_mem_space) EKAT_KERNEL_ASSERT(device_subview(icol, ilev) == c);
-      else                  EKAT_KERNEL_ASSERT(device_subview(icol, ilev) == ndims);
-    });
   }
 }
 

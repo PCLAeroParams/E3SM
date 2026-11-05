@@ -23,10 +23,8 @@ namespace py = pybind11;
 ekat::logger::LogLevel str2LogLevel (const std::string& s) {
   using namespace ekat::logger;
 
-  ekat::logger::LogLevel log_level;
-  if (s=="off") {
-    log_level = LogLevel::off;
-  } else if (s=="trace") {
+  ekat::logger::LogLevel log_level = LogLevel::off;
+  if (s=="trace") {
     log_level = LogLevel::trace;
   } else if (s=="debug") {
     log_level = LogLevel::debug;
@@ -112,35 +110,25 @@ AtmosphereProcess (const ekat::Comm& comm, const ekat::ParameterList& params)
 #endif
 }
 
+void AtmosphereProcess::set_grids (const std::shared_ptr<const GridsManager> grids_manager) {
+  m_grids_manager = grids_manager;
+  create_requests();
+}
+
 void AtmosphereProcess::initialize (const TimeStamp& t0, const RunType run_type) {
   if (this->type()!=AtmosphereProcessType::Group) {
     start_timer (m_timer_prefix + this->name() + "::init");
   }
 
-  // Avoid logging and flushing if ap type is diag ...
-  // ... because we could have 100+ of those in production runs
-  if (this->type()!=AtmosphereProcessType::Diagnostic) {
-    log (LogLevel::info,"  Initializing " + name() + "...");
-    m_atm_logger->flush(); // During init, flush often (to help debug crashes)
-  }
+  log (LogLevel::info,"  Initializing " + name() + "...");
+  m_atm_logger->flush(); // During init, flush often (to help debug crashes)
 
   set_fields_and_groups_pointers();
   m_start_of_step_ts = m_end_of_step_ts = t0;
   initialize_impl(run_type);
 
-  // Create all start-of-step fields needed for tendencies calculation
-  for (const auto& it : m_proc_tendencies) {
-    const auto& tname = it.first;
-    const auto& fname = m_tend_to_field.at(tname);
-    m_start_of_step_fields[fname] = get_field_out(fname).clone();
-  }
-
-  // Avoid logging and flushing if ap type is diag ...
-  // ... because we could have 100+ of those in production runs
-  if (this->type()!=AtmosphereProcessType::Diagnostic) {
-    log (LogLevel::info,"  Initializing " + name() + "... done!");
-    m_atm_logger->flush(); // During init, flush often (to help debug crashes)
-  }
+  log (LogLevel::info,"  Initializing " + name() + "... done!");
+  m_atm_logger->flush(); // During init, flush often (to help debug crashes)
 
   m_is_initialized = true;
 
@@ -186,8 +174,7 @@ void AtmosphereProcess::run (const double dt) {
     if (m_internal_diagnostics_level > 0)
       // Print hash of INPUTS before run
       print_global_state_hash(name() + "-pre-sc-" + std::to_string(m_subcycle_iter),
-                              m_start_of_step_ts,
-                              true, false, true);
+                              m_start_of_step_ts, true);
 
     // Run derived class implementation
     run_impl(dt_sub);
@@ -195,8 +182,7 @@ void AtmosphereProcess::run (const double dt) {
     if (m_internal_diagnostics_level > 0)
       // Print hash of OUTPUTS/INTERNALS after run
       print_global_state_hash(name() + "-pst-sc-" + std::to_string(m_subcycle_iter),
-                              m_end_of_step_ts,
-                              false, true, true);
+                              m_end_of_step_ts, false);
 
     if (has_energy_fixer()){
       const bool water_thermo_fixer = has_air_sea_surface_water_thermo_fixer();
@@ -211,7 +197,7 @@ void AtmosphereProcess::run (const double dt) {
   }
 
   // Complete tendency calculations (if any)
-  compute_step_tendencies(dt);
+  compute_step_tendencies();
 
   if (m_params.get("enable_postcondition_checks", true)) {
     // Run 'post-condition' property checks stored in this AP
@@ -242,118 +228,50 @@ void AtmosphereProcess::finalize () {
 #endif
 }
 
-void AtmosphereProcess::setup_tendencies_requests () {
-  using vos_t = std::vector<std::string>;
-  auto tend_vec = m_params.get<vos_t>("compute_tendencies",{});
+void AtmosphereProcess::setup_step_tendencies (const std::string& default_grid) {
+  using strvec_t = std::vector<std::string>;
+  auto tend_vec = m_params.get<strvec_t>("compute_tendencies",{});
   if (tend_vec.size()==0) {
     return;
   }
 
-  // Will convert to list, since lists insert/erase are safe inside loops
-  std::list<std::string> tend_list;
-
-  // Allow user to specify [all] as a shortcut for all updated fields
-  if (tend_vec.size()==1 && tend_vec[0]==ci_string("all")) {
-    for (const auto& r_out : get_computed_field_requests()) {
-      for (const auto& r_in : get_required_field_requests()) {
-        if (r_in.fid==r_out.fid) {
-          tend_list.push_back(r_out.fid.name());
-          break;
-        }
-      }
-    }
-  } else {
-    for (const auto& n : tend_vec) {
-      // We don't have grid name info here, so we'll check that n
-      // is indeed an updated field a few lines below
-      tend_list.push_back(n);
-    }
-  }
+  // This method will be called again during initialize (it's ok, it's cheap)
+  // But we need to have it called now, so we can use "get_field_out" below.
+  set_fields_and_groups_pointers ();
 
   // Allow to request tendency of a field on a particular grid
-  // by using the syntax 'field_name#grid_name'
+  // by using the syntax 'field_name@grid_name'
   auto field_grid = [&] (const std::string& tn) -> std::pair<std::string,std::string>{
-    auto tokens = ekat::split(tn,'#');
+    auto tokens = ekat::split(tn,'@');
     EKAT_REQUIRE_MSG (tokens.size()==1 || tokens.size()==2,
         "Error! Invalid format for tendency calculation request: " + tn + "\n"
-        "  To request tendencies for F, use 'F' or 'F#grid_name' format.\n");
-    return std::make_pair(tokens[0],tokens.size()==2 ? tokens[1] : "");
+        "  To request tendencies for F, use 'F' or 'F@grid_name' format.\n");
+    return std::make_pair(tokens[0],tokens.size()==2 ? tokens[1] : default_grid);
   };
 
-  auto multiple_matches_error = [&] (const std::string& tn) {
+
+  for (const auto& tn : tend_vec) {
     auto tokens = field_grid(tn);
     auto fn = tokens.first;
     auto gn = tokens.second;
 
-    std::set<std::pair<std::string,std::string>> matches_set;
-    std::vector<std::string> matches_vec;
-    for (auto it : get_computed_field_requests()) {
-      if (it.fid.name()==fn && (gn=="" || gn==it.fid.get_grid_name())) {
-        auto it_bool = matches_set.insert(std::make_pair(fn,it.fid.get_grid_name()));
-        if (it_bool.second) {
-          auto gname = it_bool.first->second;
-          matches_vec.push_back(fn + "(grid=" + gname + ")");
-        }
-      }
-    }
-    EKAT_ERROR_MSG(
-        "Error! Could not uniquely determine field for tendency calculation.\n"
-        " - atm proc name: " + this->name() + "\n"
-        " - tend requested: " + tn + "\n"
-        " - all matches: " + ekat::join(matches_vec,", ") + "\n"
-        "If atm process computes " + fn + " on multiple grids, use " + fn + "#grid_name\n");
-  };
+    const auto& f = get_field_out(fn,gn);
+    const auto& fap = f.get_header().get_alloc_properties();
 
-  // Parse all the tendencies requested, looking for a corresponding
-  // field with the requested name. If more than one is found (must be
-  // that we have same field on multiple grids), error out.
-  using namespace ekat::units;
-  using strlist_t = std::list<std::string>;
-  for (const auto& tn : tend_list) {
-    std::string grid_found = "";
-    auto tokens = field_grid(tn);
-    auto fn = tokens.first;
-    auto gn = tokens.second;
-    const auto& tname = this->name() + "_" + tn + "_tend";
-    for (auto it : get_computed_field_requests()) {
-      const auto& fid = it.fid;
-      if (fid.name()==fn && (gn=="" || gn==fid.get_grid_name())) {
-        // Get fid specs
-        const auto& layout = fid.get_layout();
-        const auto  units  = fid.get_units() / s;
-        const auto& gname  = fid.get_grid_name();
-        const auto& dtype  = fid.data_type();
+    const auto& tname = this->name() + "_" + fn + "_tend";
+    const auto& fid = f.get_header().get_identifier();
+    auto tfid = fid.clone(tname).reset_units (fid.get_units() / ekat::units::s);
 
-        // Check we did not process another field with same name
-        if (grid_found!="" && gname!=grid_found) {
-          multiple_matches_error(tn);
-        }
+    const auto fn_gn = fn + "@" + f.get_header().get_identifier().get_grid_name();
 
-        // Check this computed field is also required (hence, updated)
-        EKAT_REQUIRE_MSG (has_required_field(fn,gname),
-            "Error! Tendency calculation available only for updated fields.\n"
-            " - atm proc name: " + this->name() + "\n"
-            " - field name   : " + fn + "\n"
-            " - grid name    : " + gn + "\n");
-
-        // Create tend FID and request field
-        FieldIdentifier t_fid(tname,layout,units,gname,dtype);
-        add_field<Computed>(t_fid,strlist_t{"ACCUMULATED","DIVIDE_BY_DT"});
-        grid_found = gname;
-      }
-    }
-
-    EKAT_REQUIRE_MSG (grid_found!="",
-        "Error! Could not locate field for tendency request.\n"
-        " - atm proc name: " + this->name() + "\n"
-        " - tendency request: " + tn + "\n");
-
-    // Add an empty field, to be reset when we set the computed field
-    m_proc_tendencies[tname] = {};
-    m_tend_to_field[tname] = fn;
+    // Create tend and start-of-step fields
+    auto& tend = m_proc_tendencies[fn_gn] = Field(tfid);
+    auto& tfap = tend.get_header().get_alloc_properties();
+    tfap.request_allocation(fap);
+    tend.allocate_view();
+    add_internal_field(tend,{"ACCUMULATED","DIVIDE_BY_DT"});
+    m_start_of_step_fields[fn_gn] = f.clone();
   }
-
-  m_compute_proc_tendencies = m_proc_tendencies.size()>0;
 }
 
 void AtmosphereProcess::set_required_field (const Field& f) {
@@ -401,18 +319,14 @@ void AtmosphereProcess::set_computed_field (const Field& f) {
 
   set_computed_field_impl (f);
 
-  if (m_compute_proc_tendencies && m_proc_tendencies.count(f.name())==1) {
-    m_proc_tendencies[f.name()] = f;
-  }
-
   add_py_fields(f);
 }
 
 void AtmosphereProcess::set_required_group (const FieldGroup& group) {
   // Sanity check
-  EKAT_REQUIRE_MSG (has_required_group(group.m_info->m_group_name,group.grid_name()),
+  EKAT_REQUIRE_MSG (has_required_group(group.name(),group.grid_name()),
     "Error! This atmosphere process does not require the input group.\n"
-    "   group name: " + group.m_info->m_group_name + "\n"
+    "   group name: " + group.name() + "\n"
     "   grid name : " + group.grid_name() + "\n"
     "   atm process: " + this->name() + "\n"
     "Something is wrong up the call stack. Please, contact developers.\n");
@@ -422,11 +336,11 @@ void AtmosphereProcess::set_required_group (const FieldGroup& group) {
     // AtmosphereProcessGroup is just a "container" of *real* atm processes,
     // so don't add me as customer if I'm an atm proc group.
     if (this->type()!=AtmosphereProcessType::Group) {
-      if (group.m_monolithic_field) {
-        add_me_as_customer(*group.m_monolithic_field);
+      if (group.has_monolithic_field()) {
+        add_me_as_customer(group.monolithic_field());
       } else {
-        for (auto& it : group.m_individual_fields) {
-          add_me_as_customer(*it.second);
+        for (auto& it : group.individual_fields()) {
+          add_me_as_customer(it.second);
         }
       }
     }
@@ -439,9 +353,9 @@ void AtmosphereProcess::set_required_group (const FieldGroup& group) {
 
 void AtmosphereProcess::set_computed_group (const FieldGroup& group) {
   // Sanity check
-  EKAT_REQUIRE_MSG (has_computed_group(group.m_info->m_group_name,group.grid_name()),
+  EKAT_REQUIRE_MSG (has_computed_group(group.name(),group.grid_name()),
     "Error! This atmosphere process does not compute the input group.\n"
-    "   group name: " + group.m_info->m_group_name + "\n"
+    "   group name: " + group.name() + "\n"
     "   grid name : " + group.grid_name() + "\n"
     "   atm process: " + this->name() + "\n"
     "Something is wrong up the call stack. Please, contact developers.\n");
@@ -451,11 +365,11 @@ void AtmosphereProcess::set_computed_group (const FieldGroup& group) {
     // AtmosphereProcessGroup is just a "container" of *real* atm processes,
     // so don't add me as provider if I'm an atm proc group.
     if (this->type()!=AtmosphereProcessType::Group) {
-      if (group.m_monolithic_field) {
-        add_me_as_provider(*group.m_monolithic_field);
+      if (group.has_monolithic_field()) {
+        add_me_as_provider(group.monolithic_field());
       } else {
-        for (auto& it : group.m_individual_fields) {
-          add_me_as_provider(*it.second);
+        for (auto& it : group.individual_fields()) {
+          add_me_as_provider(it.second);
         }
       }
     }
@@ -533,9 +447,9 @@ void AtmosphereProcess::run_property_check (const prop_check_ptr&       property
           }
         }
         for (const auto& g : m_groups_in) {
-          for (const auto& f : g.m_individual_fields) {
-            if (f.second->get_header().get_identifier().get_layout().has_tags(tags)) {
-              print_field_hyperslab (*f.second,tags,idx,ss);
+          for (const auto& it : g.individual_fields()) {
+            if (it.second.get_header().get_identifier().get_layout().has_tags(tags)) {
+              print_field_hyperslab (it.second,tags,idx,ss);
               ss << " -----------------------------------------------------------------------\n";
             }
           }
@@ -548,9 +462,9 @@ void AtmosphereProcess::run_property_check (const prop_check_ptr&       property
           }
         }
         for (const auto& g : m_groups_out) {
-          for (const auto& f : g.m_individual_fields) {
-            if (f.second->get_header().get_identifier().get_layout().has_tags(tags)) {
-              print_field_hyperslab (*f.second,tags,idx,ss);
+          for (const auto& it : g.individual_fields()) {
+            if (it.second.get_header().get_identifier().get_layout().has_tags(tags)) {
+              print_field_hyperslab (it.second,tags,idx,ss);
               ss << " -----------------------------------------------------------------------\n";
             }
           }
@@ -597,48 +511,53 @@ void AtmosphereProcess::run_column_conservation_check () const {
 }
 
 void AtmosphereProcess::init_step_tendencies () {
-  if (m_compute_proc_tendencies) {
-    start_timer(m_timer_prefix + this->name() + "::compute_tendencies");
-    for (auto& it : m_start_of_step_fields) {
-      const auto& fname = it.first;
-      const auto& f     = get_field_out(fname);
-            auto& f_beg = it.second;
-      f_beg.deep_copy(f);
-    }
-    stop_timer(m_timer_prefix + this->name() + "::compute_tendencies");
+  if (m_start_of_step_fields.size()==0) {
+    return;
   }
+
+  start_timer(m_timer_prefix + this->name() + "::compute_tendencies");
+  for (auto& [fn_gn,f_beg] : m_start_of_step_fields) {
+    const auto fname = ekat::split(fn_gn,"@")[0];
+    const auto gname = ekat::split(fn_gn,"@")[1];
+    const auto& f     = get_field_out(fname,gname);
+    f_beg.deep_copy(f);
+  }
+  stop_timer(m_timer_prefix + this->name() + "::compute_tendencies");
 }
 
-void AtmosphereProcess::compute_step_tendencies (const double dt) {
-  using namespace ShortFieldTagsNames;
-  if (m_compute_proc_tendencies) {
-    m_atm_logger->debug("[" + this->name() + "] computing tendencies...");
-    start_timer(m_timer_prefix + this->name() + "::compute_tendencies");
-    for (auto it : m_proc_tendencies) {
-      // Note: f_beg is nonconst, so we can store step tendency in it
-      const auto& tname = it.first;
-      const auto& fname = m_tend_to_field.at(tname);
-      const auto& f     = get_field_out(fname);
-            auto& f_beg = m_start_of_step_fields.at(fname);
-            auto& tend  = it.second;
-
-      // Compute tend from this atm proc step, then sum into overall atm timestep tendency
-      f_beg.update(f,1,-1);
-      tend.update(f_beg,1,1);
-    }
-    stop_timer(m_timer_prefix + this->name() + "::compute_tendencies");
+void AtmosphereProcess::compute_step_tendencies () {
+  if (m_start_of_step_fields.size()==0) {
+    return;
   }
+
+  m_atm_logger->debug("[" + this->name() + "] computing tendencies...");
+  start_timer(m_timer_prefix + this->name() + "::compute_tendencies");
+  for (auto& [fn_gn,tend] : m_proc_tendencies) {
+    const auto fname = ekat::split(fn_gn,"@")[0];
+    const auto gname = ekat::split(fn_gn,"@")[1];
+    // Note: f_beg is nonconst, so we can store step tendency in it
+          auto& f_beg = m_start_of_step_fields.at(fn_gn);
+    const auto& f_end = get_field_out(fname,gname);
+
+    // Compute tend from this atm proc step, then sum into overall atm timestep tendency
+    // Note: don't add -f_beg to tend during init_step_tendencies, b/c the field magnitude
+    // may be MUCH larger than the tend. Instead, compute step tend, and THEN add into tend
+    f_beg.update(f_end,1,-1);
+    tend.update(f_beg,1,1);
+    tend.get_header().get_tracking().update_time_stamp(m_end_of_step_ts);
+  }
+  stop_timer(m_timer_prefix + this->name() + "::compute_tendencies");
 }
 
 bool AtmosphereProcess::has_required_field (const FieldIdentifier& id) const {
   return has_required_field(id.name(),id.get_grid_name());
 }
 
-bool AtmosphereProcess::has_required_field (const std::string& name, const std::string& grid_name) const {
-  for (const auto& it : m_required_field_requests) {
-    if (it.fid.name()==name && it.fid.get_grid_name()==grid_name) {
+bool AtmosphereProcess::has_required_field (const std::string& name, const std::string& grid_name) const
+{
+  for (const auto& r : m_field_requests) {
+    if (r.fid.name()==name and r.fid.get_grid_name()==grid_name and r.usage & Required)
       return true;
-    }
   }
   return false;
 }
@@ -647,29 +566,29 @@ bool AtmosphereProcess::has_computed_field (const FieldIdentifier& id) const {
   return has_computed_field(id.name(),id.get_grid_name());
 }
 
-bool AtmosphereProcess::has_computed_field (const std::string& name, const std::string& grid_name) const {
-  for (const auto& it : m_computed_field_requests) {
-    if (it.fid.name()==name && it.fid.get_grid_name()==grid_name) {
+bool AtmosphereProcess::has_computed_field (const std::string& name, const std::string& grid_name) const
+{
+  for (const auto& r : m_field_requests) {
+    if (r.fid.name()==name and r.fid.get_grid_name()==grid_name and r.usage & Computed)
       return true;
-    }
   }
   return false;
 }
 
-bool AtmosphereProcess::has_required_group (const std::string& name, const std::string& grid) const {
-  for (const auto& it : m_required_group_requests) {
-    if (it.name==name && it.grid==grid) {
+bool AtmosphereProcess::has_required_group (const std::string& name, const std::string& grid) const
+{
+  for (const auto& r : m_group_requests) {
+    if (r.name==name and r.grid==grid and r.usage & Required)
       return true;
-    }
   }
   return false;
 }
 
-bool AtmosphereProcess::has_computed_group (const std::string& name, const std::string& grid) const {
-  for (const auto& it : m_computed_group_requests) {
-    if (it.name==name && it.grid==grid) {
+bool AtmosphereProcess::has_computed_group (const std::string& name, const std::string& grid) const
+{
+  for (const auto& r : m_group_requests) {
+    if (r.name==name and r.grid==grid and r.usage & Computed)
       return true;
-    }
   }
   return false;
 }
@@ -692,26 +611,30 @@ void AtmosphereProcess::update_time_stamps () {
     f.get_header().get_tracking().update_time_stamp(t);
   }
   for (auto& g : m_groups_out) {
-    if (g.m_monolithic_field) {
-      g.m_monolithic_field->get_header().get_tracking().update_time_stamp(t);
+    if (g.has_monolithic_field()) {
+      g.monolithic_field().get_header().get_tracking().update_time_stamp(t);
     } else {
-      for (auto& f : g.m_individual_fields) {
-        f.second->get_header().get_tracking().update_time_stamp(t);
+      for (auto& it : g.individual_fields()) {
+        it.second.get_header().get_tracking().update_time_stamp(t);
       }
     }
   }
 }
 
 void AtmosphereProcess::add_me_as_provider (const Field& f) {
-  f.get_header_ptr()->get_tracking().add_provider(weak_from_this());
+  f.get_header_ptr()->get_tracking().add_provider(name());
 }
 
 void AtmosphereProcess::add_me_as_customer (const Field& f) {
-  f.get_header_ptr()->get_tracking().add_customer(weak_from_this());
+  f.get_header_ptr()->get_tracking().add_customer(name());
 }
 
-void AtmosphereProcess::add_internal_field (const Field& f) {
-  m_internal_fields.push_back(f);
+void AtmosphereProcess::
+add_internal_field (const Field& f, const std::vector<std::string>& groups) {
+  auto& fi = m_internal_fields.emplace_back(f);
+  for (const auto& gn : groups) {
+    fi.get_header().get_tracking().add_group(gn);
+  }
   add_py_fields(f);
 }
 
@@ -907,12 +830,26 @@ void AtmosphereProcess::set_fields_and_groups_pointers () {
     m_fields_out_pointers[fid.name()][fid.get_grid_name()] = &f;
   }
   for (auto& g : m_groups_in) {
-    const auto& group_name = g.m_info->m_group_name;
+    const auto& group_name = g.name();
     m_groups_in_pointers[group_name][g.grid_name()] = &g;
+    // Also add pointers for individual fields in the group and monolithic field (if present)
+    for (auto& [fn,f] : g.individual_fields()) {
+      m_fields_in_pointers[fn][g.grid_name()] = &f;
+    }
+    if (g.has_monolithic_field()) {
+      m_fields_in_pointers[group_name][g.grid_name()] = &g.monolithic_field();
+    }
   }
   for (auto& g : m_groups_out) {
-    const auto& group_name = g.m_info->m_group_name;
+    const auto& group_name = g.name();
     m_groups_out_pointers[group_name][g.grid_name()] = &g;
+    // Also add pointers for individual fields in the group and monolithic field (if present)
+    for (auto& [fn,f] : g.individual_fields()) {
+      m_fields_out_pointers[fn][g.grid_name()] = &f;
+    }
+    if (g.has_monolithic_field()) {
+      m_fields_out_pointers[group_name][g.grid_name()] = &g.monolithic_field();
+    }
   }
   for (auto& f : m_internal_fields) {
     const auto& fid = f.get_header().get_identifier();
@@ -1081,7 +1018,7 @@ get_group_in_impl(const std::string& group_name, const std::string& grid_name) c
         "   group name: " + group_name + "\n"
         "   grid name: " + grid_name + "\n");
   }
-  static FieldGroup g("");
+  static FieldGroup g("ERROR","ERROR");
   return g;
 }
 
@@ -1104,7 +1041,7 @@ get_group_in_impl(const std::string& group_name) const {
         "   atm proc name: " + this->name() + "\n"
         "   group name: " + group_name + "\n");
   }
-  static FieldGroup g("");
+  static FieldGroup g("ERROR","ERROR");
   return g;
 }
 
@@ -1121,7 +1058,7 @@ get_group_out_impl(const std::string& group_name, const std::string& grid_name) 
         "   group name: " + group_name + "\n"
         "   grid name: " + grid_name + "\n");
   }
-  static FieldGroup g("");
+  static FieldGroup g("ERROR","ERROR");
   return g;
 }
 
@@ -1144,7 +1081,7 @@ get_group_out_impl(const std::string& group_name) const {
         "   atm proc name: " + this->name() + "\n"
         "   group name: " + group_name + "\n");
   }
-  static FieldGroup g("");
+  static FieldGroup g("ERROR","ERROR");
   return g;
 }
 
@@ -1209,18 +1146,17 @@ void AtmosphereProcess
 
 void AtmosphereProcess
 ::remove_group (const std::string& group_name, const std::string& grid_name) {
-  typedef std::list<FieldGroup>::iterator It;
-  const auto rmg = [&] (std::list<FieldGroup>& fields, strmap_t<strmap_t<FieldGroup*>>& ptrs) {
-    std::vector<It> rm_its;
-    for (It it = fields.begin(); it != fields.end(); ++it) {
-      if (it->m_info->m_group_name == group_name and it->grid_name() == grid_name) {
-        rm_its.push_back(it);
+  const auto rmg = [&] (std::list<FieldGroup>& groups, strmap_t<strmap_t<FieldGroup*>>& ptrs) {
+    for (auto it = groups.begin(); it != groups.end();) {
+      if (it->name() == group_name and it->grid_name() == grid_name) {
         ptrs[group_name][grid_name] = nullptr;
-        for (auto& kv : it->m_individual_fields)
+        for (auto& kv : it->individual_fields())
           remove_field(kv.first, grid_name);
+        it = groups.erase(it);
+      } else {
+        ++it;
       }
     }
-    for (auto& it : rm_its) fields.erase(it);
   };
   rmg(m_groups_in, m_groups_in_pointers);
   rmg(m_groups_out, m_groups_out_pointers);
@@ -1282,12 +1218,12 @@ void AtmosphereProcess::add_py_fields (const FieldGroup& group)
 {
 #ifdef EAMXX_HAS_PYTHON
   if (m_py_module.has_value()) {
-    if (group.m_monolithic_field) {
-      const auto& f = group.m_monolithic_field;
-      add_py_fields(*f);
+    if (group.has_monolithic_field()) {
+      const auto& f = group.monolithic_field();
+      add_py_fields(f);
     } else {
-      for (const auto& [name,f] : group.m_individual_fields) {
-        add_py_fields(*f);
+      for (const auto& [name,f] : group.individual_fields()) {
+        add_py_fields(f);
       }
     }
   }

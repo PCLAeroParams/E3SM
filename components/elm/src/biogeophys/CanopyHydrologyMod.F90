@@ -29,7 +29,7 @@ module CanopyHydrologyMod
   use elm_varcon        , only : snw_rds_min
   use pftvarcon         , only : irrigated
   use GridcellType      , only : grc_pp
-  use timeinfoMod, only : dtime_mod
+  use timeinfoMod       , only : dtime_mod
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -278,8 +278,8 @@ contains
           ! Canopy interception and precipitation onto ground surface
           ! Add precipitation to leaf water
 
-          if (ltype(l)==istsoil .or. ltype(l)==istwet .or. urbpoi(l) .or. &
-               ltype(l)==istcrop) then
+          if (veg_pp%is_on_soil_col(p) .or. ltype(l) == istwet .or. urbpoi(l) .or. &
+               ltype(l) == istcrop) then
 
              qflx_candrip(p) = 0._r8      ! rate of canopy runoff
              qflx_through_snow(p) = 0._r8 ! snow precipitation direct through canopy
@@ -334,7 +334,7 @@ contains
                 end if
              end if
 
-          else if (ltype(l)==istice .or. ltype(l)==istice_mec) then
+          else if (ltype(l) == istice .or. ltype(l) == istice_mec) then
 
              h2ocan(p)            = 0._r8
              qflx_candrip(p)      = 0._r8
@@ -642,17 +642,18 @@ contains
           end if !end of do_capsnow construct
 
           ! set frac_sno_eff variable
-          if (ltype(l) == istsoil .or. ltype(l) == istcrop) then
-             if (subgridflag ==1) then 
-                frac_sno_eff(c) = frac_sno(c)
-             else
-                frac_sno_eff(c) = 1._r8
-             endif
-          else
+          ! Port of CLM fractional-snow energy fix: when subgrid fluxes are on,
+          ! allow fractional frac_sno_eff for all non-urban, non-lake columns
+          ! (including glacier and wetland), matching soil/crop treatment.
+          if (subgridflag == 1 .and. .not. urbpoi(l) .and. ltype(l) /= istdlak) then
+             frac_sno_eff(c) = frac_sno(c)
+          else if (frac_sno(c) > 0._r8) then
              frac_sno_eff(c) = 1._r8
+          else
+             frac_sno_eff(c) = 0._r8
           endif
 
-          if (ltype(l)==istwet .and. t_grnd(c)>tfrz) then
+          if (ltype(l) == istwet .and. t_grnd(c)>tfrz) then
              h2osno(c)=0._r8
              snow_depth(c)=0._r8
           end if
@@ -713,7 +714,7 @@ contains
        call FracH2oSfc(bounds, num_nolakec, filter_nolakec, &
              col_wf%qflx_h2osfc2topsoi, dtime)
 
-     end associate 
+     end associate
 
    end subroutine CanopyHydrology
 
@@ -826,7 +827,7 @@ contains
           l = col_pp%landunit(c)
           qflx_h2osfc2topsoi(c) = 0._r8
           ! h2osfc only calculated for soil vegetated land units
-          if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
+          if (col_pp%is_soil(c) .or. col_pp%is_crop(c)) then
 
              !  Use newton-raphson method to iteratively determine frac_h20sfc
              !  based on amount of surface water storage (h2osfc) and

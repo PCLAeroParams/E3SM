@@ -11,6 +11,7 @@ module lnd_import_export
   use iac2lndMod   , only: iac2lnd_type
   use elm_varctl   , only: iac_present, iulog
   use elm_varpar   , only: numpft, numharvest
+  use ocn2lndType  , only: ocn2lnd_type
   use GridcellType , only: grc_pp          ! for access to gridcell topology
   use TopounitDataType , only: top_as, top_af  ! atmospheric state and flux variables  
   use elm_cpl_indices
@@ -23,8 +24,7 @@ module lnd_import_export
 contains
 
   !===============================================================================
-  subroutine lnd_import( bounds, x2l, atm2lnd_vars, glc2lnd_vars, lnd2atm_vars, iac2lnd_vars)
-
+  subroutine lnd_import( bounds, x2l, atm2lnd_vars, glc2lnd_vars, ocn2lnd_vars, lnd2atm_vars, iac2lnd_vars)
     !---------------------------------------------------------------------------
     ! !DESCRIPTION:
     ! Convert the input data from the coupler to the land model 
@@ -53,6 +53,7 @@ contains
     real(r8)           , intent(in)    :: x2l(:,:) ! driver import state to land model
     type(atm2lnd_type) , intent(inout) :: atm2lnd_vars      ! elm internal input data type
     type(glc2lnd_type) , intent(inout) :: glc2lnd_vars      ! elm internal input data type
+    type(ocn2lnd_type) , intent(inout) :: ocn2lnd_vars
     type(lnd2atm_type) , intent(in)    :: lnd2atm_vars
     type(iac2lnd_type) , intent(inout) :: iac2lnd_vars ! elm iac to land   
     !
@@ -203,6 +204,14 @@ contains
        if (index_x2l_Sr_h2orof /= 0) then
          atm2lnd_vars%h2orof_grc(g)      = x2l(index_x2l_Sr_h2orof,i)
          atm2lnd_vars%frac_h2orof_grc(g) = x2l(index_x2l_Sr_frac_h2orof,i)
+       endif
+
+       if (index_x2l_So_ssh /= 0) then
+         ocn2lnd_vars%ssh_grc(g) = x2l(index_x2l_So_ssh,i)
+       endif
+
+       if (index_x2l_So_frac_h2oocn /= 0) then
+         ocn2lnd_vars%frac_h2oocn_grc(g) = x2l(index_x2l_So_frac_h2oocn,i)
        endif
 
        ! Determine required receive fields
@@ -1403,11 +1412,12 @@ contains
     ! 
     ! !USES:
     use shr_kind_mod       , only : r8 => shr_kind_r8
-    use elm_varctl         , only : iulog, create_glacier_mec_landunit, iac_present
+    use elm_varctl         , only : iulog, create_glacier_mec_landunit, iac_present, use_finetop_rad
     use elm_time_manager   , only : get_nstep, get_step_size  
     use domainMod          , only : ldomain
     use seq_drydep_mod     , only : n_drydep
     use shr_megan_mod      , only : shr_megan_mechcomps_n
+    use FireMod            , only : forc_hdm
     !
     ! !ARGUMENTS:
     implicit none
@@ -1415,7 +1425,6 @@ contains
     type(lnd2atm_type), intent(inout) :: lnd2atm_vars ! elm land to atmosphere exchange data type
     type(lnd2glc_type), intent(inout) :: lnd2glc_vars ! elm land to atmosphere exchange data type
     type(lnd2iac_type), intent(inout) :: lnd2iac_vars ! elm lnd to gcam exchange vars
-
     real(r8)          , intent(out)   :: l2x(:,:)! land to coupler export state on land grid
     !
     ! !LOCAL VARIABLES:
@@ -1437,10 +1446,19 @@ contains
        i = 1 + (g-bounds%begg)
        l2x(index_l2x_Sl_t,i)        =  lnd2atm_vars%t_rad_grc(g)
        l2x(index_l2x_Sl_snowh,i)    =  lnd2atm_vars%h2osno_grc(g)
-       l2x(index_l2x_Sl_avsdr,i)    =  lnd2atm_vars%albd_grc(g,1)
-       l2x(index_l2x_Sl_anidr,i)    =  lnd2atm_vars%albd_grc(g,2)
-       l2x(index_l2x_Sl_avsdf,i)    =  lnd2atm_vars%albi_grc(g,1)
-       l2x(index_l2x_Sl_anidf,i)    =  lnd2atm_vars%albi_grc(g,2)
+
+       if (use_finetop_rad) then
+          l2x(index_l2x_Sl_avsdr,i)    =  lnd2atm_vars%apparent_albd_grc(g,1)
+          l2x(index_l2x_Sl_anidr,i)    =  lnd2atm_vars%apparent_albd_grc(g,2)
+          l2x(index_l2x_Sl_avsdf,i)    =  lnd2atm_vars%apparent_albi_grc(g,1)
+          l2x(index_l2x_Sl_anidf,i)    =  lnd2atm_vars%apparent_albi_grc(g,2)
+       else
+          l2x(index_l2x_Sl_avsdr,i)    =  lnd2atm_vars%albd_grc(g,1)
+          l2x(index_l2x_Sl_anidr,i)    =  lnd2atm_vars%albd_grc(g,2)
+          l2x(index_l2x_Sl_avsdf,i)    =  lnd2atm_vars%albi_grc(g,1)
+          l2x(index_l2x_Sl_anidf,i)    =  lnd2atm_vars%albi_grc(g,2)
+       end if
+
        l2x(index_l2x_Sl_tref,i)     =  lnd2atm_vars%t_ref2m_grc(g)
        l2x(index_l2x_Sl_qref,i)     =  lnd2atm_vars%q_ref2m_grc(g)
        l2x(index_l2x_Sl_u10,i)      =  lnd2atm_vars%u_ref10m_grc(g)
@@ -1528,10 +1546,18 @@ contains
 
        if (iac_present) then
           do p = 0,numpft
-             l2x(index_l2x_Sl_hr(p),i) = lnd2iac_vars%hr(g,p)
-             l2x(index_l2x_Sl_npp(p),i) = lnd2iac_vars%npp(g,p)
-             l2x(index_l2x_Sl_pftwgt(p),i) = lnd2iac_vars%pftwgt(g,p)
+             l2x(index_l2x_Sl_hr(p),i)        = lnd2iac_vars%hr(g,p)
+             l2x(index_l2x_Sl_npp(p),i)       = lnd2iac_vars%npp(g,p)
+             l2x(index_l2x_Sl_pftwgt(p),i)    = lnd2iac_vars%pftwgt(g,p)
           end do
+          ! Scalar per-gridcell fields
+          ! forc_hdm is time-interpolated from stream file (FireMod in non-CPL_BYPASS,
+          ! or mirrored from atm2lnd_vars in CPL_BYPASS during lnd_import);
+          ! copy here into lnd2iac_vars and pack into the coupler vector.
+          lnd2iac_vars%forc_hdm(g)          = forc_hdm(g)
+          l2x(index_l2x_Sl_forc_hdm, i)     = lnd2iac_vars%forc_hdm(g)
+          l2x(index_l2x_Sl_hdd,i)           = lnd2iac_vars%hdd(g)
+          l2x(index_l2x_Sl_cdd,i)           = lnd2iac_vars%cdd(g)
        end if
     end do
 

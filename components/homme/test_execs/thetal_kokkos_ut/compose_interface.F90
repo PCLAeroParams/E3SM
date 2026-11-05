@@ -12,7 +12,7 @@ contains
     use hybvcoord_mod, only: set_layer_locations
     use thetal_test_interface, only: init_f90
     use theta_f2c_mod, only: init_elements_c
-    use edge_mod_base, only: initEdgeBuffer, edge_g
+    use edge_mod, only: initEdgeBuffer, edge_g
     use control_mod, only: transport_alg, semi_lagrange_cdr_alg, semi_lagrange_cdr_check, &
          semi_lagrange_hv_q, limiter_option, nu_q, hypervis_subcycle_q, hypervis_order, &
          vert_remap_q_alg, qsplit, rsplit, dt_remap_factor, dt_tracer_factor, &
@@ -43,8 +43,8 @@ contains
     vert_remap_q_alg = 10
     qsplit = 1
     rsplit = 1
-    dt_tracer_factor = -1
-    dt_remap_factor = -1
+    dt_tracer_factor = 1
+    dt_remap_factor = 1
     theta_hydrostatic_mode = .true.
     semi_lagrange_nearest_point_lev = -1
     if (nearest_point) semi_lagrange_nearest_point_lev = 100000
@@ -85,10 +85,12 @@ contains
          elem_rspheremp, elem_metdet, elem_state_phis
     real (real_kind), target, dimension(np,np,2)   :: elem_gradphis
     real (real_kind), target, dimension(np,np,2,2) :: elem_D, elem_Dinv, elem_metinv, elem_tensorvisc
-    real (real_kind), target, dimension(np,np,3,2) :: elem_vec_sph2cart
+    real (real_kind), target, dimension(np,np,2,2) :: elem_tensorvisc2
+    real (real_kind), target, dimension(np,np,3,3) :: elem_vec_sph2cart
     type (c_ptr) :: elem_D_ptr, elem_Dinv_ptr, elem_fcor_ptr, elem_spheremp_ptr, &
          elem_rspheremp_ptr, elem_metdet_ptr, elem_metinv_ptr, elem_tensorvisc_ptr, &
          elem_vec_sph2cart_ptr, elem_state_phis_ptr, elem_gradphis_ptr
+    type (c_ptr) :: elem_tensorvisc2_ptr
 
     type (cartesian3D_t) :: sphere_cart
     real (kind=real_kind) :: sphere_cart_vec(3,np,np), sphere_latlon_vec(2,np,np)
@@ -106,6 +108,7 @@ contains
     elem_vec_sph2cart_ptr = c_loc(elem_vec_sph2cart)
     elem_state_phis_ptr   = c_loc(elem_state_phis)
     elem_gradphis_ptr     = c_loc(elem_gradphis)
+    elem_tensorvisc2_ptr  = c_loc(elem_tensorvisc2)
     do ie = 1,nelemd
       elem_D            = elem(ie)%D
       elem_Dinv         = elem(ie)%Dinv
@@ -117,6 +120,7 @@ contains
       elem_state_phis   = elem(ie)%state%phis
       elem_gradphis     = elem(ie)%derived%gradphis
       elem_tensorvisc   = elem(ie)%tensorVisc
+      elem_tensorvisc2  = elem(ie)%tensorVisc_2
       elem_vec_sph2cart = elem(ie)%vec_sphere2cart
       do j = 1,np
          do i = 1,np
@@ -131,7 +135,7 @@ contains
       call init_elements_2d_c(ie-1, elem_D_ptr, elem_Dinv_ptr, elem_fcor_ptr, &
            elem_spheremp_ptr, elem_rspheremp_ptr, elem_metdet_ptr, elem_metinv_ptr, &
            elem_tensorvisc_ptr, elem_vec_sph2cart_ptr, sphere_cart_vec, &
-           sphere_latlon_vec)
+           sphere_latlon_vec, elem_tensorvisc2_ptr)
       call init_geopotential_c(ie-1, elem_state_phis_ptr, elem_gradphis_ptr)
     enddo
   end subroutine init_geometry_f90
@@ -144,7 +148,7 @@ contains
     call cleanup_f90()
   end subroutine cleanup_compose_f90
 
-  subroutine run_compose_standalone_test_f90(nmax_out, eval) bind(c)
+  subroutine run_compose_standalone_test_f90(nmax_out, eval, nerr) bind(c)
     use thetal_test_interface, only: deriv, hvcoord
     use compose_test_mod, only: compose_test
     use domain_mod, only: domain1d_t
@@ -155,6 +159,7 @@ contains
 
     integer(c_int), intent(inout) :: nmax_out
     real(c_double), intent(out) :: eval((nlev+1)*qsize)
+    integer(c_int), intent(out) :: nerr
 
     type (domain1d_t), pointer :: dom_mt(:)
     real(real_kind) :: buf((nlev+1)*qsize)
@@ -174,7 +179,7 @@ contains
        nmax = nmax_out
     end if
     statefreq = 2*ne
-    call compose_test(par, hvcoord, dom_mt, elem, buf)
+    call compose_test(par, hvcoord, dom_mt, elem, nerr, buf)
     do i = 1,size(buf)
        eval(i) = buf(i)
     end do

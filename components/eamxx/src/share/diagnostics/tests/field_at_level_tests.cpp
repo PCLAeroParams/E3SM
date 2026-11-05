@@ -1,48 +1,37 @@
 #include "catch2/catch.hpp"
 
 #include "share/diagnostics/field_at_level.hpp"
-#include "share/data_managers/mesh_free_grids_manager.hpp"
+#include "share/grid/point_grid.hpp"
 #include "share/field/field_utils.hpp"
 #include "share/core/eamxx_setup_random_test.hpp"
 
 namespace scream {
 
-std::shared_ptr<GridsManager>
-create_gm (const ekat::Comm& comm, const int ncols, const int nlevs) {
-
-  const int num_global_cols = ncols*comm.size();
-
-  auto gm = create_mesh_free_grids_manager(comm,0,0,nlevs,num_global_cols);
-  gm->build_grids();
-
-  return gm;
-}
 
 TEST_CASE("field_at_level")
 {
   using namespace ShortFieldTagsNames;
-  using FL = FieldLayout;
 
   constexpr int packsize = SCREAM_PACK_SIZE;
 
   ekat::Comm comm(MPI_COMM_WORLD);
 
-  auto engine = scream::setup_random_test(&comm);
+  int seed = get_random_test_seed(&comm);
+  std::mt19937_64 engine(seed);
 
   // Create a grids manager
   const int ncols = 3;
   const int nlevs = packsize*2 + 1;
-  auto gm = create_gm(comm,ncols,nlevs);
-  auto grid = gm->get_grid("point_grid");
+  auto grid = create_point_grid("physics",ncols,nlevs,comm);
 
   // A time stamp
   util::TimeStamp t0 ({2022,1,1},{0,0,0});
 
   // Create input fields
-  const auto units = ekat::units::Units::invalid();
-
-  FieldIdentifier fid_mid ("M",FL({COL,CMP,LEV},{ncols,2,nlevs}),units,grid->name());
-  FieldIdentifier fid_int ("I",FL({COL,LEV},{ncols,nlevs}),units,grid->name());
+  auto scalar_3d = grid->get_3d_scalar_layout(LEV);
+  auto vector_3d = grid->get_3d_vector_layout(LEV,2,"dim2");
+  FieldIdentifier fid_mid ("M",vector_3d,ekat::units::none,grid->name());
+  FieldIdentifier fid_int ("I",scalar_3d,ekat::units::none,grid->name());
 
   Field f_mid (fid_mid);
   Field f_int (fid_int);
@@ -57,11 +46,8 @@ TEST_CASE("field_at_level")
   f_int.get_header().get_tracking().update_time_stamp(t0);
 
   // Construct random input data
-  using RPDF = std::uniform_real_distribution<Real>;
-  RPDF pdf(-1.0,1.0);
-
-  randomize(f_mid,engine,pdf);
-  randomize(f_int,engine,pdf);
+  randomize_uniform(f_mid,seed++,-1,1);
+  randomize_uniform(f_int,seed++,-1,1);
 
   auto f_mid_1 = f_mid.get_component(1);
 
@@ -91,25 +77,22 @@ TEST_CASE("field_at_level")
     // Create and setup diagnostics
     params_mid.set<std::string>("vertical_location",lev_str);
     params_int.set<std::string>("vertical_location",lev_str);
-    auto diag_mid = std::make_shared<FieldAtLevel>(comm,params_mid);
-    auto diag_int = std::make_shared<FieldAtLevel>(comm,params_int);
+    auto diag_mid = std::make_shared<FieldAtLevel>(comm,params_mid,grid);
+    auto diag_int = std::make_shared<FieldAtLevel>(comm,params_int,grid);
 
-    diag_mid->set_grids(gm);
-    diag_int->set_grids(gm);
+    diag_mid->set_input_field(f_mid_1);
+    diag_int->set_input_field(f_int);
 
-    diag_mid->set_required_field(f_mid_1);
-    diag_int->set_required_field(f_int);
-
-    diag_mid->initialize(t0,RunType::Initial);
-    diag_int->initialize(t0,RunType::Initial);
+    diag_mid->initialize();
+    diag_int->initialize();
 
     // Run diagnostics
-    diag_mid->compute_diagnostic();
-    diag_int->compute_diagnostic();
+    diag_mid->compute(t0);
+    diag_int->compute(t0);
 
     // Check output
-    auto d_mid = diag_mid->get_diagnostic();
-    auto d_int = diag_int->get_diagnostic();
+    auto d_mid = diag_mid->get();
+    auto d_int = diag_int->get();
     d_mid.sync_to_host();
     d_int.sync_to_host();
 

@@ -834,6 +834,8 @@ add_default($nl,'gw_convect_hdepth_min') if (get_default_value('gw_convect_hdept
 add_default($nl,'gw_convect_storm_speed_min') if (get_default_value('gw_convect_storm_speed_min'));
 add_default($nl,'gw_convect_plev_src_wind') if (get_default_value('gw_convect_plev_src_wind'));
 add_default($nl,'use_gw_convect_old', 'val'=>'.true.');
+add_default($nl,'use_tau_limiter', 'val'=>'.false.');
+add_default($nl,'use_gw_front_rr_scaling', 'val'=>'.false.');
 add_default($nl,'linoz_psc_T');
 if ($cfg->get('microphys') =~ /^mg2/) {
     add_default($nl,'micro_mg_dcs_tdep');
@@ -4049,8 +4051,8 @@ add_default($nl, 'zmconv_accr_fac');
 add_default($nl, 'zmconv_micro_dcs');
 add_default($nl, 'zmconv_MCSP_heat_coeff');
 add_default($nl, 'zmconv_MCSP_moisture_coeff');
-add_default($nl, 'zmconv_MCSP_uwind_coeff');
-add_default($nl, 'zmconv_MCSP_vwind_coeff');
+add_default($nl, 'zmconv_MCSP_mom_coeff');
+add_default($nl, 'zmconv_MCSP_use_full_shear');
 #
 # moist convection rainwater coefficients
 # These no more needed for EAM, including uwshcu_rpen. No need to reset for 'cam5'
@@ -4094,19 +4096,21 @@ if ($chem =~ /_mam/ or $chem =~ /_bam/ or $chem =~ /trop_/) {
     else {
 	add_default($nl, 'dust_emis_fact');
     }
+    #dstemislimitswitch hardwired to false in the code. Add below only if its value is set
+    add_default($nl,'dstemislimitswitch') if (get_default_value('dstemislimitswitch'));
 }
 
 # Gravity wave drag settings
 if ($waccm_phys or $cfg->get('nlev') >= 60) {
     # Spectral gravity waves are part of WACCM physics, and also drive the
     # QBO in the high vertical resolution configuration.
-    add_default($nl, 'use_gw_oro'    , 'val'=>'.true.');
+    add_default($nl, 'use_gw_oro');
     add_default($nl, 'use_gw_front'  , 'val'=>'.true.');
     add_default($nl, 'use_gw_convect', 'val'=>'.true.');
-    add_default($nl, 'use_od_ls', 'val'=>'.false.');
-    add_default($nl, 'use_od_bl', 'val'=>'.false.');
-    add_default($nl, 'use_od_ss', 'val'=>'.false.');
-    add_default($nl, 'use_od_fd', 'val'=>'.false.');
+    add_default($nl, 'use_od_ls');
+    add_default($nl, 'use_od_bl');
+    add_default($nl, 'use_od_ss');
+    add_default($nl, 'use_od_fd');
 } else {
     add_default($nl, 'use_gw_oro'    , 'val'=>'.true.');
     add_default($nl, 'use_gw_front'  , 'val'=>'.false.');
@@ -4137,6 +4141,9 @@ if ($nl->get_value('use_gw_convect') =~ /$TRUE/io) {
     add_default($nl, 'gw_drag_file');
 }
 
+# this correction is disabled in the released version E3SMv3 and prior versions
+add_default($nl, 'use_fgf_pgrad_correction', 'val'=>'.false.');
+add_default($nl, 'use_fgf_zgrad_correction', 'val'=>'.false.');
 add_default($nl, 'use_gw_energy_fix'    , 'val'=>'.true.');
 
 
@@ -4236,6 +4243,7 @@ if ($cfg->get('dyn') =~ /se/) {
     foreach my $var (@vars) {
 	add_default($nl, $var);
     }
+    add_default($nl,'tom_sponge_start') if (get_default_value('tom_sponge_start'));
 }
 
 # Defaults for history output
@@ -4791,6 +4799,17 @@ if ($opts{'test'}) {
 # Write the input dataset filepaths to the file specified by $opts{'inputdata'}.
 if ($opts{'inputdata'}) {
     check_input_files($nl, $inputdata_rootdir, $opts{'inputdata'});
+
+    # P3 opens <micro_p3_lookup_dir>/p3_lookup_table_1.dat-v<micro_p3_tableversion>
+    # (micro_p3.F90). Neither namelist variable is that file, so list it for CIME to fetch.
+    my $p3_dir = $nl->get_value('micro_p3_lookup_dir');
+    my $p3_ver = $nl->get_value('micro_p3_tableversion');
+    if (defined $p3_dir and defined $p3_ver) {
+        s/['"]//g, s/^\s+|\s+$//g for ($p3_dir, $p3_ver);
+        open my $fh, '>>', $opts{'inputdata'} or die "error opening $opts{'inputdata'}: $!";
+        print $fh "micro_p3_lookup_table = $p3_dir/p3_lookup_table_1.dat-v$p3_ver\n";
+        close $fh;
+    }
 }
 
 # END OF MAIN SCRIPT
